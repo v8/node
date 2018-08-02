@@ -70,47 +70,50 @@ enum ContextLookupFlags {
   V(ASYNC_GENERATOR_AWAIT_CAUGHT, JSFunction, async_generator_await_caught) \
   V(ASYNC_GENERATOR_AWAIT_UNCAUGHT, JSFunction, async_generator_await_uncaught)
 
-#define NATIVE_CONTEXT_IMPORTED_FIELDS(V)                                 \
-  V(ARRAY_SHIFT_INDEX, JSFunction, array_shift)                           \
-  V(ARRAY_SPLICE_INDEX, JSFunction, array_splice)                         \
-  V(ARRAY_UNSHIFT_INDEX, JSFunction, array_unshift)                       \
-  V(ARRAY_ENTRIES_ITERATOR_INDEX, JSFunction, array_entries_iterator)     \
-  V(ARRAY_FOR_EACH_ITERATOR_INDEX, JSFunction, array_for_each_iterator)   \
-  V(ARRAY_KEYS_ITERATOR_INDEX, JSFunction, array_keys_iterator)           \
-  V(ARRAY_VALUES_ITERATOR_INDEX, JSFunction, array_values_iterator)       \
-  V(ERROR_FUNCTION_INDEX, JSFunction, error_function)                     \
-  V(ERROR_TO_STRING, JSFunction, error_to_string)                         \
-  V(EVAL_ERROR_FUNCTION_INDEX, JSFunction, eval_error_function)           \
-  V(GLOBAL_EVAL_FUN_INDEX, JSFunction, global_eval_fun)                   \
-  V(GLOBAL_PROXY_FUNCTION_INDEX, JSFunction, global_proxy_function)       \
-  V(MAP_DELETE_INDEX, JSFunction, map_delete)                             \
-  V(MAP_GET_INDEX, JSFunction, map_get)                                   \
-  V(MAP_HAS_INDEX, JSFunction, map_has)                                   \
-  V(MAP_SET_INDEX, JSFunction, map_set)                                   \
-  V(FUNCTION_HAS_INSTANCE_INDEX, JSFunction, function_has_instance)       \
-  V(OBJECT_VALUE_OF, JSFunction, object_value_of)                         \
-  V(OBJECT_TO_STRING, JSFunction, object_to_string)                       \
-  V(PROMISE_CATCH_INDEX, JSFunction, promise_catch)                       \
-  V(PROMISE_FUNCTION_INDEX, JSFunction, promise_function)                 \
-  V(RANGE_ERROR_FUNCTION_INDEX, JSFunction, range_error_function)         \
-  V(REFERENCE_ERROR_FUNCTION_INDEX, JSFunction, reference_error_function) \
-  V(RESOLVE_LOCALE_FUNCTION_INDEX, JSFunction, resolve_locale)            \
-  V(SET_ADD_INDEX, JSFunction, set_add)                                   \
-  V(SET_DELETE_INDEX, JSFunction, set_delete)                             \
-  V(SET_HAS_INDEX, JSFunction, set_has)                                   \
-  V(SYNTAX_ERROR_FUNCTION_INDEX, JSFunction, syntax_error_function)       \
-  V(TYPE_ERROR_FUNCTION_INDEX, JSFunction, type_error_function)           \
-  V(URI_ERROR_FUNCTION_INDEX, JSFunction, uri_error_function)             \
-  V(WASM_COMPILE_ERROR_FUNCTION_INDEX, JSFunction,                        \
-    wasm_compile_error_function)                                          \
-  V(WASM_LINK_ERROR_FUNCTION_INDEX, JSFunction, wasm_link_error_function) \
-  V(WASM_RUNTIME_ERROR_FUNCTION_INDEX, JSFunction,                        \
-    wasm_runtime_error_function)                                          \
-  V(WEAKMAP_SET_INDEX, JSFunction, weakmap_set)                           \
+#define NATIVE_CONTEXT_IMPORTED_FIELDS(V)                                      \
+  V(ARRAY_SHIFT_INDEX, JSFunction, array_shift)                                \
+  V(ARRAY_SPLICE_INDEX, JSFunction, array_splice)                              \
+  V(ARRAY_UNSHIFT_INDEX, JSFunction, array_unshift)                            \
+  V(ARRAY_ENTRIES_ITERATOR_INDEX, JSFunction, array_entries_iterator)          \
+  V(ARRAY_FOR_EACH_ITERATOR_INDEX, JSFunction, array_for_each_iterator)        \
+  V(ARRAY_KEYS_ITERATOR_INDEX, JSFunction, array_keys_iterator)                \
+  V(ARRAY_VALUES_ITERATOR_INDEX, JSFunction, array_values_iterator)            \
+  V(ERROR_FUNCTION_INDEX, JSFunction, error_function)                          \
+  V(ERROR_TO_STRING, JSFunction, error_to_string)                              \
+  V(EVAL_ERROR_FUNCTION_INDEX, JSFunction, eval_error_function)                \
+  V(GLOBAL_EVAL_FUN_INDEX, JSFunction, global_eval_fun)                        \
+  V(GLOBAL_PROXY_FUNCTION_INDEX, JSFunction, global_proxy_function)            \
+  V(MAP_DELETE_INDEX, JSFunction, map_delete)                                  \
+  V(MAP_GET_INDEX, JSFunction, map_get)                                        \
+  V(MAP_HAS_INDEX, JSFunction, map_has)                                        \
+  V(MAP_SET_INDEX, JSFunction, map_set)                                        \
+  V(FUNCTION_HAS_INSTANCE_INDEX, JSFunction, function_has_instance)            \
+  V(INITIALIZE_LOCALE_LIST_FUNCTION_INDEX, JSFunction, initialize_locale_list) \
+  V(OBJECT_VALUE_OF, JSFunction, object_value_of)                              \
+  V(OBJECT_TO_STRING, JSFunction, object_to_string)                            \
+  V(PROMISE_CATCH_INDEX, JSFunction, promise_catch)                            \
+  V(PROMISE_FUNCTION_INDEX, JSFunction, promise_function)                      \
+  V(RANGE_ERROR_FUNCTION_INDEX, JSFunction, range_error_function)              \
+  V(REFERENCE_ERROR_FUNCTION_INDEX, JSFunction, reference_error_function)      \
+  V(CACHED_OR_NEW_SERVICE_LOCALE_FUNCTION_INDEX, JSFunction,                   \
+    cached_or_new_service)                                                     \
+  V(RESOLVE_LOCALE_FUNCTION_INDEX, JSFunction, resolve_locale)                 \
+  V(SET_ADD_INDEX, JSFunction, set_add)                                        \
+  V(SET_DELETE_INDEX, JSFunction, set_delete)                                  \
+  V(SET_HAS_INDEX, JSFunction, set_has)                                        \
+  V(SYNTAX_ERROR_FUNCTION_INDEX, JSFunction, syntax_error_function)            \
+  V(TYPE_ERROR_FUNCTION_INDEX, JSFunction, type_error_function)                \
+  V(URI_ERROR_FUNCTION_INDEX, JSFunction, uri_error_function)                  \
+  V(WASM_COMPILE_ERROR_FUNCTION_INDEX, JSFunction,                             \
+    wasm_compile_error_function)                                               \
+  V(WASM_LINK_ERROR_FUNCTION_INDEX, JSFunction, wasm_link_error_function)      \
+  V(WASM_RUNTIME_ERROR_FUNCTION_INDEX, JSFunction,                             \
+    wasm_runtime_error_function)                                               \
+  V(WEAKMAP_SET_INDEX, JSFunction, weakmap_set)                                \
   V(WEAKSET_ADD_INDEX, JSFunction, weakset_add)
 
 #define NATIVE_CONTEXT_FIELDS(V)                                               \
-  V(GLOBAL_PROXY_INDEX, JSObject, global_proxy_object)                         \
+  V(GLOBAL_PROXY_INDEX, JSGlobalProxy, global_proxy_object)                    \
   V(EMBEDDER_DATA_INDEX, FixedArray, embedder_data)                            \
   /* Below is alpha-sorted */                                                  \
   V(ACCESSOR_PROPERTY_DESCRIPTOR_MAP_INDEX, Map,                               \
@@ -209,16 +212,15 @@ enum ContextLookupFlags {
   V(INTL_V8_BREAK_ITERATOR_FUNCTION_INDEX, JSFunction,                         \
     intl_v8_break_iterator_function)                                           \
   V(JS_ARRAY_PACKED_SMI_ELEMENTS_MAP_INDEX, Map,                               \
-    js_array_fast_smi_elements_map_index)                                      \
+    js_array_fast_smi_elements_map)                                            \
   V(JS_ARRAY_HOLEY_SMI_ELEMENTS_MAP_INDEX, Map,                                \
-    js_array_fast_holey_smi_elements_map_index)                                \
-  V(JS_ARRAY_PACKED_ELEMENTS_MAP_INDEX, Map, js_array_fast_elements_map_index) \
-  V(JS_ARRAY_HOLEY_ELEMENTS_MAP_INDEX, Map,                                    \
-    js_array_fast_holey_elements_map_index)                                    \
+    js_array_fast_holey_smi_elements_map)                                      \
+  V(JS_ARRAY_PACKED_ELEMENTS_MAP_INDEX, Map, js_array_fast_elements_map)       \
+  V(JS_ARRAY_HOLEY_ELEMENTS_MAP_INDEX, Map, js_array_fast_holey_elements_map)  \
   V(JS_ARRAY_PACKED_DOUBLE_ELEMENTS_MAP_INDEX, Map,                            \
-    js_array_fast_double_elements_map_index)                                   \
+    js_array_fast_double_elements_map)                                         \
   V(JS_ARRAY_HOLEY_DOUBLE_ELEMENTS_MAP_INDEX, Map,                             \
-    js_array_fast_holey_double_elements_map_index)                             \
+    js_array_fast_holey_double_elements_map)                                   \
   V(JS_MAP_FUN_INDEX, JSFunction, js_map_fun)                                  \
   V(JS_MAP_MAP_INDEX, Map, js_map_map)                                         \
   V(JS_MODULE_NAMESPACE_MAP, Map, js_module_namespace_map)                     \
@@ -269,7 +271,7 @@ enum ContextLookupFlags {
     regexp_internal_match_info)                                                \
   V(REGEXP_PROTOTYPE_MAP_INDEX, Map, regexp_prototype_map)                     \
   V(INITIAL_REGEXP_STRING_ITERATOR_PROTOTYPE_MAP_INDEX, Map,                   \
-    initial_regexp_string_iterator_prototype_map_index)                        \
+    initial_regexp_string_iterator_prototype_map)                              \
   V(REGEXP_RESULT_MAP_INDEX, Map, regexp_result_map)                           \
   V(SCRIPT_CONTEXT_TABLE_INDEX, ScriptContextTable, script_context_table)      \
   V(SECURITY_TOKEN_INDEX, Object, security_token)                              \
@@ -521,8 +523,8 @@ class Context : public FixedArray, public NeverReadOnlySpaceObject {
   Context* closure_context();
 
   // Returns a JSGlobalProxy object or null.
-  JSObject* global_proxy();
-  void set_global_proxy(JSObject* global);
+  JSGlobalProxy* global_proxy();
+  void set_global_proxy(JSGlobalProxy* global);
 
   // Get the JSGlobalObject object.
   V8_EXPORT_PRIVATE JSGlobalObject* global_object();

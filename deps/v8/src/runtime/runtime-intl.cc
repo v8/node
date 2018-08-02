@@ -11,8 +11,8 @@
 #include <cmath>
 #include <memory>
 
+#include "src/api-inl.h"
 #include "src/api-natives.h"
-#include "src/api.h"
 #include "src/arguments.h"
 #include "src/date.h"
 #include "src/global-handles.h"
@@ -22,6 +22,7 @@
 #include "src/messages.h"
 #include "src/objects/intl-objects-inl.h"
 #include "src/objects/intl-objects.h"
+#include "src/objects/managed.h"
 #include "src/utils.h"
 
 #include "unicode/brkiter.h"
@@ -52,130 +53,77 @@
 namespace v8 {
 namespace internal {
 
+RUNTIME_FUNCTION(Runtime_GetNumberOption) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(5, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(JSReceiver, options, 0);
+  CONVERT_ARG_HANDLE_CHECKED(String, property, 1);
+  CONVERT_SMI_ARG_CHECKED(min, 2);
+  CONVERT_SMI_ARG_CHECKED(max, 3);
+  CONVERT_SMI_ARG_CHECKED(fallback, 4);
+  RETURN_RESULT_OR_FAILURE(
+      isolate,
+      Intl::GetNumberOption(isolate, options, property, min, max, fallback));
+}
+
+RUNTIME_FUNCTION(Runtime_DefaultNumberOption) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(5, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(Object, value, 0);
+  CONVERT_SMI_ARG_CHECKED(min, 1);
+  CONVERT_SMI_ARG_CHECKED(max, 2);
+  CONVERT_SMI_ARG_CHECKED(fallback, 3);
+  CONVERT_ARG_HANDLE_CHECKED(String, property, 4);
+  RETURN_RESULT_OR_FAILURE(
+      isolate,
+      Intl::DefaultNumberOption(isolate, value, min, max, fallback, property));
+}
+
 // ECMA 402 6.2.3
 RUNTIME_FUNCTION(Runtime_CanonicalizeLanguageTag) {
   HandleScope scope(isolate);
-  v8::Isolate* v8_isolate = reinterpret_cast<v8::Isolate*>(isolate);
-
-  Factory* factory = isolate->factory();
 
   DCHECK_EQ(1, args.length());
-  CONVERT_ARG_HANDLE_CHECKED(String, locale_id_str, 0);
+  CONVERT_ARG_HANDLE_CHECKED(Object, locale, 0);
 
-  v8::String::Utf8Value locale_id(v8_isolate,
-                                  v8::Utils::ToLocal(locale_id_str));
-
-  // TODO(jshin): uloc_{for,to}TanguageTag can fail even for a structually valid
-  // language tag if it's too long (much longer than 100 chars). Even if we
-  // allocate a longer buffer, ICU will still fail if it's too long. Either
-  // propose to Ecma 402 to put a limit on the locale length or change ICU to
-  // handle long locale names better. See
-  // https://ssl.icu-project.org/trac/ticket/13417 .
-
-  // Return value which denotes invalid language tag.
-  const char* const kInvalidTag = "invalid-tag";
-
-  UErrorCode error = U_ZERO_ERROR;
-  char icu_result[ULOC_FULLNAME_CAPACITY];
-  uloc_forLanguageTag(*locale_id, icu_result, ULOC_FULLNAME_CAPACITY, nullptr,
-                      &error);
-  if (U_FAILURE(error) || error == U_STRING_NOT_TERMINATED_WARNING) {
-    return *factory->NewStringFromAsciiChecked(kInvalidTag);
-  }
-
-  char result[ULOC_FULLNAME_CAPACITY];
-
-  // Force strict BCP47 rules.
-  uloc_toLanguageTag(icu_result, result, ULOC_FULLNAME_CAPACITY, TRUE, &error);
-
-  if (U_FAILURE(error) || error == U_STRING_NOT_TERMINATED_WARNING) {
-    return *factory->NewStringFromAsciiChecked(kInvalidTag);
-  }
-
-  return *factory->NewStringFromAsciiChecked(result);
+  RETURN_RESULT_OR_FAILURE(isolate,
+                           Intl::CanonicalizeLanguageTag(isolate, locale));
 }
 
 RUNTIME_FUNCTION(Runtime_AvailableLocalesOf) {
   HandleScope scope(isolate);
-  Factory* factory = isolate->factory();
-
   DCHECK_EQ(1, args.length());
   CONVERT_ARG_HANDLE_CHECKED(String, service, 0);
-
-  const icu::Locale* available_locales = nullptr;
-  int32_t count = 0;
-
-  if (service->IsUtf8EqualTo(CStrVector("collator"))) {
-    available_locales = icu::Collator::getAvailableLocales(count);
-  } else if (service->IsUtf8EqualTo(CStrVector("numberformat"))) {
-    available_locales = icu::NumberFormat::getAvailableLocales(count);
-  } else if (service->IsUtf8EqualTo(CStrVector("dateformat"))) {
-    available_locales = icu::DateFormat::getAvailableLocales(count);
-  } else if (service->IsUtf8EqualTo(CStrVector("breakiterator"))) {
-    available_locales = icu::BreakIterator::getAvailableLocales(count);
-  } else if (service->IsUtf8EqualTo(CStrVector("pluralrules"))) {
-    // TODO(littledan): For PluralRules, filter out locales that
-    // don't support PluralRules.
-    // PluralRules is missing an appropriate getAvailableLocales method,
-    // so we should filter from all locales, but it's not clear how; see
-    // https://ssl.icu-project.org/trac/ticket/12756
-    available_locales = icu::Locale::getAvailableLocales(count);
-  } else if (service->IsUtf8EqualTo(CStrVector("relativetimeformat"))) {
-    // TODO(ftang): for now just use
-    // icu::NumberFormat::getAvailableLocales(count) until we migrate to
-    // Intl::GetAvailableLocales()
-    available_locales = icu::NumberFormat::getAvailableLocales(count);
-  } else {
-    UNREACHABLE();
-  }
-
-  UErrorCode error = U_ZERO_ERROR;
-  char result[ULOC_FULLNAME_CAPACITY];
-  Handle<JSObject> locales = factory->NewJSObject(isolate->object_function());
-
-  for (int32_t i = 0; i < count; ++i) {
-    const char* icu_name = available_locales[i].getName();
-
-    error = U_ZERO_ERROR;
-    // No need to force strict BCP47 rules.
-    uloc_toLanguageTag(icu_name, result, ULOC_FULLNAME_CAPACITY, FALSE, &error);
-    if (U_FAILURE(error) || error == U_STRING_NOT_TERMINATED_WARNING) {
-      // This shouldn't happen, but lets not break the user.
-      continue;
-    }
-
-    RETURN_FAILURE_ON_EXCEPTION(
-        isolate, JSObject::SetOwnPropertyIgnoreAttributes(
-                     locales, factory->NewStringFromAsciiChecked(result),
-                     factory->NewNumber(i), NONE));
-  }
-
+  Handle<JSObject> locales;
+  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+      isolate, locales, Intl::AvailableLocalesOf(isolate, service));
   return *locales;
 }
 
 RUNTIME_FUNCTION(Runtime_GetDefaultICULocale) {
   HandleScope scope(isolate);
-  Factory* factory = isolate->factory();
 
   DCHECK_EQ(0, args.length());
+  return *Intl::DefaultLocale(isolate);
+}
 
-  icu::Locale default_locale;
+RUNTIME_FUNCTION(Runtime_IsWellFormedCurrencyCode) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(1, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(String, currency, 0);
+  return *(isolate->factory()->ToBoolean(
+      Intl::IsWellFormedCurrencyCode(isolate, currency)));
+}
 
-  // Translate ICU's fallback locale to a well-known locale.
-  if (strcmp(default_locale.getName(), "en_US_POSIX") == 0) {
-    return *factory->NewStringFromStaticChars("en-US");
-  }
+RUNTIME_FUNCTION(Runtime_DefineWEProperty) {
+  HandleScope scope(isolate);
 
-  // Set the locale
-  char result[ULOC_FULLNAME_CAPACITY];
-  UErrorCode status = U_ZERO_ERROR;
-  uloc_toLanguageTag(default_locale.getName(), result, ULOC_FULLNAME_CAPACITY,
-                     FALSE, &status);
-  if (U_SUCCESS(status)) {
-    return *factory->NewStringFromAsciiChecked(result);
-  }
-
-  return *factory->NewStringFromStaticChars("und");
+  DCHECK_EQ(3, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(JSObject, target, 0);
+  CONVERT_ARG_HANDLE_CHECKED(Name, key, 1);
+  CONVERT_ARG_HANDLE_CHECKED(Object, value, 2);
+  Intl::DefineWEProperty(isolate, target, key, value);
+  return ReadOnlyRoots(isolate).undefined_value();
 }
 
 RUNTIME_FUNCTION(Runtime_IsInitializedIntlObjectOfType) {
@@ -232,8 +180,7 @@ RUNTIME_FUNCTION(Runtime_CreateDateTimeFormat) {
   // Set date time formatter as embedder field of the resulting JS object.
   icu::SimpleDateFormat* date_format =
       DateFormat::InitializeDateTimeFormat(isolate, locale, options, resolved);
-
-  if (!date_format) return isolate->ThrowIllegalOperation();
+  CHECK_NOT_NULL(date_format);
 
   local_object->SetEmbedderField(0, reinterpret_cast<Smi*>(date_format));
 
@@ -260,7 +207,7 @@ RUNTIME_FUNCTION(Runtime_InternalDateFormat) {
   }
 
   icu::SimpleDateFormat* date_format =
-      DateFormat::UnpackDateFormat(isolate, date_format_holder);
+      DateFormat::UnpackDateFormat(date_format_holder);
   CHECK_NOT_NULL(date_format);
 
   icu::UnicodeString result;
@@ -280,62 +227,15 @@ RUNTIME_FUNCTION(Runtime_CreateNumberFormat) {
   CONVERT_ARG_HANDLE_CHECKED(String, locale, 0);
   CONVERT_ARG_HANDLE_CHECKED(JSObject, options, 1);
   CONVERT_ARG_HANDLE_CHECKED(JSObject, resolved, 2);
-
-  Handle<JSFunction> constructor(
-      isolate->native_context()->intl_number_format_function(), isolate);
-
-  Handle<JSObject> local_object;
-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, local_object,
-                                     JSObject::New(constructor, constructor));
-
-  // Set number formatter as embedder field of the resulting JS object.
-  icu::DecimalFormat* number_format =
-      NumberFormat::InitializeNumberFormat(isolate, locale, options, resolved);
-
-  if (!number_format) return isolate->ThrowIllegalOperation();
-
-  local_object->SetEmbedderField(NumberFormat::kDecimalFormatIndex,
-                                 reinterpret_cast<Smi*>(number_format));
-
-  Handle<Object> wrapper = isolate->global_handles()->Create(*local_object);
-  GlobalHandles::MakeWeak(wrapper.location(), wrapper.location(),
-                          NumberFormat::DeleteNumberFormat,
-                          WeakCallbackType::kInternalFields);
-  return *local_object;
-}
-
-RUNTIME_FUNCTION(Runtime_InternalNumberFormat) {
-  HandleScope scope(isolate);
-
-  DCHECK_EQ(2, args.length());
-
-  CONVERT_ARG_HANDLE_CHECKED(JSObject, number_format_holder, 0);
-  CONVERT_ARG_HANDLE_CHECKED(Object, value, 1);
-
-  Handle<Object> number_obj;
-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, number_obj,
-                                     Object::ToNumber(isolate, value));
-
-  double number = number_obj->Number();
-  RETURN_RESULT_OR_FAILURE(isolate, NumberFormat::FormatNumber(
-                                        isolate, number_format_holder, number));
+  RETURN_RESULT_OR_FAILURE(
+      isolate, Intl::CreateNumberFormat(isolate, locale, options, resolved));
 }
 
 RUNTIME_FUNCTION(Runtime_CurrencyDigits) {
+  HandleScope scope(isolate);
   DCHECK_EQ(1, args.length());
-  v8::Isolate* v8_isolate = reinterpret_cast<v8::Isolate*>(isolate);
-
   CONVERT_ARG_HANDLE_CHECKED(String, currency, 0);
-
-  v8::String::Value currency_string(v8_isolate, v8::Utils::ToLocal(currency));
-
-  DisallowHeapAllocation no_gc;
-  UErrorCode status = U_ZERO_ERROR;
-  uint32_t fraction_digits = ucurr_getDefaultFractionDigits(
-      reinterpret_cast<const UChar*>(*currency_string), &status);
-  // For missing currency codes, default to the most common, 2
-  if (!U_SUCCESS(status)) fraction_digits = 2;
-  return Smi::FromInt(fraction_digits);
+  return *Intl::CurrencyDigits(isolate, currency);
 }
 
 RUNTIME_FUNCTION(Runtime_CreateCollator) {
@@ -354,10 +254,13 @@ RUNTIME_FUNCTION(Runtime_CreateCollator) {
   ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, collator_holder,
                                      JSObject::New(constructor, constructor));
 
-  if (!Collator::InitializeCollator(isolate, collator_holder, locale, options,
-                                    resolved)) {
-    return isolate->ThrowIllegalOperation();
-  }
+  icu::Collator* collator =
+      Collator::InitializeCollator(isolate, locale, options, resolved);
+  CHECK_NOT_NULL(collator);
+
+  Handle<Managed<icu::Collator>> managed =
+      Managed<icu::Collator>::FromRawPtr(isolate, 0, collator);
+  collator_holder->SetEmbedderField(0, *managed);
 
   return *collator_holder;
 }
@@ -370,32 +273,7 @@ RUNTIME_FUNCTION(Runtime_InternalCompare) {
   CONVERT_ARG_HANDLE_CHECKED(JSObject, collator_holder, 0);
   CONVERT_ARG_HANDLE_CHECKED(String, string1, 1);
   CONVERT_ARG_HANDLE_CHECKED(String, string2, 2);
-
-  icu::Collator* collator = Collator::UnpackCollator(isolate, collator_holder);
-  CHECK_NOT_NULL(collator);
-
-  string1 = String::Flatten(isolate, string1);
-  string2 = String::Flatten(isolate, string2);
-
-  UCollationResult result;
-  UErrorCode status = U_ZERO_ERROR;
-  {
-    DisallowHeapAllocation no_gc;
-    int32_t length1 = string1->length();
-    int32_t length2 = string2->length();
-    String::FlatContent flat1 = string1->GetFlatContent();
-    String::FlatContent flat2 = string2->GetFlatContent();
-    std::unique_ptr<uc16[]> sap1;
-    std::unique_ptr<uc16[]> sap2;
-    icu::UnicodeString string_val1(
-        FALSE, GetUCharBufferFromFlat(flat1, &sap1, length1), length1);
-    icu::UnicodeString string_val2(
-        FALSE, GetUCharBufferFromFlat(flat2, &sap2, length2), length2);
-    result = collator->compare(string_val1, string_val2, status);
-  }
-  if (U_FAILURE(status)) return isolate->ThrowIllegalOperation();
-
-  return *isolate->factory()->NewNumberFromInt(result);
+  return *Intl::InternalCompare(isolate, collator_holder, string1, string2);
 }
 
 RUNTIME_FUNCTION(Runtime_CreatePluralRules) {
@@ -417,10 +295,10 @@ RUNTIME_FUNCTION(Runtime_CreatePluralRules) {
   // Set pluralRules as internal field of the resulting JS object.
   icu::PluralRules* plural_rules;
   icu::DecimalFormat* decimal_format;
-  bool success = PluralRules::InitializePluralRules(
-      isolate, locale, options, resolved, &plural_rules, &decimal_format);
-
-  if (!success) return isolate->ThrowIllegalOperation();
+  PluralRules::InitializePluralRules(isolate, locale, options, resolved,
+                                     &plural_rules, &decimal_format);
+  CHECK_NOT_NULL(plural_rules);
+  CHECK_NOT_NULL(decimal_format);
 
   local_object->SetEmbedderField(0, reinterpret_cast<Smi*>(plural_rules));
   local_object->SetEmbedderField(1, reinterpret_cast<Smi*>(decimal_format));
@@ -441,11 +319,11 @@ RUNTIME_FUNCTION(Runtime_PluralRulesSelect) {
   CONVERT_ARG_HANDLE_CHECKED(Object, number, 1);
 
   icu::PluralRules* plural_rules =
-      PluralRules::UnpackPluralRules(isolate, plural_rules_holder);
+      PluralRules::UnpackPluralRules(plural_rules_holder);
   CHECK_NOT_NULL(plural_rules);
 
   icu::DecimalFormat* number_format =
-      PluralRules::UnpackNumberFormat(isolate, plural_rules_holder);
+      PluralRules::UnpackNumberFormat(plural_rules_holder);
   CHECK_NOT_NULL(number_format);
 
   // Currently, PluralRules doesn't implement all the options for rounding that
@@ -493,6 +371,7 @@ RUNTIME_FUNCTION(Runtime_CreateBreakIterator) {
   // Set break iterator as embedder field of the resulting JS object.
   icu::BreakIterator* break_iterator = V8BreakIterator::InitializeBreakIterator(
       isolate, locale, options, resolved);
+  CHECK_NOT_NULL(break_iterator);
 
   if (!break_iterator) return isolate->ThrowIllegalOperation();
 
@@ -518,7 +397,7 @@ RUNTIME_FUNCTION(Runtime_BreakIteratorAdoptText) {
   CONVERT_ARG_HANDLE_CHECKED(String, text, 1);
 
   icu::BreakIterator* break_iterator =
-      V8BreakIterator::UnpackBreakIterator(isolate, break_iterator_holder);
+      V8BreakIterator::UnpackBreakIterator(break_iterator_holder);
   CHECK_NOT_NULL(break_iterator);
 
   icu::UnicodeString* u_text = reinterpret_cast<icu::UnicodeString*>(
@@ -547,7 +426,7 @@ RUNTIME_FUNCTION(Runtime_BreakIteratorFirst) {
   CONVERT_ARG_HANDLE_CHECKED(JSObject, break_iterator_holder, 0);
 
   icu::BreakIterator* break_iterator =
-      V8BreakIterator::UnpackBreakIterator(isolate, break_iterator_holder);
+      V8BreakIterator::UnpackBreakIterator(break_iterator_holder);
   CHECK_NOT_NULL(break_iterator);
 
   return *isolate->factory()->NewNumberFromInt(break_iterator->first());
@@ -561,7 +440,7 @@ RUNTIME_FUNCTION(Runtime_BreakIteratorNext) {
   CONVERT_ARG_HANDLE_CHECKED(JSObject, break_iterator_holder, 0);
 
   icu::BreakIterator* break_iterator =
-      V8BreakIterator::UnpackBreakIterator(isolate, break_iterator_holder);
+      V8BreakIterator::UnpackBreakIterator(break_iterator_holder);
   CHECK_NOT_NULL(break_iterator);
 
   return *isolate->factory()->NewNumberFromInt(break_iterator->next());
@@ -575,7 +454,7 @@ RUNTIME_FUNCTION(Runtime_BreakIteratorCurrent) {
   CONVERT_ARG_HANDLE_CHECKED(JSObject, break_iterator_holder, 0);
 
   icu::BreakIterator* break_iterator =
-      V8BreakIterator::UnpackBreakIterator(isolate, break_iterator_holder);
+      V8BreakIterator::UnpackBreakIterator(break_iterator_holder);
   CHECK_NOT_NULL(break_iterator);
 
   return *isolate->factory()->NewNumberFromInt(break_iterator->current());
@@ -589,7 +468,7 @@ RUNTIME_FUNCTION(Runtime_BreakIteratorBreakType) {
   CONVERT_ARG_HANDLE_CHECKED(JSObject, break_iterator_holder, 0);
 
   icu::BreakIterator* break_iterator =
-      V8BreakIterator::UnpackBreakIterator(isolate, break_iterator_holder);
+      V8BreakIterator::UnpackBreakIterator(break_iterator_holder);
   CHECK_NOT_NULL(break_iterator);
 
   // TODO(cira): Remove cast once ICU fixes base BreakIterator class.
@@ -626,49 +505,6 @@ RUNTIME_FUNCTION(Runtime_StringToUpperCaseIntl) {
   CONVERT_ARG_HANDLE_CHECKED(String, s, 0);
   s = String::Flatten(isolate, s);
   return ConvertToUpper(s, isolate);
-}
-
-RUNTIME_FUNCTION(Runtime_StringLocaleConvertCase) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(args.length(), 3);
-  CONVERT_ARG_HANDLE_CHECKED(String, s, 0);
-  CONVERT_BOOLEAN_ARG_CHECKED(is_upper, 1);
-  CONVERT_ARG_HANDLE_CHECKED(String, lang_arg, 2);
-
-  // Primary language tag can be up to 8 characters long in theory.
-  // https://tools.ietf.org/html/bcp47#section-2.2.1
-  DCHECK_LE(lang_arg->length(), 8);
-  lang_arg = String::Flatten(isolate, lang_arg);
-  s = String::Flatten(isolate, s);
-
-  // All the languages requiring special-handling have two-letter codes.
-  // Note that we have to check for '!= 2' here because private-use language
-  // tags (x-foo) or grandfathered irregular tags (e.g. i-enochian) would have
-  // only 'x' or 'i' when they get here.
-  if (V8_UNLIKELY(lang_arg->length() != 2))
-    return ConvertCase(s, is_upper, isolate);
-
-  char c1, c2;
-  {
-    DisallowHeapAllocation no_gc;
-    String::FlatContent lang = lang_arg->GetFlatContent();
-    c1 = lang.Get(0);
-    c2 = lang.Get(1);
-  }
-  // TODO(jshin): Consider adding a fast path for ASCII or Latin-1. The fastpath
-  // in the root locale needs to be adjusted for az, lt and tr because even case
-  // mapping of ASCII range characters are different in those locales.
-  // Greek (el) does not require any adjustment.
-  if (V8_UNLIKELY(c1 == 't' && c2 == 'r'))
-    return LocaleConvertCase(s, isolate, is_upper, "tr");
-  if (V8_UNLIKELY(c1 == 'e' && c2 == 'l'))
-    return LocaleConvertCase(s, isolate, is_upper, "el");
-  if (V8_UNLIKELY(c1 == 'l' && c2 == 't'))
-    return LocaleConvertCase(s, isolate, is_upper, "lt");
-  if (V8_UNLIKELY(c1 == 'a' && c2 == 'z'))
-    return LocaleConvertCase(s, isolate, is_upper, "az");
-
-  return ConvertCase(s, is_upper, isolate);
 }
 
 RUNTIME_FUNCTION(Runtime_DateCacheVersion) {

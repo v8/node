@@ -5,7 +5,7 @@
 #include "src/compiler/js-native-context-specialization.h"
 
 #include "src/accessors.h"
-#include "src/api.h"
+#include "src/api-inl.h"
 #include "src/code-factory.h"
 #include "src/compiler/access-builder.h"
 #include "src/compiler/access-info.h"
@@ -20,6 +20,7 @@
 #include "src/feedback-vector.h"
 #include "src/field-index-inl.h"
 #include "src/isolate-inl.h"
+#include "src/objects/js-array-inl.h"
 #include "src/objects/templates.h"
 #include "src/vector-slot-pair.h"
 
@@ -58,9 +59,9 @@ struct JSNativeContextSpecialization::ScriptContextTableLookupResult {
 };
 
 JSNativeContextSpecialization::JSNativeContextSpecialization(
-    Editor* editor, JSGraph* jsgraph, const JSHeapBroker* js_heap_broker,
-    Flags flags, Handle<Context> native_context,
-    CompilationDependencies* dependencies, Zone* zone)
+    Editor* editor, JSGraph* jsgraph, JSHeapBroker* js_heap_broker, Flags flags,
+    Handle<Context> native_context, CompilationDependencies* dependencies,
+    Zone* zone)
     : AdvancedReducer(editor),
       jsgraph_(jsgraph),
       js_heap_broker_(js_heap_broker),
@@ -1101,7 +1102,7 @@ Reduction JSNativeContextSpecialization::ReduceJSLoadNamed(Node* node) {
         p.name().is_identical_to(factory()->prototype_string())) {
       // Optimize "prototype" property of functions.
       Handle<JSFunction> function = Handle<JSFunction>::cast(m.Value());
-      if (function->IsConstructor()) {
+      if (!function->PrototypeRequiresRuntimeLookup()) {
         // We need to add a code dependency on the initial map of the
         // {function} in order to be notified about changes to the
         // "prototype" of {function}.
@@ -2184,8 +2185,8 @@ namespace {
 
 ExternalArrayType GetArrayTypeFromElementsKind(ElementsKind kind) {
   switch (kind) {
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) \
-  case TYPE##_ELEMENTS:                                 \
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) \
+  case TYPE##_ELEMENTS:                           \
     return kExternal##Type##Array;
     TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
@@ -2221,7 +2222,8 @@ JSNativeContextSpecialization::BuildElementAccess(
       Handle<JSTypedArray> typed_array = Handle<JSTypedArray>::cast(m.Value());
 
       // Determine the {receiver}s (known) length.
-      length = jsgraph()->Constant(typed_array->length_value());
+      length =
+          jsgraph()->Constant(static_cast<double>(typed_array->length_value()));
 
       // Check if the {receiver}s buffer was neutered.
       buffer = jsgraph()->HeapConstant(typed_array->GetBuffer());
@@ -2474,7 +2476,7 @@ JSNativeContextSpecialization::BuildElementAccess(
     if (access_mode == AccessMode::kLoad) {
       // Compute the real element access type, which includes the hole in case
       // of holey backing stores.
-      if (IsHoleyOrDictionaryElementsKind(elements_kind)) {
+      if (IsHoleyElementsKind(elements_kind)) {
         element_access.type =
             Type::Union(element_type, Type::Hole(), graph()->zone());
       }

@@ -20,6 +20,7 @@
 #include "src/register-configuration.h"
 #include "src/runtime/runtime.h"
 #include "src/snapshot/snapshot.h"
+#include "src/wasm/wasm-code-manager.h"
 
 #include "src/arm64/macro-assembler-arm64-inl.h"
 #include "src/arm64/macro-assembler-arm64.h"  // Cannot be the first include
@@ -354,6 +355,7 @@ void TurboAssembler::Mov(const Register& rd, ExternalReference reference) {
       return;
     }
   }
+  // The Immediate in Operand sets the relocation mode.
   Mov(rd, Operand(reference));
 }
 
@@ -1429,7 +1431,7 @@ void MacroAssembler::PopCalleeSavedRegisters() {
 
 void TurboAssembler::AssertSpAligned() {
   if (emit_debug_code()) {
-    TrapOnAbortScope trap_on_abort_scope(this);  // Avoid calls to Abort.
+    HardAbortScope hard_abort(this);  // Avoid calls to Abort.
     // Arm64 requires the stack pointer to be 16-byte aligned prior to address
     // calculation.
     UseScratchRegisterScope scope(this);
@@ -1717,14 +1719,12 @@ void TurboAssembler::CallStubDelayed(CodeStub* stub) {
   DCHECK(AllowThisStubCall(stub));  // Stub calls are not allowed in some stubs.
   BlockPoolsScope scope(this);
 #ifdef DEBUG
-  Label start_call;
-  Bind(&start_call);
+  Label start;
+  Bind(&start);
 #endif
   Operand operand = Operand::EmbeddedCode(stub);
   near_call(operand.heap_object_request());
-#ifdef DEBUG
-  AssertSizeOfCodeGeneratedSince(&start_call, kNearCallSize);
-#endif
+  DCHECK_EQ(kNearCallSize, SizeOfCodeGeneratedSince(&start));
 }
 
 void MacroAssembler::CallStub(CodeStub* stub) {
@@ -1970,26 +1970,11 @@ void TurboAssembler::Jump(Handle<Code> code, RelocInfo::Mode rmode,
 
 void TurboAssembler::Call(Register target) {
   BlockPoolsScope scope(this);
-#ifdef DEBUG
-  Label start_call;
-  Bind(&start_call);
-#endif
-
   Blr(target);
-
-#ifdef DEBUG
-  AssertSizeOfCodeGeneratedSince(&start_call, CallSize(target));
-#endif
 }
 
-// TurboAssembler::CallSize is sensitive to changes in this function, as it
-// requires to know how many instructions are used to branch to the target.
 void TurboAssembler::Call(Address target, RelocInfo::Mode rmode) {
   BlockPoolsScope scope(this);
-#ifdef DEBUG
-  Label start_call;
-  Bind(&start_call);
-#endif
 
   if (CanUseNearCallOrJump(rmode)) {
     int64_t offset = CalculateTargetOffset(target, rmode, pc_);
@@ -1998,17 +1983,10 @@ void TurboAssembler::Call(Address target, RelocInfo::Mode rmode) {
   } else {
     IndirectCall(target, rmode);
   }
-#ifdef DEBUG
-  AssertSizeOfCodeGeneratedSince(&start_call, CallSize(target, rmode));
-#endif
 }
 
 void TurboAssembler::Call(Handle<Code> code, RelocInfo::Mode rmode) {
   BlockPoolsScope scope(this);
-#ifdef DEBUG
-  Label start_call;
-  Bind(&start_call);
-#endif
 
   if (FLAG_embedded_builtins) {
     if (root_array_available_ && options().isolate_independent_code &&
@@ -2045,19 +2023,12 @@ void TurboAssembler::Call(Handle<Code> code, RelocInfo::Mode rmode) {
   } else {
     IndirectCall(code.address(), rmode);
   }
-
-#ifdef DEBUG
-  // Check the size of the code generated.
-  AssertSizeOfCodeGeneratedSince(&start_call, CallSize(code, rmode));
-#endif
 }
 
 void TurboAssembler::Call(ExternalReference target) {
   UseScratchRegisterScope temps(this);
   Register temp = temps.AcquireX();
-  // Immediate is in charge of setting the relocation mode to
-  // EXTERNAL_REFERENCE.
-  Mov(temp, Immediate(target));
+  Mov(temp, target);
   Call(temp);
 }
 
@@ -2078,8 +2049,8 @@ void TurboAssembler::CallForDeoptimization(Address target, int deopt_id,
 
   BlockPoolsScope scope(this);
 #ifdef DEBUG
-  Label start_call;
-  Bind(&start_call);
+  Label start;
+  Bind(&start);
 #endif
   // The deoptimizer requires the deoptimization id to be in x16.
   UseScratchRegisterScope temps(this);
@@ -2096,24 +2067,7 @@ void TurboAssembler::CallForDeoptimization(Address target, int deopt_id,
   DCHECK(IsNearCallOffset(offset));
   near_call(static_cast<int>(offset), RelocInfo::RUNTIME_ENTRY);
 
-#ifdef DEBUG
-  AssertSizeOfCodeGeneratedSince(&start_call, kNearCallSize + kInstructionSize);
-#endif
-}
-
-int TurboAssembler::CallSize(Register target) {
-  USE(target);
-  return kInstructionSize;
-}
-
-int TurboAssembler::CallSize(Address target, RelocInfo::Mode rmode) {
-  USE(target);
-  return CanUseNearCallOrJump(rmode) ? kNearCallSize : kFarCallSize;
-}
-
-int TurboAssembler::CallSize(Handle<Code> code, RelocInfo::Mode rmode) {
-  USE(code);
-  return CanUseNearCallOrJump(rmode) ? kNearCallSize : kFarCallSize;
+  DCHECK_EQ(kNearCallSize + kInstructionSize, SizeOfCodeGeneratedSince(&start));
 }
 
 void MacroAssembler::TryRepresentDoubleAsInt(Register as_int, VRegister value,
@@ -2810,7 +2764,7 @@ int MacroAssembler::SafepointRegisterStackIndex(int reg_code) {
 void MacroAssembler::CheckPageFlag(const Register& object,
                                    const Register& scratch, int mask,
                                    Condition cc, Label* condition_met) {
-  And(scratch, object, ~Page::kPageAlignmentMask);
+  And(scratch, object, ~kPageAlignmentMask);
   Ldr(scratch, MemOperand(scratch, MemoryChunk::kFlagsOffset));
   if (cc == eq) {
     TestAndBranchIfAnySet(scratch, mask, condition_met);
@@ -2822,7 +2776,7 @@ void MacroAssembler::CheckPageFlag(const Register& object,
 void TurboAssembler::CheckPageFlagSet(const Register& object,
                                       const Register& scratch, int mask,
                                       Label* if_any_set) {
-  And(scratch, object, ~Page::kPageAlignmentMask);
+  And(scratch, object, ~kPageAlignmentMask);
   Ldr(scratch, MemOperand(scratch, MemoryChunk::kFlagsOffset));
   TestAndBranchIfAnySet(scratch, mask, if_any_set);
 }
@@ -2830,7 +2784,7 @@ void TurboAssembler::CheckPageFlagSet(const Register& object,
 void TurboAssembler::CheckPageFlagClear(const Register& object,
                                         const Register& scratch, int mask,
                                         Label* if_all_clear) {
-  And(scratch, object, ~Page::kPageAlignmentMask);
+  And(scratch, object, ~kPageAlignmentMask);
   Ldr(scratch, MemOperand(scratch, MemoryChunk::kFlagsOffset));
   TestAndBranchIfAllClear(scratch, mask, if_all_clear);
 }
@@ -3044,38 +2998,26 @@ void TurboAssembler::Abort(AbortReason reason) {
   RegList old_tmp_list = TmpList()->list();
   TmpList()->Combine(MacroAssembler::DefaultTmpList());
 
-  if (use_real_aborts()) {
-    // Avoid infinite recursion; Push contains some assertions that use Abort.
-    NoUseRealAbortsScope no_real_aborts(this);
+  if (should_abort_hard()) {
+    // We don't care if we constructed a frame. Just pretend we did.
+    FrameScope assume_frame(this, StackFrame::NONE);
+    Mov(w0, static_cast<int>(reason));
+    Call(ExternalReference::abort_with_reason());
+    return;
+  }
 
-    Move(x1, Smi::FromInt(static_cast<int>(reason)));
+  // Avoid infinite recursion; Push contains some assertions that use Abort.
+  HardAbortScope hard_aborts(this);
 
-    if (!has_frame_) {
-      // We don't actually want to generate a pile of code for this, so just
-      // claim there is a stack frame, without generating one.
-      FrameScope scope(this, StackFrame::NONE);
-      Call(BUILTIN_CODE(isolate(), Abort), RelocInfo::CODE_TARGET);
-    } else {
-      Call(BUILTIN_CODE(isolate(), Abort), RelocInfo::CODE_TARGET);
-    }
+  Move(x1, Smi::FromInt(static_cast<int>(reason)));
+
+  if (!has_frame_) {
+    // We don't actually want to generate a pile of code for this, so just
+    // claim there is a stack frame, without generating one.
+    FrameScope scope(this, StackFrame::NONE);
+    Call(BUILTIN_CODE(isolate(), Abort), RelocInfo::CODE_TARGET);
   } else {
-    // Load the string to pass to Printf.
-    Label msg_address;
-    Adr(x0, &msg_address);
-
-    // Call Printf directly to report the error.
-    CallPrintf();
-
-    // We need a way to stop execution on both the simulator and real hardware,
-    // and Unreachable() is the best option.
-    Unreachable();
-
-    // Emit the message string directly in the instruction stream.
-    {
-      BlockPoolsScope scope(this);
-      Bind(&msg_address);
-      EmitStringData(GetAbortReason(reason));
-    }
+    Call(BUILTIN_CODE(isolate(), Abort), RelocInfo::CODE_TARGET);
   }
 
   TmpList()->set_list(old_tmp_list);

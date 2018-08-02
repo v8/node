@@ -20,7 +20,7 @@
 #include "src/heap/incremental-marking.h"
 #include "src/heap/invalidated-slots-inl.h"
 #include "src/heap/item-parallel-job.h"
-#include "src/heap/local-allocator.h"
+#include "src/heap/local-allocator-inl.h"
 #include "src/heap/mark-compact-inl.h"
 #include "src/heap/object-stats.h"
 #include "src/heap/objects-visiting-inl.h"
@@ -1149,7 +1149,7 @@ class ProfilingMigrationObserver final : public MigrationObserver {
                    int size) final {
     if (dest == CODE_SPACE || (dest == OLD_SPACE && dst->IsBytecodeArray())) {
       PROFILE(heap_->isolate(),
-              CodeMoveEvent(AbstractCode::cast(src), dst->address()));
+              CodeMoveEvent(AbstractCode::cast(src), AbstractCode::cast(dst)));
     }
     heap_->OnMoveEvent(dst, src, size);
   }
@@ -1249,8 +1249,8 @@ class EvacuateVisitorBase : public HeapObjectVisitor {
   bool AbortCompactionForTesting(HeapObject* object) {
     if (FLAG_stress_compaction) {
       const uintptr_t mask = static_cast<uintptr_t>(FLAG_random_seed) &
-                             Page::kPageAlignmentMask & ~kPointerAlignmentMask;
-      if ((object->address() & Page::kPageAlignmentMask) == mask) {
+                             kPageAlignmentMask & ~kPointerAlignmentMask;
+      if ((object->address() & kPageAlignmentMask) == mask) {
         Page* page = Page::FromAddress(object->address());
         if (page->IsFlagSet(Page::COMPACTION_WAS_ABORTED_FOR_TESTING)) {
           page->ClearFlag(Page::COMPACTION_WAS_ABORTED_FOR_TESTING);
@@ -2301,7 +2301,14 @@ static String* UpdateReferenceInExternalStringTableEntry(Heap* heap,
   MapWord map_word = HeapObject::cast(*p)->map_word();
 
   if (map_word.IsForwardingAddress()) {
-    return String::cast(map_word.ToForwardingAddress());
+    String* new_string = String::cast(map_word.ToForwardingAddress());
+
+    if (new_string->IsExternalString()) {
+      heap->ProcessMovedExternalString(
+          Page::FromAddress(reinterpret_cast<Address>(*p)),
+          Page::FromHeapObject(new_string), ExternalString::cast(new_string));
+    }
+    return new_string;
   }
 
   return String::cast(*p);

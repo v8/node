@@ -7,6 +7,7 @@
 #include "src/counters.h"
 #include "src/elements.h"
 #include "src/objects-inl.h"
+#include "src/objects/js-array-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -157,7 +158,7 @@ BUILTIN(TypedArrayPrototypeFill) {
   DCHECK_LE(end, len);
   DCHECK_LE(count, len);
 
-  return ElementsAccessor::ForKind(kind)->Fill(isolate, array, obj_value,
+  return ElementsAccessor::ForKind(kind)->Fill(array, obj_value,
                                                static_cast<uint32_t>(start),
                                                static_cast<uint32_t>(end));
 }
@@ -256,7 +257,7 @@ BUILTIN(TypedArrayPrototypeLastIndexOf) {
   Handle<Object> search_element = args.atOrUndefined(isolate, 1);
   ElementsAccessor* elements = array->GetElementsAccessor();
   Maybe<int64_t> result = elements->LastIndexOfValue(
-      isolate, array, search_element, static_cast<uint32_t>(index));
+      array, search_element, static_cast<uint32_t>(index));
   MAYBE_RETURN(result, ReadOnlyRoots(isolate).exception());
   return *isolate->factory()->NewNumberFromInt64(result.FromJust());
 }

@@ -19,8 +19,10 @@
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/hash-table-inl.h"
 #include "src/objects/js-collection-inl.h"
+#include "src/objects/js-generator-inl.h"
 #include "src/objects/literal-objects-inl.h"
 #ifdef V8_INTL_SUPPORT
+#include "src/objects/js-list-format-inl.h"
 #include "src/objects/js-locale-inl.h"
 #endif  // V8_INTL_SUPPORT
 #include "src/objects/js-regexp-inl.h"
@@ -196,7 +198,7 @@ void HeapObject::HeapObjectVerify(Isolate* isolate) {
       FeedbackVector::cast(this)->FeedbackVectorVerify(isolate);
       break;
 
-#define VERIFY_TYPED_ARRAY(Type, type, TYPE, ctype, size)           \
+#define VERIFY_TYPED_ARRAY(Type, type, TYPE, ctype)                 \
   case FIXED_##TYPE##_ARRAY_TYPE:                                   \
     Fixed##Type##Array::cast(this)->FixedTypedArrayVerify(isolate); \
     break;
@@ -350,6 +352,9 @@ void HeapObject::HeapObjectVerify(Isolate* isolate) {
       CodeDataContainer::cast(this)->CodeDataContainerVerify(isolate);
       break;
 #ifdef V8_INTL_SUPPORT
+    case JS_INTL_LIST_FORMAT_TYPE:
+      JSListFormat::cast(this)->JSListFormatVerify(isolate);
+      break;
     case JS_INTL_LOCALE_TYPE:
       JSLocale::cast(this)->JSLocaleVerify(isolate);
       break;
@@ -933,8 +938,20 @@ void JSFunction::JSFunctionVerify(Isolate* isolate) {
   CHECK(feedback_cell()->IsFeedbackCell());
   CHECK(code()->IsCode());
   CHECK(map()->is_callable());
+  Handle<JSFunction> function(this, isolate);
+  LookupIterator it(isolate, function, isolate->factory()->prototype_string(),
+                    LookupIterator::OWN_SKIP_INTERCEPTOR);
   if (has_prototype_slot()) {
     VerifyObjectField(isolate, kPrototypeOrInitialMapOffset);
+  }
+
+  if (has_prototype_property()) {
+    CHECK(it.IsFound());
+    CHECK_EQ(LookupIterator::ACCESSOR, it.state());
+    CHECK(it.GetAccessors()->IsAccessorInfo());
+  } else {
+    CHECK(!it.IsFound() || it.state() != LookupIterator::ACCESSOR ||
+          !it.GetAccessors()->IsAccessorInfo());
   }
 }
 
@@ -943,9 +960,8 @@ void SharedFunctionInfo::SharedFunctionInfoVerify(Isolate* isolate) {
 
   VerifyObjectField(isolate, kFunctionDataOffset);
   VerifyObjectField(isolate, kOuterScopeInfoOrFeedbackMetadataOffset);
-  VerifyObjectField(isolate, kFunctionIdentifierOrDebugInfoOffset);
+  VerifyObjectField(isolate, kScriptOrDebugInfoOffset);
   VerifyObjectField(isolate, kNameOrScopeInfoOffset);
-  VerifyObjectField(isolate, kScriptOffset);
 
   Object* value = name_or_scope_info();
   CHECK(value == kNoSharedNameSentinel || value->IsString() ||
@@ -960,8 +976,8 @@ void SharedFunctionInfo::SharedFunctionInfoVerify(Isolate* isolate) {
         HasUncompiledDataWithPreParsedScope() ||
         HasUncompiledDataWithoutPreParsedScope());
 
-  CHECK(function_identifier_or_debug_info()->IsUndefined(isolate) ||
-        HasBuiltinFunctionId() || HasInferredName() || HasDebugInfo());
+  CHECK(script_or_debug_info()->IsUndefined(isolate) ||
+        script_or_debug_info()->IsScript() || HasDebugInfo());
 
   if (!is_compiled()) {
     CHECK(!HasFeedbackMetadata());
@@ -1000,6 +1016,7 @@ void JSGlobalProxy::JSGlobalProxyVerify(Isolate* isolate) {
   CHECK(IsJSGlobalProxy());
   JSObjectVerify(isolate);
   VerifyObjectField(isolate, JSGlobalProxy::kNativeContextOffset);
+  CHECK(map()->is_access_check_needed());
   // Make sure that this object has no properties, elements.
   CHECK_EQ(0, FixedArray::cast(elements())->length());
 }
@@ -1665,10 +1682,10 @@ void DataHandler::DataHandlerVerify(Isolate* isolate) {
     VerifyMaybeObjectField(isolate, kData1Offset);
   }
   if (data_count >= 2) {
-    VerifyObjectField(isolate, kData2Offset);
+    VerifyMaybeObjectField(isolate, kData2Offset);
   }
   if (data_count >= 3) {
-    VerifyObjectField(isolate, kData3Offset);
+    VerifyMaybeObjectField(isolate, kData3Offset);
   }
 }
 
@@ -1802,7 +1819,7 @@ void NormalizedMapCache::NormalizedMapCacheVerify(Isolate* isolate) {
 void DebugInfo::DebugInfoVerify(Isolate* isolate) {
   CHECK(IsDebugInfo());
   VerifyPointer(isolate, shared());
-  VerifyPointer(isolate, function_identifier());
+  VerifyPointer(isolate, script());
   VerifyPointer(isolate, original_bytecode_array());
   VerifyPointer(isolate, break_points());
 }
@@ -1829,12 +1846,14 @@ void PreParsedScopeData::PreParsedScopeDataVerify(Isolate* isolate) {
 void UncompiledDataWithPreParsedScope::UncompiledDataWithPreParsedScopeVerify(
     Isolate* isolate) {
   CHECK(IsUncompiledDataWithPreParsedScope());
+  VerifyPointer(isolate, inferred_name());
   VerifyPointer(isolate, pre_parsed_scope_data());
 }
 
 void UncompiledDataWithoutPreParsedScope::
     UncompiledDataWithoutPreParsedScopeVerify(Isolate* isolate) {
   CHECK(IsUncompiledDataWithoutPreParsedScope());
+  VerifyPointer(isolate, inferred_name());
 }
 
 void InterpreterData::InterpreterDataVerify(Isolate* isolate) {
@@ -1844,6 +1863,12 @@ void InterpreterData::InterpreterDataVerify(Isolate* isolate) {
 }
 
 #ifdef V8_INTL_SUPPORT
+void JSListFormat::JSListFormatVerify(Isolate* isolate) {
+  VerifyObjectField(isolate, kLocaleOffset);
+  VerifyObjectField(isolate, kFormatterOffset);
+  VerifyObjectField(isolate, kFlagsOffset);
+}
+
 void JSLocale::JSLocaleVerify(Isolate* isolate) {
   VerifyObjectField(isolate, kLanguageOffset);
   VerifyObjectField(isolate, kScriptOffset);
@@ -1861,9 +1886,8 @@ void JSLocale::JSLocaleVerify(Isolate* isolate) {
 
 void JSRelativeTimeFormat::JSRelativeTimeFormatVerify(Isolate* isolate) {
   VerifyObjectField(isolate, kLocaleOffset);
-  VerifyObjectField(isolate, kStyleOffset);
-  VerifyObjectField(isolate, kNumericOffset);
   VerifyObjectField(isolate, kFormatterOffset);
+  VerifyObjectField(isolate, kFlagsOffset);
 }
 #endif  // V8_INTL_SUPPORT
 
@@ -1911,16 +1935,16 @@ void JSObject::IncrementSpillStatistics(Isolate* isolate,
       break;
     }
 
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size)                       \
-    case TYPE##_ELEMENTS:
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) case TYPE##_ELEMENTS:
 
-    TYPED_ARRAYS(TYPED_ARRAY_CASE)
+      TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
-    { info->number_of_objects_with_fast_elements_++;
-      FixedArrayBase* e = FixedArrayBase::cast(elements());
-      info->number_of_fast_used_elements_ += e->length();
-      break;
-    }
+      {
+        info->number_of_objects_with_fast_elements_++;
+        FixedArrayBase* e = FixedArrayBase::cast(elements());
+        info->number_of_fast_used_elements_ += e->length();
+        break;
+      }
     case DICTIONARY_ELEMENTS:
     case SLOW_STRING_WRAPPER_ELEMENTS: {
       NumberDictionary* dict = element_dictionary();

@@ -7,7 +7,9 @@
 
 #include "src/objects/fixed-array.h"
 
+#include "src/objects-inl.h"  // Needed for write barriers
 #include "src/objects/bigint.h"
+#include "src/objects/maybe-object-inl.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -97,7 +99,7 @@ void FixedArray::set(int index, Object* value) {
   DCHECK_LT(index, this->length());
   int offset = kHeaderSize + index * kPointerSize;
   RELAXED_WRITE_FIELD(this, offset, value);
-  WRITE_BARRIER(Heap::FromWritableHeapObject(this), this, offset, value);
+  WRITE_BARRIER(this, offset, value);
 }
 
 void FixedArray::set(int index, Object* value, WriteBarrierMode mode) {
@@ -106,8 +108,7 @@ void FixedArray::set(int index, Object* value, WriteBarrierMode mode) {
   DCHECK_LT(index, this->length());
   int offset = kHeaderSize + index * kPointerSize;
   RELAXED_WRITE_FIELD(this, offset, value);
-  CONDITIONAL_WRITE_BARRIER(Heap::FromWritableHeapObject(this), this, offset,
-                            value, mode);
+  CONDITIONAL_WRITE_BARRIER(this, offset, value, mode);
 }
 
 void FixedArray::NoWriteBarrierSet(FixedArray* array, int index,
@@ -243,7 +244,7 @@ void WeakFixedArray::Set(int index, MaybeObject* value) {
   DCHECK_LT(index, length());
   int offset = OffsetOfElementAt(index);
   RELAXED_WRITE_FIELD(this, offset, value);
-  WEAK_WRITE_BARRIER(Heap::FromWritableHeapObject(this), this, offset, value);
+  WEAK_WRITE_BARRIER(this, offset, value);
 }
 
 void WeakFixedArray::Set(int index, MaybeObject* value, WriteBarrierMode mode) {
@@ -251,8 +252,7 @@ void WeakFixedArray::Set(int index, MaybeObject* value, WriteBarrierMode mode) {
   DCHECK_LT(index, length());
   int offset = OffsetOfElementAt(index);
   RELAXED_WRITE_FIELD(this, offset, value);
-  CONDITIONAL_WEAK_WRITE_BARRIER(Heap::FromWritableHeapObject(this), this,
-                                 offset, value, mode);
+  CONDITIONAL_WEAK_WRITE_BARRIER(this, offset, value, mode);
 }
 
 MaybeObject** WeakFixedArray::data_start() {
@@ -278,12 +278,23 @@ void WeakArrayList::Set(int index, MaybeObject* value, WriteBarrierMode mode) {
   DCHECK_LT(index, this->capacity());
   int offset = OffsetOfElementAt(index);
   RELAXED_WRITE_FIELD(this, offset, value);
-  CONDITIONAL_WEAK_WRITE_BARRIER(Heap::FromWritableHeapObject(this), this,
-                                 offset, value, mode);
+  CONDITIONAL_WEAK_WRITE_BARRIER(this, offset, value, mode);
 }
 
 MaybeObject** WeakArrayList::data_start() {
   return HeapObject::RawMaybeWeakField(this, kHeaderSize);
+}
+
+HeapObject* WeakArrayList::Iterator::Next() {
+  if (array_ != nullptr) {
+    while (index_ < array_->length()) {
+      MaybeObject* item = array_->Get(index_++);
+      DCHECK(item->IsWeakHeapObject() || item->IsClearedWeakHeapObject());
+      if (!item->IsClearedWeakHeapObject()) return item->ToWeakHeapObject();
+    }
+    array_ = nullptr;
+  }
+  return nullptr;
 }
 
 Object* FixedArrayOfWeakCells::Get(int index) const {
@@ -438,6 +449,11 @@ Handle<PodArray<T>> PodArray<T>::New(Isolate* isolate, int length,
       isolate->factory()->NewByteArray(length * sizeof(T), pretenure));
 }
 
+template <class T>
+int PodArray<T>::length() {
+  return ByteArray::length() / sizeof(T);
+}
+
 void* FixedTypedArrayBase::external_pointer() const {
   intptr_t ptr = READ_INTPTR_FIELD(this, kExternalPointerOffset);
   return reinterpret_cast<void*>(ptr);
@@ -458,9 +474,9 @@ void* FixedTypedArrayBase::DataPtr() {
 int FixedTypedArrayBase::ElementSize(InstanceType type) {
   int element_size;
   switch (type) {
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) \
-  case FIXED_##TYPE##_ARRAY_TYPE:                       \
-    element_size = size;                                \
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) \
+  case FIXED_##TYPE##_ARRAY_TYPE:                 \
+    element_size = sizeof(ctype);                 \
     break;
 
     TYPED_ARRAYS(TYPED_ARRAY_CASE)

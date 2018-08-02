@@ -125,10 +125,8 @@ class HeapEntry BASE_EMBEDDED {
   V8_INLINE int index() const;
   int children_count() const { return children_count_; }
   V8_INLINE int set_children_index(int index);
-  void add_child(HeapGraphEdge* edge) {
-    *(children_begin() + children_count_++) = edge;
-  }
-  HeapGraphEdge* child(int i) { return *(children_begin() + i); }
+  V8_INLINE void add_child(HeapGraphEdge* edge);
+  V8_INLINE HeapGraphEdge* child(int i);
   V8_INLINE Isolate* isolate() const;
 
   void SetIndexedReference(
@@ -392,6 +390,8 @@ class V8HeapExplorer : public HeapEntriesAllocator {
       int entry, ArrayBoilerplateDescription* value);
   void ExtractJSArrayBufferReferences(int entry, JSArrayBuffer* buffer);
   void ExtractJSPromiseReferences(int entry, JSPromise* promise);
+  void ExtractJSGeneratorObjectReferences(int entry,
+                                          JSGeneratorObject* generator);
   void ExtractFixedArrayReferences(int entry, FixedArray* array);
   void ExtractFeedbackVectorReferences(int entry,
                                        FeedbackVector* feedback_vector);
@@ -591,15 +591,10 @@ class HeapSnapshotJSONSerializer {
                   reinterpret_cast<char*>(key2)) == 0;
   }
 
-  V8_INLINE static uint32_t StringHash(const void* string) {
-    const char* s = reinterpret_cast<const char*>(string);
-    int len = static_cast<int>(strlen(s));
-    return StringHasher::HashSequentialString(
-        s, len, v8::internal::kZeroHashSeed);
-  }
+  V8_INLINE static uint32_t StringHash(const void* string);
 
   int GetStringId(const char* s);
-  int entry_index(const HeapEntry* e) { return e->index() * kNodeFieldsCount; }
+  V8_INLINE int entry_index(const HeapEntry* e);
   void SerializeEdge(HeapGraphEdge* edge, bool first_edge);
   void SerializeEdges();
   void SerializeImpl();

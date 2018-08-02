@@ -79,7 +79,7 @@ class AsyncCompileJob {
  public:
   explicit AsyncCompileJob(Isolate* isolate, std::unique_ptr<byte[]> bytes_copy,
                            size_t length, Handle<Context> context,
-                           std::unique_ptr<CompilationResultResolver> resolver);
+                           std::shared_ptr<CompilationResultResolver> resolver);
   ~AsyncCompileJob();
 
   void Start();
@@ -87,6 +87,7 @@ class AsyncCompileJob {
   std::shared_ptr<StreamingDecoder> CreateStreamingDecoder();
 
   void Abort();
+  void CancelPendingForegroundTask();
 
   Isolate* isolate() const { return isolate_; }
 
@@ -101,7 +102,6 @@ class AsyncCompileJob {
   class CompileFailed;
   class CompileWrappers;
   class FinishModule;
-  class AbortCompilation;
   class UpdateToTopTierCompiledCode;
 
   const std::shared_ptr<Counters>& async_counters() const {
@@ -116,6 +116,7 @@ class AsyncCompileJob {
   void AsyncCompileSucceeded(Handle<WasmModuleObject> result);
 
   void StartForegroundTask();
+  void ExecuteForegroundTaskImmediately();
 
   void StartBackgroundTask();
 
@@ -138,14 +139,14 @@ class AsyncCompileJob {
 
   Isolate* isolate_;
   const std::shared_ptr<Counters> async_counters_;
-  // Copy of the module wire bytes, moved into the {native_module_} on it's
+  // Copy of the module wire bytes, moved into the {native_module_} on its
   // creation.
   std::unique_ptr<byte[]> bytes_copy_;
   // Reference to the wire bytes (hold in {bytes_copy_} or as part of
   // {native_module_}).
   ModuleWireBytes wire_bytes_;
   Handle<Context> native_context_;
-  std::unique_ptr<CompilationResultResolver> resolver_;
+  std::shared_ptr<CompilationResultResolver> resolver_;
   std::shared_ptr<const WasmModule> module_;
 
   std::vector<DeferredHandles*> deferred_handles_;
@@ -169,8 +170,8 @@ class AsyncCompileJob {
     return outstanding_finishers_.fetch_sub(1) == 1;
   }
 
-  // Counts the number of pending foreground tasks.
-  int32_t num_pending_foreground_tasks_ = 0;
+  // A reference to a pending foreground task, or {nullptr} if none is pending.
+  CompileTask* pending_foreground_task_ = nullptr;
 
   // The AsyncCompileJob owns the StreamingDecoder because the StreamingDecoder
   // contains data which is needed by the AsyncCompileJob for streaming

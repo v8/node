@@ -157,7 +157,7 @@ class ChunkedStream {
 // Chars are buffered if either the underlying stream isn't utf-16 or the
 // underlying utf-16 stream might move (is on-heap).
 template <typename Char, template <typename T> class ByteStream>
-class BufferedCharacterStream : public Utf16CharacterStream {
+class BufferedCharacterStream : public CharacterStream<uint16_t> {
  public:
   template <class... TArgs>
   BufferedCharacterStream(size_t pos, TArgs... args) : byte_stream_(args...) {
@@ -165,7 +165,7 @@ class BufferedCharacterStream : public Utf16CharacterStream {
   }
 
  protected:
-  bool ReadBlock() override {
+  bool ReadBlock() final {
     size_t position = pos();
     buffer_pos_ = position;
     buffer_start_ = &buffer_[0];
@@ -183,9 +183,7 @@ class BufferedCharacterStream : public Utf16CharacterStream {
     return true;
   }
 
-  bool can_access_heap() override {
-    return ByteStream<uint16_t>::kCanAccessHeap;
-  }
+  bool can_access_heap() final { return ByteStream<uint16_t>::kCanAccessHeap; }
 
  private:
   static const size_t kBufferSize = 512;
@@ -196,16 +194,15 @@ class BufferedCharacterStream : public Utf16CharacterStream {
 // Provides a unbuffered utf-16 view on the bytes from the underlying
 // ByteStream.
 template <template <typename T> class ByteStream>
-class UnbufferedCharacterStream : public Utf16CharacterStream {
+class UnbufferedCharacterStream : public CharacterStream<uint16_t> {
  public:
   template <class... TArgs>
   UnbufferedCharacterStream(size_t pos, TArgs... args) : byte_stream_(args...) {
-    DCHECK(!ByteStream<uint16_t>::kCanAccessHeap);
     buffer_pos_ = pos;
   }
 
  protected:
-  bool ReadBlock() override {
+  bool ReadBlock() final {
     size_t position = pos();
     buffer_pos_ = position;
     Range<uint16_t> range = byte_stream_.GetDataAt(position);
@@ -219,10 +216,48 @@ class UnbufferedCharacterStream : public Utf16CharacterStream {
     return true;
   }
 
-  bool can_access_heap() override { return false; }
+  bool can_access_heap() final { return ByteStream<uint16_t>::kCanAccessHeap; }
+
+  ByteStream<uint16_t> byte_stream_;
+};
+
+// Provides a unbuffered utf-16 view on the bytes from the underlying
+// ByteStream.
+class RelocatingCharacterStream
+    : public UnbufferedCharacterStream<OnHeapStream> {
+ public:
+  template <class... TArgs>
+  RelocatingCharacterStream(Isolate* isolate, size_t pos, TArgs... args)
+      : UnbufferedCharacterStream<OnHeapStream>(pos, args...),
+        isolate_(isolate) {
+    isolate->heap()->AddGCEpilogueCallback(UpdateBufferPointersCallback,
+                                           v8::kGCTypeAll, this);
+  }
 
  private:
-  ByteStream<uint16_t> byte_stream_;
+  ~RelocatingCharacterStream() final {
+    isolate_->heap()->RemoveGCEpilogueCallback(UpdateBufferPointersCallback,
+                                               this);
+  }
+
+  static void UpdateBufferPointersCallback(v8::Isolate* v8_isolate,
+                                           v8::GCType type,
+                                           v8::GCCallbackFlags flags,
+                                           void* stream) {
+    reinterpret_cast<RelocatingCharacterStream*>(stream)
+        ->UpdateBufferPointers();
+  }
+
+  void UpdateBufferPointers() {
+    Range<uint16_t> range = byte_stream_.GetDataAt(0);
+    if (range.start != buffer_start_) {
+      buffer_cursor_ = (buffer_cursor_ - buffer_start_) + range.start;
+      buffer_start_ = range.start;
+      buffer_end_ = range.end;
+    }
+  }
+
+  Isolate* isolate_;
 };
 
 // ----------------------------------------------------------------------------
@@ -233,14 +268,14 @@ class UnbufferedCharacterStream : public Utf16CharacterStream {
 // even positions before the current).
 //
 // TODO(verwaest): Remove together with Utf8 external streaming streams.
-class BufferedUtf16CharacterStream : public Utf16CharacterStream {
+class BufferedUtf16CharacterStream : public CharacterStream<uint16_t> {
  public:
   BufferedUtf16CharacterStream();
 
  protected:
   static const size_t kBufferSize = 512;
 
-  bool ReadBlock() override;
+  bool ReadBlock() final;
 
   // FillBuffer should read up to kBufferSize characters at position and store
   // them into buffer_[0..]. It returns the number of characters stored.
@@ -252,7 +287,7 @@ class BufferedUtf16CharacterStream : public Utf16CharacterStream {
 };
 
 BufferedUtf16CharacterStream::BufferedUtf16CharacterStream()
-    : Utf16CharacterStream(buffer_, buffer_, buffer_, 0) {}
+    : CharacterStream(buffer_, buffer_, buffer_, 0) {}
 
 bool BufferedUtf16CharacterStream::ReadBlock() {
   DCHECK_EQ(buffer_start_, buffer_);
@@ -285,14 +320,14 @@ class Utf8ExternalStreamingStream : public BufferedUtf16CharacterStream {
       : current_({0, {0, 0, 0, unibrow::Utf8::State::kAccept}}),
         source_stream_(source_stream),
         stats_(stats) {}
-  ~Utf8ExternalStreamingStream() override {
+  ~Utf8ExternalStreamingStream() final {
     for (size_t i = 0; i < chunks_.size(); i++) delete[] chunks_[i].data;
   }
 
-  bool can_access_heap() override { return false; }
+  bool can_access_heap() final { return false; }
 
  protected:
-  size_t FillBuffer(size_t position) override;
+  size_t FillBuffer(size_t position) final;
 
  private:
   // A position within the data stream. It stores:
@@ -550,13 +585,12 @@ size_t Utf8ExternalStreamingStream::FillBuffer(size_t position) {
 // ----------------------------------------------------------------------------
 // ScannerStream: Create stream instances.
 
-Utf16CharacterStream* ScannerStream::For(Isolate* isolate,
-                                         Handle<String> data) {
+ScannerStream* ScannerStream::For(Isolate* isolate, Handle<String> data) {
   return ScannerStream::For(isolate, data, 0, data->length());
 }
 
-Utf16CharacterStream* ScannerStream::For(Isolate* isolate, Handle<String> data,
-                                         int start_pos, int end_pos) {
+ScannerStream* ScannerStream::For(Isolate* isolate, Handle<String> data,
+                                  int start_pos, int end_pos) {
   DCHECK_GE(start_pos, 0);
   DCHECK_LE(start_pos, end_pos);
   DCHECK_LE(end_pos, data->length());
@@ -585,28 +619,29 @@ Utf16CharacterStream* ScannerStream::For(Isolate* isolate, Handle<String> data,
         static_cast<size_t>(start_pos), Handle<SeqOneByteString>::cast(data),
         start_offset, static_cast<size_t>(end_pos));
   } else if (data->IsSeqTwoByteString()) {
-    return new BufferedCharacterStream<uint16_t, OnHeapStream>(
-        static_cast<size_t>(start_pos), Handle<SeqTwoByteString>::cast(data),
-        start_offset, static_cast<size_t>(end_pos));
+    return new RelocatingCharacterStream(
+        isolate, static_cast<size_t>(start_pos),
+        Handle<SeqTwoByteString>::cast(data), start_offset,
+        static_cast<size_t>(end_pos));
   } else {
     UNREACHABLE();
   }
 }
 
-std::unique_ptr<Utf16CharacterStream> ScannerStream::ForTesting(
+std::unique_ptr<CharacterStream<uint16_t>> ScannerStream::ForTesting(
     const char* data) {
   return ScannerStream::ForTesting(data, strlen(data));
 }
 
-std::unique_ptr<Utf16CharacterStream> ScannerStream::ForTesting(
+std::unique_ptr<CharacterStream<uint16_t>> ScannerStream::ForTesting(
     const char* data, size_t length) {
-  return std::unique_ptr<Utf16CharacterStream>(
+  return std::unique_ptr<CharacterStream<uint16_t>>(
       new BufferedCharacterStream<uint8_t, ExternalStringStream>(
           static_cast<size_t>(0), reinterpret_cast<const uint8_t*>(data),
           static_cast<size_t>(length)));
 }
 
-Utf16CharacterStream* ScannerStream::For(
+ScannerStream* ScannerStream::For(
     ScriptCompiler::ExternalSourceStream* source_stream,
     v8::ScriptCompiler::StreamedSource::Encoding encoding,
     RuntimeCallStats* stats) {

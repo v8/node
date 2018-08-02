@@ -39,7 +39,7 @@
 // The C++ style guide recommends using <re2> instead of <regex>. However, the
 // former isn't available in V8.
 #include <regex>  // NOLINT(build/c++11)
-#include "src/api.h"
+#include "src/api-inl.h"
 #include "src/log-utils.h"
 #include "src/log.h"
 #include "src/objects-inl.h"
@@ -119,7 +119,6 @@ class ScopedLoggerInitializer {
     if (temp_file_ != nullptr) fclose(temp_file_);
     i::FLAG_prof = saved_prof_;
     i::FLAG_log = saved_log_;
-    log_.Dispose();
   }
 
   v8::Local<v8::Context>& env() { return env_; }
@@ -132,12 +131,12 @@ class ScopedLoggerInitializer {
 
   void PrintLog(int requested_nof_lines = 0, const char* start = nullptr) {
     if (requested_nof_lines <= 0) {
-      printf("%s", log_.start());
+      printf("%s", log_.c_str());
       return;
     }
     // Try to print the last {requested_nof_lines} of the log.
-    if (start == nullptr) start = log_.start();
-    const char* current = log_.end();
+    if (start == nullptr) start = log_.c_str();
+    const char* current = start + log_.length();
     int nof_lines = requested_nof_lines;
     while (current > start && nof_lines > 0) {
       current--;
@@ -153,8 +152,9 @@ class ScopedLoggerInitializer {
   }
 
   v8::Local<v8::String> GetLogString() {
-    return v8::String::NewFromUtf8(isolate_, log_.start(),
-                                   v8::NewStringType::kNormal, log_.length())
+    int length = static_cast<int>(log_.size());
+    return v8::String::NewFromUtf8(isolate_, log_.c_str(),
+                                   v8::NewStringType::kNormal, length)
         .ToLocalChecked();
   }
 
@@ -164,13 +164,13 @@ class ScopedLoggerInitializer {
     CHECK(exists);
   }
 
-  const char* GetEndPosition() { return log_.start() + log_.length(); }
+  const char* GetEndPosition() { return log_.c_str() + log_.size(); }
 
   const char* FindLine(const char* prefix, const char* suffix = nullptr,
                        const char* start = nullptr) {
     // Make sure that StopLogging() has been called before.
     CHECK(log_.size());
-    if (start == nullptr) start = log_.start();
+    if (start == nullptr) start = log_.c_str();
     const char* end = GetEndPosition();
     return FindLogLine(start, end, prefix, suffix);
   }
@@ -220,7 +220,7 @@ class ScopedLoggerInitializer {
                            const char* prefix, int field_index) {
     // Make sure that StopLogging() has been called before.
     CHECK(log_.size());
-    const char* current = log_.start();
+    const char* current = log_.c_str();
     while (current != nullptr) {
       current = FindLine(prefix, nullptr, current);
       if (current == nullptr) return;
@@ -257,7 +257,7 @@ class ScopedLoggerInitializer {
   v8::HandleScope scope_;
   v8::Local<v8::Context> env_;
   Logger* logger_;
-  i::Vector<const char> log_;
+  std::string log_;
 
   DISALLOW_COPY_AND_ASSIGN(ScopedLoggerInitializer);
 };
@@ -294,7 +294,7 @@ class TestCodeEventHandler : public v8::CodeEventHandler {
     if (name.empty()) {
       v8::Local<v8::String> functionName = code_event->GetFunctionName();
       std::string buffer(functionName->Utf8Length(isolate_) + 1, 0);
-      functionName->WriteUtf8(&buffer[0],
+      functionName->WriteUtf8(isolate_, &buffer[0],
                               functionName->Utf8Length(isolate_) + 1);
       // Sanitize name, removing unwanted \0 resulted from WriteUtf8
       name = std::string(buffer.c_str());
@@ -535,7 +535,7 @@ TEST(Issue23768) {
       CcTest::i_isolate());
   // This situation can happen if source was an external string disposed
   // by its owner.
-  i_source->set_resource(nullptr);
+  i_source->SetResource(CcTest::i_isolate(), nullptr);
 
   // Must not crash.
   CcTest::i_isolate()->logger()->LogCompiledFunctions();
@@ -716,7 +716,7 @@ TEST(EquivalenceOfLoggingAndTraversal) {
       v8::Local<v8::String> s = result->ToString(logger.env()).ToLocalChecked();
       i::ScopedVector<char> data(s->Utf8Length(isolate) + 1);
       CHECK(data.start());
-      s->WriteUtf8(data.start());
+      s->WriteUtf8(isolate, data.start());
       FATAL("%s\n", data.start());
     }
   }
@@ -751,7 +751,7 @@ TEST(Issue539892) {
     explicit FakeCodeEventLogger(i::Isolate* isolate)
         : CodeEventLogger(isolate) {}
 
-    void CodeMoveEvent(i::AbstractCode* from, Address to) override {}
+    void CodeMoveEvent(i::AbstractCode* from, i::AbstractCode* to) override {}
     void CodeDisableOptEvent(i::AbstractCode* code,
                              i::SharedFunctionInfo* shared) override {}
 

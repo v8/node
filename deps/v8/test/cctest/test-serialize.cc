@@ -31,7 +31,7 @@
 
 #include "src/v8.h"
 
-#include "src/api.h"
+#include "src/api-inl.h"
 #include "src/assembler-inl.h"
 #include "src/bootstrapper.h"
 #include "src/compilation-cache.h"
@@ -40,6 +40,7 @@
 #include "src/heap/spaces.h"
 #include "src/macro-assembler-inl.h"
 #include "src/objects-inl.h"
+#include "src/objects/js-array-inl.h"
 #include "src/runtime/runtime.h"
 #include "src/snapshot/builtin-deserializer.h"
 #include "src/snapshot/builtin-serializer.h"
@@ -1439,6 +1440,13 @@ void TestCodeSerializerOnePlusOneImpl() {
 
 TEST(CodeSerializerOnePlusOne) { TestCodeSerializerOnePlusOneImpl(); }
 
+TEST(CodeSerializerOnePlusOneWithDebugger) {
+  v8::HandleScope scope(CcTest::isolate());
+  static v8::debug::DebugDelegate dummy_delegate;
+  v8::debug::SetDebugDelegate(CcTest::isolate(), &dummy_delegate);
+  TestCodeSerializerOnePlusOneImpl();
+}
+
 TEST(CodeSerializerOnePlusOne1) {
   FLAG_serialization_chunk_size = 1;
   TestCodeSerializerOnePlusOneImpl();
@@ -1902,9 +1910,9 @@ TEST(CodeSerializerExternalString) {
 
   // This avoids the GC from trying to free stack allocated resources.
   i::Handle<i::ExternalOneByteString>::cast(one_byte_string)
-      ->set_resource(nullptr);
+      ->SetResource(isolate, nullptr);
   i::Handle<i::ExternalTwoByteString>::cast(two_byte_string)
-      ->set_resource(nullptr);
+      ->SetResource(isolate, nullptr);
   delete cache;
 }
 
@@ -1962,7 +1970,8 @@ TEST(CodeSerializerLargeExternalString) {
   CHECK_EQ(42.0, copy_result->Number());
 
   // This avoids the GC from trying to free stack allocated resources.
-  i::Handle<i::ExternalOneByteString>::cast(name)->set_resource(nullptr);
+  i::Handle<i::ExternalOneByteString>::cast(name)->SetResource(isolate,
+                                                               nullptr);
   delete cache;
   string.Dispose();
 }
@@ -2013,7 +2022,8 @@ TEST(CodeSerializerExternalScriptName) {
   CHECK_EQ(10.0, copy_result->Number());
 
   // This avoids the GC from trying to free stack allocated resources.
-  i::Handle<i::ExternalOneByteString>::cast(name)->set_resource(nullptr);
+  i::Handle<i::ExternalOneByteString>::cast(name)->SetResource(isolate,
+                                                               nullptr);
   delete cache;
 }
 

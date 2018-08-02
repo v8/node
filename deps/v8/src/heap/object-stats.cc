@@ -706,12 +706,11 @@ void ObjectStatsCollectorImpl::CollectGlobalStatistics() {
 
   // FixedArrayOfWeakCells.
   RecordSimpleVirtualObjectStats(
-      nullptr,
-      FixedArrayOfWeakCells::cast(heap_->noscript_shared_function_infos()),
+      nullptr, WeakArrayList::cast(heap_->noscript_shared_function_infos()),
       ObjectStats::NOSCRIPT_SHARED_FUNCTION_INFOS_TYPE);
-  RecordSimpleVirtualObjectStats(
-      nullptr, FixedArrayOfWeakCells::cast(heap_->script_list()),
-      ObjectStats::SCRIPT_LIST_TYPE);
+  RecordSimpleVirtualObjectStats(nullptr,
+                                 WeakArrayList::cast(heap_->script_list()),
+                                 ObjectStats::SCRIPT_LIST_TYPE);
 
   // HashTable.
   RecordHashTableVirtualObjectStats(nullptr, heap_->code_stubs(),

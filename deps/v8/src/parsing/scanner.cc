@@ -15,7 +15,7 @@
 #include "src/conversions-inl.h"
 #include "src/objects/bigint.h"
 #include "src/parsing/duplicate-finder.h"  // For Scanner::FindSymbol
-#include "src/unicode-cache-inl.h"
+#include "src/parsing/scanner-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -181,11 +181,14 @@ Scanner::Scanner(UnicodeCache* unicode_cache)
     : unicode_cache_(unicode_cache),
       octal_pos_(Location::invalid()),
       octal_message_(MessageTemplate::kNone),
+      has_line_terminator_before_next_(false),
+      has_multiline_comment_before_next_(false),
+      has_line_terminator_after_next_(false),
       found_html_comment_(false),
       allow_harmony_bigint_(false),
       allow_harmony_numeric_separator_(false) {}
 
-void Scanner::Initialize(Utf16CharacterStream* source, bool is_module) {
+void Scanner::Initialize(CharacterStream<uint16_t>* source, bool is_module) {
   DCHECK_NOT_NULL(source);
   source_ = source;
   is_module_ = is_module;
@@ -417,32 +420,13 @@ Token::Value Scanner::PeekAhead() {
   return ret;
 }
 
-
-Token::Value Scanner::SkipWhiteSpace() {
-  int start_position = source_pos();
-
+Token::Value Scanner::TryToSkipHTMLCommentAndWhiteSpaces(int start_position) {
   while (true) {
-    while (true) {
-      // We won't skip behind the end of input.
-      DCHECK(!unicode_cache_->IsWhiteSpace(kEndOfInput));
-
-      // Advance as long as character is a WhiteSpace or LineTerminator.
-      // Remember if the latter is the case.
-      if (unibrow::IsLineTerminator(c0_)) {
-        has_line_terminator_before_next_ = true;
-      } else if (!unicode_cache_->IsWhiteSpace(c0_)) {
-        break;
-      }
-      Advance();
-    }
+    Advance();
 
     // If there is an HTML comment end '-->' at the beginning of a
-    // line (with only whitespace in front of it), we treat the rest
-    // of the line as a comment. This is in line with the way
-    // SpiderMonkey handles it.
-    if (c0_ != '-' || !has_line_terminator_before_next_) break;
-
-    Advance();
+    // line, we treat the rest of the line as a comment. This is in line with
+    // the way SpiderMonkey handles it.
     if (c0_ != '-') {
       PushBack('-');  // undo Advance()
       break;
@@ -459,6 +443,12 @@ Token::Value Scanner::SkipWhiteSpace() {
     if (token == Token::ILLEGAL) {
       return token;
     }
+
+    // Skip remaining whitespaces after the HTML comment.
+    SkipWhiteSpaceImpl();
+
+    // Only repeat loop if we find another HTML comment
+    if (c0_ != '-' || !has_line_terminator_before_next_) break;
   }
 
   // Return whether or not we skipped any characters.
@@ -478,20 +468,15 @@ Token::Value Scanner::SkipSingleHTMLComment() {
 }
 
 Token::Value Scanner::SkipSingleLineComment() {
-  Advance();
-
   // The line terminator at the end of the line is not considered
   // to be part of the single-line comment; it is recognized
   // separately by the lexical grammar and becomes part of the
   // stream of input elements for the syntactic grammar (see
   // ECMA-262, section 7.4).
-  while (c0_ != kEndOfInput && !unibrow::IsLineTerminator(c0_)) {
-    Advance();
-  }
+  AdvanceUntil([](uc32 c0_) { return unibrow::IsLineTerminator(c0_); });
 
   return Token::WHITESPACE;
 }
-
 
 Token::Value Scanner::SkipSourceURLComment() {
   TryToParseSourceURLComment();
@@ -555,27 +540,29 @@ void Scanner::TryToParseSourceURLComment() {
   }
 }
 
-
 Token::Value Scanner::SkipMultiLineComment() {
   DCHECK_EQ(c0_, '*');
   Advance();
 
   while (c0_ != kEndOfInput) {
-    uc32 ch = c0_;
-    Advance();
     DCHECK(!unibrow::IsLineTerminator(kEndOfInput));
-    if (unibrow::IsLineTerminator(ch)) {
+    if (!has_multiline_comment_before_next_ && unibrow::IsLineTerminator(c0_)) {
       // Following ECMA-262, section 7.4, a comment containing
       // a newline will make the comment count as a line-terminator.
       has_multiline_comment_before_next_ = true;
     }
-    // If we have reached the end of the multi-line comment, we
-    // consume the '/' and insert a whitespace. This way all
-    // multi-line comments are treated as whitespace.
-    if (ch == '*' && c0_ == '/') {
-      c0_ = ' ';
-      return Token::WHITESPACE;
+
+    while (V8_UNLIKELY(c0_ == '*')) {
+      Advance();
+      // If we have reached the end of the multi-line comment, we
+      // consume the '/' and insert a whitespace. This way all
+      // multi-line comments are treated as whitespace.
+      if (c0_ == '/') {
+        c0_ = ' ';
+        return Token::WHITESPACE;
+      }
     }
+    Advance();
   }
 
   // Unterminated multi-line comment.
@@ -1691,6 +1678,11 @@ Token::Value Scanner::ScanIdentifierOrKeywordInner(LiteralScope* literal) {
     Token::Value token =
         KeywordOrIdentifierToken(chars.start(), chars.length());
     /* TODO(adamk): YIELD should be handled specially. */
+    if (token == Token::FUTURE_STRICT_RESERVED_WORD) {
+      literal->Complete();
+      if (escaped) return Token::ESCAPED_STRICT_RESERVED_WORD;
+      return token;
+    }
     if (token == Token::IDENTIFIER || Token::IsContextualKeyword(token)) {
       literal->Complete();
       return token;
@@ -1699,8 +1691,7 @@ Token::Value Scanner::ScanIdentifierOrKeywordInner(LiteralScope* literal) {
     if (!escaped) return token;
 
     literal->Complete();
-    if (token == Token::FUTURE_STRICT_RESERVED_WORD || token == Token::LET ||
-        token == Token::STATIC) {
+    if (token == Token::LET || token == Token::STATIC) {
       return Token::ESCAPED_STRICT_RESERVED_WORD;
     }
     return Token::ESCAPED_KEYWORD;

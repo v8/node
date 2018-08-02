@@ -38,6 +38,7 @@
 /_*
 /build
 /buildtools
+/check-header-includes
 /hydrogen.cfg
 /obj
 /out

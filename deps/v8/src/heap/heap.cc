@@ -8,7 +8,7 @@
 #include <unordered_set>
 
 #include "src/accessors.h"
-#include "src/api.h"
+#include "src/api-inl.h"
 #include "src/assembler-inl.h"
 #include "src/ast/context-slot-cache.h"
 #include "src/base/bits.h"
@@ -31,6 +31,7 @@
 #include "src/heap/gc-idle-time-handler.h"
 #include "src/heap/gc-tracer.h"
 #include "src/heap/heap-controller.h"
+#include "src/heap/heap-write-barrier-inl.h"
 #include "src/heap/incremental-marking.h"
 #include "src/heap/item-parallel-job.h"
 #include "src/heap/mark-compact-inl.h"
@@ -513,22 +514,25 @@ void Heap::AddRetainingPathTarget(Handle<HeapObject> object,
   if (!FLAG_track_retaining_path) {
     PrintF("Retaining path tracking requires --track-retaining-path\n");
   } else {
-    int index = 0;
-    Handle<FixedArrayOfWeakCells> array = FixedArrayOfWeakCells::Add(
-        isolate(), handle(retaining_path_targets(), isolate()), object, &index);
+    Handle<WeakArrayList> array(retaining_path_targets(), isolate());
+    int index = array->length();
+    array = WeakArrayList::AddToEnd(isolate(), array,
+                                    MaybeObjectHandle::Weak(object));
     set_retaining_path_targets(*array);
+    DCHECK_EQ(array->length(), index + 1);
     retaining_path_target_option_[index] = option;
   }
 }
 
 bool Heap::IsRetainingPathTarget(HeapObject* object,
                                  RetainingPathOption* option) {
-  if (!retaining_path_targets()->IsFixedArrayOfWeakCells()) return false;
-  FixedArrayOfWeakCells* targets =
-      FixedArrayOfWeakCells::cast(retaining_path_targets());
-  int length = targets->Length();
+  WeakArrayList* targets = retaining_path_targets();
+  int length = targets->length();
+  MaybeObject* object_to_check = HeapObjectReference::Weak(object);
   for (int i = 0; i < length; i++) {
-    if (targets->Get(i) == object) {
+    MaybeObject* target = targets->Get(i);
+    DCHECK(target->IsWeakOrClearedHeapObject());
+    if (target == object_to_check) {
       DCHECK(retaining_path_target_option_.count(i));
       *option = retaining_path_target_option_[i];
       return true;
@@ -1038,29 +1042,6 @@ void Heap::GarbageCollectionEpilogue() {
   }
 }
 
-
-void Heap::PreprocessStackTraces() {
-  FixedArrayOfWeakCells::Iterator iterator(weak_stack_trace_list());
-  FixedArray* elements;
-  while ((elements = iterator.Next<FixedArray>()) != nullptr) {
-    for (int j = 1; j < elements->length(); j += 4) {
-      Object* maybe_code = elements->get(j + 2);
-      // If GC happens while adding a stack trace to the weak fixed array,
-      // which has been copied into a larger backing store, we may run into
-      // a stack trace that has already been preprocessed. Guard against this.
-      if (!maybe_code->IsAbstractCode()) break;
-      AbstractCode* abstract_code = AbstractCode::cast(maybe_code);
-      int offset = Smi::ToInt(elements->get(j + 3));
-      int pos = abstract_code->SourcePosition(offset);
-      elements->set(j + 2, Smi::FromInt(pos));
-    }
-  }
-  // We must not compact the weak fixed list here, as we may be in the middle
-  // of writing to it, when the GC triggered. Instead, we reset the root value.
-  set_weak_stack_trace_list(Smi::kZero);
-}
-
-
 class GCCallbacksScope {
  public:
   explicit GCCallbacksScope(Heap* heap) : heap_(heap) {
@@ -1175,8 +1156,7 @@ intptr_t CompareWords(int size, HeapObject* a, HeapObject* b) {
   return 0;
 }
 
-void ReportDuplicates(Isolate* isolate, int size,
-                      std::vector<HeapObject*>& objects) {
+void ReportDuplicates(int size, std::vector<HeapObject*>& objects) {
   if (objects.size() == 0) return;
 
   sort(objects.begin(), objects.end(), [size](HeapObject* a, HeapObject* b) {
@@ -1274,7 +1254,7 @@ void Heap::CollectAllAvailableGarbage(GarbageCollectionReason gc_reason) {
     }
     for (auto it = objects_by_size.rbegin(); it != objects_by_size.rend();
          ++it) {
-      ReportDuplicates(isolate(), it->first, it->second);
+      ReportDuplicates(it->first, it->second);
     }
   }
 }
@@ -1926,7 +1906,6 @@ void Heap::MarkCompactEpilogue() {
 
   incremental_marking()->Epilogue();
 
-  PreprocessStackTraces();
   DCHECK(incremental_marking()->IsStopped());
 }
 
@@ -2297,6 +2276,25 @@ void Heap::ProtectUnprotectedMemoryChunks() {
   unprotected_memory_chunks_.clear();
 }
 
+bool Heap::ExternalStringTable::Contains(HeapObject* obj) {
+  for (size_t i = 0; i < new_space_strings_.size(); ++i) {
+    if (new_space_strings_[i] == obj) return true;
+  }
+  for (size_t i = 0; i < old_space_strings_.size(); ++i) {
+    if (old_space_strings_[i] == obj) return true;
+  }
+  return false;
+}
+
+void Heap::ProcessMovedExternalString(Page* old_page, Page* new_page,
+                                      ExternalString* string) {
+  size_t size = string->ExternalPayloadSize();
+  new_page->IncrementExternalBackingStoreBytes(
+      ExternalBackingStoreType::kExternalString, size);
+  old_page->DecrementExternalBackingStoreBytes(
+      ExternalBackingStoreType::kExternalString, size);
+}
+
 String* Heap::UpdateNewSpaceReferenceInExternalStringTableEntry(Heap* heap,
                                                                 Object** p) {
   MapWord first_word = HeapObject::cast(*p)->map_word();
@@ -2314,24 +2312,58 @@ String* Heap::UpdateNewSpaceReferenceInExternalStringTableEntry(Heap* heap,
   }
 
   // String is still reachable.
-  String* string = String::cast(first_word.ToForwardingAddress());
-  if (string->IsThinString()) string = ThinString::cast(string)->actual();
+  String* new_string = String::cast(first_word.ToForwardingAddress());
+  String* original_string = reinterpret_cast<String*>(*p);
+  // The length of the original string is used to disambiguate the scenario
+  // of a ThingString being forwarded to an ExternalString (which already exists
+  // in the OLD space), and an ExternalString being forwarded to its promoted
+  // copy. See Scavenger::EvacuateThinString.
+  if (new_string->IsThinString() || original_string->length() == 0) {
+    // Filtering Thin strings out of the external string table.
+    return nullptr;
+  } else if (new_string->IsExternalString()) {
+    heap->ProcessMovedExternalString(
+        Page::FromAddress(reinterpret_cast<Address>(*p)),
+        Page::FromHeapObject(new_string), ExternalString::cast(new_string));
+    return new_string;
+  }
+
   // Internalization can replace external strings with non-external strings.
-  return string->IsExternalString() ? string : nullptr;
+  return new_string->IsExternalString() ? new_string : nullptr;
 }
 
 void Heap::ExternalStringTable::Verify() {
 #ifdef DEBUG
+  std::set<String*> visited_map;
+  std::map<MemoryChunk*, size_t> size_map;
+  ExternalBackingStoreType type = ExternalBackingStoreType::kExternalString;
   for (size_t i = 0; i < new_space_strings_.size(); ++i) {
-    Object* obj = Object::cast(new_space_strings_[i]);
-    DCHECK(InNewSpace(obj));
+    String* obj = String::cast(new_space_strings_[i]);
+    MemoryChunk* mc = MemoryChunk::FromHeapObject(obj);
+    DCHECK(mc->InNewSpace());
+    DCHECK(heap_->InNewSpace(obj));
     DCHECK(!obj->IsTheHole(heap_->isolate()));
+    DCHECK(obj->IsExternalString());
+    // Note: we can have repeated elements in the table.
+    DCHECK_EQ(0, visited_map.count(obj));
+    visited_map.insert(obj);
+    size_map[mc] += ExternalString::cast(obj)->ExternalPayloadSize();
   }
   for (size_t i = 0; i < old_space_strings_.size(); ++i) {
-    Object* obj = Object::cast(old_space_strings_[i]);
-    DCHECK(!InNewSpace(obj));
+    String* obj = String::cast(old_space_strings_[i]);
+    MemoryChunk* mc = MemoryChunk::FromHeapObject(obj);
+    DCHECK(!mc->InNewSpace());
+    DCHECK(!heap_->InNewSpace(obj));
     DCHECK(!obj->IsTheHole(heap_->isolate()));
+    DCHECK(obj->IsExternalString());
+    // Note: we can have repeated elements in the table.
+    DCHECK_EQ(0, visited_map.count(obj));
+    visited_map.insert(obj);
+    size_map[mc] += ExternalString::cast(obj)->ExternalPayloadSize();
   }
+  for (std::map<MemoryChunk*, size_t>::iterator it = size_map.begin();
+       it != size_map.end(); it++)
+    DCHECK_EQ(it->first->ExternalBackingStoreBytes(type), it->second);
 #endif
 }
 
@@ -2662,7 +2694,6 @@ bool Heap::RootCanBeWrittenAfterInitialization(Heap::RootListIndex root_index) {
     case kRetainingPathTargetsRootIndex:
     case kFeedbackVectorsForProfilingToolsRootIndex:
     case kNoScriptSharedFunctionInfosRootIndex:
-    case kWeakStackTraceListRootIndex:
     case kSerializedObjectsRootIndex:
     case kSerializedGlobalProxySizesRootIndex:
     case kPublicSymbolTableRootIndex:
@@ -2718,8 +2749,8 @@ namespace {
 
 Heap::RootListIndex RootIndexForFixedTypedArray(ExternalArrayType array_type) {
   switch (array_type) {
-#define ARRAY_TYPE_TO_ROOT_INDEX(Type, type, TYPE, ctype, size) \
-  case kExternal##Type##Array:                                  \
+#define ARRAY_TYPE_TO_ROOT_INDEX(Type, type, TYPE, ctype) \
+  case kExternal##Type##Array:                            \
     return Heap::kFixed##Type##ArrayMapRootIndex;
 
     TYPED_ARRAYS(ARRAY_TYPE_TO_ROOT_INDEX)
@@ -2730,8 +2761,8 @@ Heap::RootListIndex RootIndexForFixedTypedArray(ExternalArrayType array_type) {
 
 Heap::RootListIndex RootIndexForFixedTypedArray(ElementsKind elements_kind) {
   switch (elements_kind) {
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) \
-  case TYPE##_ELEMENTS:                                 \
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) \
+  case TYPE##_ELEMENTS:                           \
     return Heap::kFixed##Type##ArrayMapRootIndex;
     TYPED_ARRAYS(TYPED_ARRAY_CASE)
     default:
@@ -2743,8 +2774,8 @@ Heap::RootListIndex RootIndexForFixedTypedArray(ElementsKind elements_kind) {
 Heap::RootListIndex RootIndexForEmptyFixedTypedArray(
     ElementsKind elements_kind) {
   switch (elements_kind) {
-#define ELEMENT_KIND_TO_ROOT_INDEX(Type, type, TYPE, ctype, size) \
-  case TYPE##_ELEMENTS:                                           \
+#define ELEMENT_KIND_TO_ROOT_INDEX(Type, type, TYPE, ctype) \
+  case TYPE##_ELEMENTS:                                     \
     return Heap::kEmptyFixed##Type##ArrayRootIndex;
 
     TYPED_ARRAYS(ELEMENT_KIND_TO_ROOT_INDEX)
@@ -5001,15 +5032,36 @@ void Heap::RemoveGCEpilogueCallback(v8::Isolate::GCCallbackWithData callback,
 }
 
 namespace {
-void CompactFixedArrayOfWeakCells(Isolate* isolate, Object* object) {
-  if (object->IsFixedArrayOfWeakCells()) {
-    FixedArrayOfWeakCells* array = FixedArrayOfWeakCells::cast(object);
-    array->Compact<FixedArrayOfWeakCells::NullCallback>(isolate);
+Handle<WeakArrayList> CompactWeakArrayList(Heap* heap,
+                                           Handle<WeakArrayList> array) {
+  if (array->length() == 0) {
+    return array;
   }
+  int new_length = array->CountLiveWeakReferences();
+  if (new_length == array->length()) {
+    return array;
+  }
+
+  Handle<WeakArrayList> new_array = WeakArrayList::EnsureSpace(
+      heap->isolate(),
+      handle(ReadOnlyRoots(heap).empty_weak_array_list(), heap->isolate()),
+      new_length);
+  // Allocation might have caused GC and turned some of the elements into
+  // cleared weak heap objects. Count the number of live references again and
+  // fill in the new array.
+  int copy_to = 0;
+  for (int i = 0; i < array->length(); i++) {
+    MaybeObject* element = array->Get(i);
+    if (element->IsClearedWeakHeapObject()) continue;
+    new_array->Set(copy_to++, element);
+  }
+  new_array->set_length(copy_to);
+  return new_array;
 }
+
 }  // anonymous namespace
 
-void Heap::CompactFixedArraysOfWeakCells() {
+void Heap::CompactWeakArrayLists() {
   // Find known PrototypeUsers and compact them.
   std::vector<Handle<PrototypeInfo>> prototype_infos;
   {
@@ -5031,10 +5083,15 @@ void Heap::CompactFixedArraysOfWeakCells() {
     prototype_info->set_prototype_users(new_array);
   }
 
-  // Find known FixedArrayOfWeakCells and compact them.
-  CompactFixedArrayOfWeakCells(isolate(), noscript_shared_function_infos());
-  CompactFixedArrayOfWeakCells(isolate(), script_list());
-  CompactFixedArrayOfWeakCells(isolate(), weak_stack_trace_list());
+  // Find known WeakArrayLists and compact them.
+  Handle<WeakArrayList> scripts(script_list(), isolate());
+  scripts = CompactWeakArrayList(this, scripts);
+  set_script_list(*scripts);
+
+  Handle<WeakArrayList> no_script_list(noscript_shared_function_infos(),
+                                       isolate());
+  no_script_list = CompactWeakArrayList(this, no_script_list);
+  set_noscript_shared_function_infos(*no_script_list);
 }
 
 void Heap::AddRetainedMap(Handle<Map> map) {
@@ -5446,19 +5503,15 @@ void Heap::ExternalStringTable::CleanUpAll() {
 void Heap::ExternalStringTable::TearDown() {
   for (size_t i = 0; i < new_space_strings_.size(); ++i) {
     Object* o = new_space_strings_[i];
-    if (o->IsThinString()) {
-      o = ThinString::cast(o)->actual();
-      if (!o->IsExternalString()) continue;
-    }
+    // Dont finalize thin strings.
+    if (o->IsThinString()) continue;
     heap_->FinalizeExternalString(ExternalString::cast(o));
   }
   new_space_strings_.clear();
   for (size_t i = 0; i < old_space_strings_.size(); ++i) {
     Object* o = old_space_strings_[i];
-    if (o->IsThinString()) {
-      o = ThinString::cast(o)->actual();
-      if (!o->IsExternalString()) continue;
-    }
+    // Dont finalize thin strings.
+    if (o->IsThinString()) continue;
     heap_->FinalizeExternalString(ExternalString::cast(o));
   }
   old_space_strings_.clear();
@@ -5768,6 +5821,49 @@ Code* Heap::GcSafeFindCodeForInnerPointer(Address inner_pointer) {
     addr = next_addr;
   }
 }
+
+void Heap::GenerationalBarrierSlow(HeapObject* object, Address slot,
+                                   HeapObject* value) {
+  Heap* heap = Heap::FromWritableHeapObject(object);
+  heap->store_buffer()->InsertEntry(slot);
+}
+
+void Heap::MarkingBarrierSlow(HeapObject* object, Address slot,
+                              HeapObject* value) {
+  Heap* heap = Heap::FromWritableHeapObject(object);
+  heap->incremental_marking()->RecordWriteSlow(
+      object, reinterpret_cast<HeapObjectReference**>(slot), value);
+}
+
+bool Heap::PageFlagsAreConsistent(HeapObject* object) {
+  Heap* heap = Heap::FromWritableHeapObject(object);
+  MemoryChunk* chunk = MemoryChunk::FromHeapObject(object);
+  heap_internals::MemoryChunk* slim_chunk =
+      heap_internals::MemoryChunk::FromHeapObject(object);
+
+  const bool generation_consistency =
+      chunk->owner()->identity() != NEW_SPACE ||
+      (chunk->InNewSpace() && slim_chunk->InNewSpace());
+  const bool marking_consistency =
+      !heap->incremental_marking()->IsMarking() ||
+      (chunk->IsFlagSet(MemoryChunk::INCREMENTAL_MARKING) &&
+       slim_chunk->IsMarking());
+
+  return generation_consistency && marking_consistency;
+}
+
+static_assert(MemoryChunk::Flag::INCREMENTAL_MARKING ==
+                  heap_internals::MemoryChunk::kMarkingBit,
+              "Incremental marking flag inconsistent");
+static_assert(MemoryChunk::Flag::IN_FROM_SPACE ==
+                  heap_internals::MemoryChunk::kFromSpaceBit,
+              "From space flag inconsistent");
+static_assert(MemoryChunk::Flag::IN_TO_SPACE ==
+                  heap_internals::MemoryChunk::kToSpaceBit,
+              "To space flag inconsistent");
+static_assert(MemoryChunk::kFlagsOffset ==
+                  heap_internals::MemoryChunk::kFlagsOffset,
+              "Flag offset inconsistent");
 
 }  // namespace internal
 }  // namespace v8

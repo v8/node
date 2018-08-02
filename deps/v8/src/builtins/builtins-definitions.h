@@ -283,6 +283,8 @@ namespace internal {
   CPP(ArrayConcat)                                                             \
   /* ES6 #sec-array.isarray */                                                 \
   TFJ(ArrayIsArray, 1, kReceiver, kArg)                                        \
+  /* ES6 #sec-array.prototype.fill */                                          \
+  CPP(ArrayPrototypeFill)                                                      \
   /* ES6 #sec-array.from */                                                    \
   TFJ(ArrayFrom, SharedFunctionInfo::kDontAdaptArgumentsSentinel)              \
   /* ES6 #sec-array.of */                                                      \
@@ -638,6 +640,7 @@ namespace internal {
   TFH(LoadGlobalICInsideTypeof, LoadGlobalWithVector)                          \
   TFH(LoadGlobalICTrampoline, LoadGlobal)                                      \
   TFH(LoadGlobalICInsideTypeofTrampoline, LoadGlobal)                          \
+  TFH(CloneObjectIC, CloneObjectWithVector)                                    \
                                                                                \
   /* Map */                                                                    \
   TFS(FindOrderedHashMapEntry, kTable, kKey)                                   \
@@ -1130,7 +1133,7 @@ namespace internal {
   /* ES #sec-typedarray-constructors */                                        \
   TFS(CreateTypedArray, kTarget, kNewTarget, kArg1, kArg2, kArg3)              \
   TFJ(TypedArrayBaseConstructor, 0, kReceiver)                                 \
-  TFJ(TypedArrayConstructorLazyDeoptContinuation, 1, kReceiver, kResult)       \
+  TFJ(GenericConstructorLazyDeoptContinuation, 1, kReceiver, kResult)          \
   TFJ(TypedArrayConstructor, SharedFunctionInfo::kDontAdaptArgumentsSentinel)  \
   CPP(TypedArrayPrototypeBuffer)                                               \
   /* ES6 #sec-get-%typedarray%.prototype.bytelength */                         \
@@ -1309,7 +1312,11 @@ namespace internal {
   ASM(CallApiGetter)                                                           \
   ASM(DoubleToI)                                                               \
   TFC(GetProperty, GetProperty, 1)                                             \
-  ASM(MathPowInternal)
+  ASM(MathPowInternal)                                                         \
+                                                                               \
+  /* Trace */                                                                  \
+  CPP(IsTraceCategoryEnabled)                                                  \
+  CPP(Trace)
 
 #ifdef V8_INTL_SUPPORT
 #define BUILTIN_LIST(CPP, API, TFJ, TFC, TFS, TFH, ASM)                \
@@ -1328,6 +1335,10 @@ namespace internal {
   /* ecma402 #sec-intl.datetimeformat.prototype.formattoparts */       \
   CPP(DateTimeFormatPrototypeFormatToParts)                            \
   /* ecma402 #new proposal */                                          \
+  /* ecma402 #sec-intl-listformat-constructor */                       \
+  CPP(ListFormatConstructor)                                           \
+  /* ecma402 #sec-intl.listformat.prototype.resolvedoptions */         \
+  CPP(ListFormatPrototypeResolvedOptions)                              \
   /* ecma402 #sec-intl-locale-constructor */                           \
   CPP(LocaleConstructor)                                               \
   CPP(LocalePrototypeLanguage)                                         \
@@ -1356,7 +1367,11 @@ namespace internal {
   /* ecma402 #sec-intl.RelativeTimeFormat.prototype.format */          \
   CPP(RelativeTimeFormatPrototypeFormat)                               \
   /* ecma402 #sec-intl.RelativeTimeFormat.prototype.formatToParts */   \
-  CPP(RelativeTimeFormatPrototypeFormatToParts)
+  CPP(RelativeTimeFormatPrototypeFormatToParts)                        \
+  /* ecma402 #sup-string.prototype.tolocalelowercase */                \
+  CPP(StringPrototypeToLocaleLowerCase)                                \
+  /* ecma402 #sup-string.prototype.tolocaleuppercase */                \
+  CPP(StringPrototypeToLocaleUpperCase)
 #else
 #define BUILTIN_LIST(CPP, API, TFJ, TFC, TFS, TFH, ASM)    \
   BUILTIN_LIST_BASE(CPP, API, TFJ, TFC, TFS, TFH, ASM)     \

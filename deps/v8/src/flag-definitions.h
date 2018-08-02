@@ -216,9 +216,10 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
   V(harmony_await_optimization, "harmony await taking 1 tick")
 
 #ifdef V8_INTL_SUPPORT
-#define HARMONY_INPROGRESS(V)      \
-  HARMONY_INPROGRESS_BASE(V)       \
-  V(harmony_locale, "Intl.Locale") \
+#define HARMONY_INPROGRESS(V)                    \
+  HARMONY_INPROGRESS_BASE(V)                     \
+  V(harmony_locale, "Intl.Locale")               \
+  V(harmony_intl_list_format, "Intl.ListFormat") \
   V(harmony_intl_relative_time_format, "Intl.RelativeTimeFormat")
 #else
 #define HARMONY_INPROGRESS(V) HARMONY_INPROGRESS_BASE(V)
@@ -229,19 +230,19 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
   V(harmony_public_fields, "harmony public fields in class literals")      \
   V(harmony_private_fields, "harmony private fields in class literals")    \
   V(harmony_numeric_separator, "harmony numeric separator between digits") \
-  V(harmony_string_matchall, "harmony String.prototype.matchAll")          \
-  V(harmony_symbol_description, "harmony Symbol.prototype.description")
+  V(harmony_string_matchall, "harmony String.prototype.matchAll")
 
 // Features that are shipping (turned on by default, but internal flag remains).
-#define HARMONY_SHIPPING(V)                                                   \
-  V(harmony_string_trimming, "harmony String.prototype.trim{Start,End}")      \
-  V(harmony_sharedarraybuffer, "harmony sharedarraybuffer")                   \
-  V(harmony_function_tostring, "harmony Function.prototype.toString")         \
-  V(harmony_import_meta, "harmony import.meta property")                      \
-  V(harmony_bigint, "harmony arbitrary precision integers")                   \
-  V(harmony_dynamic_import, "harmony dynamic import")                         \
-  V(harmony_array_prototype_values, "harmony Array.prototype.values")         \
-  V(harmony_array_flat, "harmony Array.prototype.{flat,flatMap}")
+#define HARMONY_SHIPPING(V)                                              \
+  V(harmony_string_trimming, "harmony String.prototype.trim{Start,End}") \
+  V(harmony_sharedarraybuffer, "harmony sharedarraybuffer")              \
+  V(harmony_function_tostring, "harmony Function.prototype.toString")    \
+  V(harmony_import_meta, "harmony import.meta property")                 \
+  V(harmony_bigint, "harmony arbitrary precision integers")              \
+  V(harmony_dynamic_import, "harmony dynamic import")                    \
+  V(harmony_array_prototype_values, "harmony Array.prototype.values")    \
+  V(harmony_array_flat, "harmony Array.prototype.{flat,flatMap}")        \
+  V(harmony_symbol_description, "harmony Symbol.prototype.description")
 
 // Once a shipping feature has proved stable in the wild, it will be dropped
 // from HARMONY_SHIPPING, all occurrences of the FLAG_ variable are removed,
@@ -380,6 +381,10 @@ DEFINE_INT(concurrent_recompilation_delay, 0,
            "artificial compilation delay in ms")
 DEFINE_BOOL(block_concurrent_recompilation, false,
             "block queued jobs until released")
+DEFINE_BOOL(concurrent_compiler_frontend, false,
+            "run optimizing compiler's frontend phases on a separate thread")
+DEFINE_BOOL(strict_heap_broker, false, "fail on incomplete serialization")
+DEFINE_BOOL(trace_heap_broker, false, "trace the heap broker")
 
 // Flags for stress-testing the compiler.
 DEFINE_INT(stress_runs, 0, "number of stress runs")
@@ -533,7 +538,7 @@ DEFINE_BOOL(wasm_async_compilation, true,
 DEFINE_BOOL(wasm_test_streaming, false,
             "use streaming compilation instead of async compilation for tests")
 DEFINE_UINT(wasm_max_mem_pages, v8::internal::wasm::kV8MaxWasmMemoryPages,
-            "maximum memory size of a wasm instance")
+            "maximum number of 64KiB memory pages of a wasm instance")
 DEFINE_UINT(wasm_max_table_size, v8::internal::wasm::kV8MaxWasmTableSize,
             "maximum table size of a wasm instance")
 // Enable Liftoff by default on ia32 and x64. More architectures will follow
@@ -609,6 +614,11 @@ DEFINE_BOOL(wasm_no_bounds_checks, false,
 DEFINE_BOOL(wasm_no_stack_checks, false,
             "disable stack checks (performance testing only)")
 
+DEFINE_BOOL(wasm_shared_engine, false,
+            "shares one wasm engine between all isolates within a process")
+DEFINE_IMPLICATION(future, wasm_shared_engine)
+DEFINE_BOOL(wasm_shared_code, false,
+            "shares code underlying a wasm module when it is transferred")
 DEFINE_BOOL(wasm_trap_handler, true,
             "use signal handlers to catch out of bounds memory access in wasm"
             " (currently Linux x86_64 only)")
@@ -1242,6 +1252,10 @@ DEFINE_BOOL(log_function_events, false,
             "(parse, compile, execute) separately.")
 DEFINE_BOOL(prof, false,
             "Log statistical profiling information (implies --log-code).")
+
+DEFINE_BOOL(detailed_line_info, false,
+            "Always generate detailed line information for CPU profiling.")
+DEFINE_IMPLICATION(future, detailed_line_info)
 
 #if defined(ANDROID)
 // Phones and tablets have processors that are much slower than desktop

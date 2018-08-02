@@ -7,7 +7,7 @@
 #include <memory>
 #include <sstream>
 
-#include "src/api.h"
+#include "src/api-inl.h"
 #include "src/arguments.h"
 #include "src/assembler-inl.h"
 #include "src/compiler-dispatcher/optimizing-compile-dispatcher.h"
@@ -866,11 +866,10 @@ ELEMENTS_KIND_CHECK_RUNTIME_FUNCTION(FastProperties)
 
 #undef ELEMENTS_KIND_CHECK_RUNTIME_FUNCTION
 
-
-#define FIXED_TYPED_ARRAYS_CHECK_RUNTIME_FUNCTION(Type, type, TYPE, ctype, s) \
-  RUNTIME_FUNCTION(Runtime_HasFixed##Type##Elements) {                        \
-    CONVERT_ARG_CHECKED(JSObject, obj, 0);                                    \
-    return isolate->heap()->ToBoolean(obj->HasFixed##Type##Elements());       \
+#define FIXED_TYPED_ARRAYS_CHECK_RUNTIME_FUNCTION(Type, type, TYPE, ctype) \
+  RUNTIME_FUNCTION(Runtime_HasFixed##Type##Elements) {                     \
+    CONVERT_ARG_CHECKED(JSObject, obj, 0);                                 \
+    return isolate->heap()->ToBoolean(obj->HasFixed##Type##Elements());    \
   }
 
 TYPED_ARRAYS(FIXED_TYPED_ARRAYS_CHECK_RUNTIME_FUNCTION)
@@ -905,14 +904,13 @@ RUNTIME_FUNCTION(Runtime_SerializeWasmModule) {
   CONVERT_ARG_HANDLE_CHECKED(WasmModuleObject, module_obj, 0);
 
   wasm::NativeModule* native_module = module_obj->native_module();
-  size_t compiled_size =
-      wasm::GetSerializedNativeModuleSize(isolate, native_module);
+  wasm::WasmSerializer wasm_serializer(isolate, native_module);
+  size_t compiled_size = wasm_serializer.GetSerializedNativeModuleSize();
   void* array_data = isolate->array_buffer_allocator()->Allocate(compiled_size);
   Handle<JSArrayBuffer> array_buffer = isolate->factory()->NewJSArrayBuffer();
   JSArrayBuffer::Setup(array_buffer, isolate, false, array_data, compiled_size);
   if (!array_data ||
-      !wasm::SerializeNativeModule(
-          isolate, native_module,
+      !wasm_serializer.SerializeNativeModule(
           {reinterpret_cast<uint8_t*>(array_data), compiled_size})) {
     return ReadOnlyRoots(isolate).undefined_value();
   }

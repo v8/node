@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "src/api.h"
+#include "src/api-inl.h"
 #include "src/objects-inl.h"
 #include "src/v8.h"
 #include "src/vector.h"
@@ -114,7 +114,7 @@ class StreamTester {
 
     stream_ = i_isolate->wasm_engine()->StartStreamingCompilation(
         i_isolate, v8::Utils::OpenHandle(*context),
-        base::make_unique<TestResolver>(&state_));
+        std::make_shared<TestResolver>(&state_));
   }
 
   std::shared_ptr<StreamingDecoder> stream() { return stream_; }
@@ -212,8 +212,9 @@ STREAM_TEST(TestAllBytesArriveAOTCompilerFinishesFirst) {
 
 size_t GetFunctionOffset(i::Isolate* isolate, const uint8_t* buffer,
                          size_t size, size_t index) {
-  ModuleResult result = SyncDecodeWasmModule(isolate, buffer, buffer + size,
-                                             false, ModuleOrigin::kWasmOrigin);
+  ModuleResult result =
+      DecodeWasmModule(buffer, buffer + size, false, ModuleOrigin::kWasmOrigin,
+                       isolate->counters(), isolate->allocator());
   CHECK(result.ok());
   const WasmFunction* func = &result.val->functions[1];
   return func->code.offset();

@@ -3,10 +3,12 @@
 // found in the LICENSE file.
 
 #include "src/builtins/builtins.h"
-#include "src/api.h"
+
+#include "src/api-inl.h"
 #include "src/assembler-inl.h"
 #include "src/builtins/builtins-descriptors.h"
 #include "src/callable.h"
+#include "src/instruction-stream.h"
 #include "src/isolate.h"
 #include "src/macro-assembler.h"
 #include "src/objects-inl.h"
@@ -80,7 +82,13 @@ Builtins::Name Builtins::GetBuiltinFromBailoutId(BailoutId id) {
 void Builtins::TearDown() { initialized_ = false; }
 
 const char* Builtins::Lookup(Address pc) {
-  // may be called during initialization (disassembler!)
+  // Off-heap pc's can be looked up through binary search.
+  if (FLAG_embedded_builtins) {
+    Code* maybe_builtin = InstructionStream::TryLookupCode(isolate_, pc);
+    if (maybe_builtin != nullptr) return name(maybe_builtin->builtin_index());
+  }
+
+  // May be called during initialization (disassembler).
   if (initialized_) {
     for (int i = 0; i < builtin_count; i++) {
       if (isolate_->heap()->builtin(i)->contains(pc)) return name(i);
@@ -287,7 +295,7 @@ bool Builtins::IsLazy(int index) {
     case kThrowWasmTrapUnreachable:           // Required by wasm.
     case kToBooleanLazyDeoptContinuation:
     case kToNumber:                           // Required by wasm.
-    case kTypedArrayConstructorLazyDeoptContinuation:
+    case kGenericConstructorLazyDeoptContinuation:
     case kWasmCompileLazy:                    // Required by wasm.
     case kWasmStackGuard:                     // Required by wasm.
       return false;

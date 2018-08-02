@@ -1892,29 +1892,6 @@ void VisitAtomicExchange(InstructionSelector* selector, Node* node,
   selector->Emit(code, arraysize(outputs), outputs, arraysize(inputs), inputs);
 }
 
-// Shared routine for Word32/Word64 Atomic Store
-void VisitAtomicStore(InstructionSelector* selector, Node* node,
-                      ArchOpcode opcode) {
-  X64OperandGenerator g(selector);
-  Node* base = node->InputAt(0);
-  Node* index = node->InputAt(1);
-  Node* value = node->InputAt(2);
-  AddressingMode addressing_mode;
-  InstructionOperand index_operand;
-  if (g.CanBeImmediate(index)) {
-    index_operand = g.UseImmediate(index);
-    addressing_mode = kMode_MRI;
-  } else {
-    index_operand = g.UseUniqueRegister(index);
-    addressing_mode = kMode_MR1;
-  }
-  InstructionOperand inputs[] = {g.UseUniqueRegister(value),
-                                 g.UseUniqueRegister(base), index_operand};
-  InstructionCode code = opcode | AddressingModeField::encode(addressing_mode);
-  selector->Emit(code, 0, static_cast<InstructionOperand*>(nullptr),
-                 arraysize(inputs), inputs);
-}
-
 }  // namespace
 
 // Shared routine for word comparison against zero.
@@ -2316,7 +2293,7 @@ void InstructionSelector::VisitWord32AtomicStore(Node* node) {
       UNREACHABLE();
       return;
   }
-  VisitAtomicStore(this, node, opcode);
+  VisitAtomicExchange(this, node, opcode);
 }
 
 void InstructionSelector::VisitWord64AtomicStore(Node* node) {
@@ -2339,11 +2316,11 @@ void InstructionSelector::VisitWord64AtomicStore(Node* node) {
       UNREACHABLE();
       return;
   }
-  VisitAtomicStore(this, node, opcode);
+  VisitAtomicExchange(this, node, opcode);
 }
 
 void InstructionSelector::VisitWord32AtomicExchange(Node* node) {
-  MachineType type = AtomicOpRepresentationOf(node->op());
+  MachineType type = AtomicOpType(node->op());
   ArchOpcode opcode = kArchNop;
   if (type == MachineType::Int8()) {
     opcode = kWord32AtomicExchangeInt8;
@@ -2363,7 +2340,7 @@ void InstructionSelector::VisitWord32AtomicExchange(Node* node) {
 }
 
 void InstructionSelector::VisitWord64AtomicExchange(Node* node) {
-  MachineType type = AtomicOpRepresentationOf(node->op());
+  MachineType type = AtomicOpType(node->op());
   ArchOpcode opcode = kArchNop;
   if (type == MachineType::Uint8()) {
     opcode = kX64Word64AtomicExchangeUint8;
@@ -2381,7 +2358,7 @@ void InstructionSelector::VisitWord64AtomicExchange(Node* node) {
 }
 
 void InstructionSelector::VisitWord32AtomicCompareExchange(Node* node) {
-  MachineType type = AtomicOpRepresentationOf(node->op());
+  MachineType type = AtomicOpType(node->op());
   ArchOpcode opcode = kArchNop;
   if (type == MachineType::Int8()) {
     opcode = kWord32AtomicCompareExchangeInt8;
@@ -2401,7 +2378,7 @@ void InstructionSelector::VisitWord32AtomicCompareExchange(Node* node) {
 }
 
 void InstructionSelector::VisitWord64AtomicCompareExchange(Node* node) {
-  MachineType type = AtomicOpRepresentationOf(node->op());
+  MachineType type = AtomicOpType(node->op());
   ArchOpcode opcode = kArchNop;
   if (type == MachineType::Uint8()) {
     opcode = kX64Word64AtomicCompareExchangeUint8;
@@ -2421,7 +2398,7 @@ void InstructionSelector::VisitWord64AtomicCompareExchange(Node* node) {
 void InstructionSelector::VisitWord32AtomicBinaryOperation(
     Node* node, ArchOpcode int8_op, ArchOpcode uint8_op, ArchOpcode int16_op,
     ArchOpcode uint16_op, ArchOpcode word32_op) {
-  MachineType type = AtomicOpRepresentationOf(node->op());
+  MachineType type = AtomicOpType(node->op());
   ArchOpcode opcode = kArchNop;
   if (type == MachineType::Int8()) {
     opcode = int8_op;
@@ -2457,7 +2434,7 @@ VISIT_ATOMIC_BINOP(Xor)
 void InstructionSelector::VisitWord64AtomicBinaryOperation(
     Node* node, ArchOpcode uint8_op, ArchOpcode uint16_op, ArchOpcode uint32_op,
     ArchOpcode word64_op) {
-  MachineType type = AtomicOpRepresentationOf(node->op());
+  MachineType type = AtomicOpType(node->op());
   ArchOpcode opcode = kArchNop;
   if (type == MachineType::Uint8()) {
     opcode = uint8_op;

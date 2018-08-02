@@ -6,18 +6,184 @@
 
 #include "src/compiler/compilation-dependencies.h"
 #include "src/objects-inl.h"
+#include "src/objects/js-array-inl.h"
 #include "src/objects/js-regexp-inl.h"
 #include "src/objects/module-inl.h"
+#include "src/utils.h"
 
 namespace v8 {
 namespace internal {
 namespace compiler {
 
+#define FORWARD_DECL(Name) class Name##Data;
+HEAP_BROKER_OBJECT_LIST(FORWARD_DECL)
+#undef FORWARD_DECL
+
+// TODO(neis): It would be nice to share the serialized data for read-only
+// objects.
+
+class ObjectData : public ZoneObject {
+ public:
+  static ObjectData* Serialize(JSHeapBroker* broker, Handle<Object> object);
+
+  ObjectData(JSHeapBroker* broker_, Handle<Object> object_, bool is_smi_)
+      : broker(broker_), object(object_), is_smi(is_smi_) {
+    broker->AddData(object, this);
+  }
+
+#define DECLARE_IS_AND_AS(Name) \
+  bool Is##Name() const;        \
+  Name##Data* As##Name();
+  HEAP_BROKER_OBJECT_LIST(DECLARE_IS_AND_AS)
+#undef DECLARE_IS_AND_AS
+
+  JSHeapBroker* const broker;
+  Handle<Object> const object;
+  bool const is_smi;
+};
+
+class HeapObjectData : public ObjectData {
+ public:
+  static HeapObjectData* Serialize(JSHeapBroker* broker,
+                                   Handle<HeapObject> object);
+
+  HeapObjectType const type;
+  MapData* const map;
+
+  HeapObjectData(JSHeapBroker* broker_, Handle<HeapObject> object_,
+                 HeapObjectType type_)
+      : ObjectData(broker_, object_, false),
+        type(type_),
+        map(broker->GetOrCreateData(handle(object_->map(), broker_->isolate()))
+                ->AsMap()) {
+    CHECK_NOT_NULL(map);
+    CHECK(broker_->SerializingAllowed());
+  }
+};
+
+class PropertyCellData : public HeapObjectData {};
+class JSObjectData : public HeapObjectData {
+ public:
+  using HeapObjectData::HeapObjectData;
+};
+
+class JSFunctionData : public JSObjectData {
+ public:
+  SharedFunctionInfoData* const shared;
+
+  JSFunctionData(JSHeapBroker* broker_, Handle<JSFunction> object_,
+                 HeapObjectType type_)
+      : JSObjectData(broker_, object_, type_),
+        shared(
+            broker
+                ->GetOrCreateData(handle(object_->shared(), broker->isolate()))
+                ->AsSharedFunctionInfo()) {
+    CHECK_NOT_NULL(shared);
+  }
+};
+
+class JSRegExpData : public JSObjectData {};
+class HeapNumberData : public HeapObjectData {};
+class MutableHeapNumberData : public HeapObjectData {};
+
+class ContextData : public HeapObjectData {
+ public:
+  ContextData(JSHeapBroker* broker_, Handle<Context> object_,
+              HeapObjectType type_)
+      : HeapObjectData(broker_, object_, type_) {}
+};
+
+class NativeContextData : public ContextData {
+ public:
+  NativeContextData(JSHeapBroker* broker_, Handle<Context> object_,
+                    HeapObjectType type_)
+      : ContextData(broker_, object_, type_), sloppy_arguments_map_(nullptr) {
+    // There's no NativeContext class, so we take object_ as Context.
+    CHECK(object_->IsNativeContext());
+    CHECK(broker->SerializingAllowed());
+    Handle<Map> map(object_->sloppy_arguments_map(), broker->isolate());
+    sloppy_arguments_map_ = broker->GetOrCreateData(map)->AsMap();
+    CHECK_NOT_NULL(sloppy_arguments_map_);
+  }
+
+  MapData* sloppy_arguments_map() const { return sloppy_arguments_map_; }
+
+ private:
+  MapData* sloppy_arguments_map_;
+};
+
+class NameData : public HeapObjectData {};
+class ScriptContextTableData : public HeapObjectData {};
+class FeedbackVectorData : public HeapObjectData {};
+class AllocationSiteData : public HeapObjectData {};
+class MapData : public HeapObjectData {};
+class FixedArrayBaseData : public HeapObjectData {};
+class FixedArrayData : public FixedArrayBaseData {};
+class FixedDoubleArrayData : public FixedArrayBaseData {};
+class JSArrayData : public JSObjectData {};
+class ScopeInfoData : public HeapObjectData {};
+class SharedFunctionInfoData : public HeapObjectData {};
+class StringData : public NameData {};
+class ModuleData : public HeapObjectData {};
+class CellData : public HeapObjectData {};
+class JSGlobalProxyData : public JSObjectData {};
+class CodeData : public HeapObjectData {};
+class InternalizedStringData : public StringData {};
+
+#define DEFINE_IS_AND_AS(Name)                                          \
+  bool ObjectData::Is##Name() const {                                   \
+    if (broker->mode() == JSHeapBroker::kDisabled) {                    \
+      AllowHandleDereference allow_handle_dereference;                  \
+      return object->Is##Name();                                        \
+    }                                                                   \
+    if (is_smi) return false;                                           \
+    InstanceType instance_type =                                        \
+        static_cast<const HeapObjectData*>(this)->type.instance_type(); \
+    return InstanceTypeChecker::Is##Name(instance_type);                \
+  }                                                                     \
+  Name##Data* ObjectData::As##Name() {                                  \
+    CHECK_NE(broker->mode(), JSHeapBroker::kDisabled);                  \
+    CHECK(Is##Name());                                                  \
+    return static_cast<Name##Data*>(this);                              \
+  }
+HEAP_BROKER_OBJECT_LIST(DEFINE_IS_AND_AS)
+#undef DEFINE_IS_AND_AS
+
+ObjectData* ObjectData::Serialize(JSHeapBroker* broker, Handle<Object> object) {
+  CHECK(broker->SerializingAllowed());
+  return object->IsSmi() ? new (broker->zone()) ObjectData(broker, object, true)
+                         : HeapObjectData::Serialize(
+                               broker, Handle<HeapObject>::cast(object));
+}
+
+HeapObjectData* HeapObjectData::Serialize(JSHeapBroker* broker,
+                                          Handle<HeapObject> object) {
+  CHECK(broker->SerializingAllowed());
+  Handle<Map> map(object->map(), broker->isolate());
+  HeapObjectType type = broker->HeapObjectTypeFromMap(map);
+
+  HeapObjectData* result;
+  if (object->IsJSFunction()) {
+    result = new (broker->zone())
+        JSFunctionData(broker, Handle<JSFunction>::cast(object), type);
+  } else if (object->IsNativeContext()) {
+    result = new (broker->zone())
+        NativeContextData(broker, Handle<Context>::cast(object), type);
+  } else {
+    result = new (broker->zone()) HeapObjectData(broker, object, type);
+  }
+  return result;
+}
+
 MapRef HeapObjectRef::map() const {
-  AllowHandleAllocation handle_allocation;
-  AllowHandleDereference allow_handle_dereference;
-  return MapRef(broker(),
-                handle(object<HeapObject>()->map(), broker()->isolate()));
+  if (broker()->mode() == JSHeapBroker::kDisabled) {
+    AllowHandleAllocation handle_allocation;
+    AllowHandleDereference allow_handle_dereference;
+    return MapRef(broker(),
+                  handle(object<HeapObject>()->map(), broker()->isolate()));
+  } else {
+    return MapRef(data()->AsHeapObject()->map);
+  }
 }
 
 double HeapNumberRef::value() const {
@@ -30,15 +196,8 @@ double MutableHeapNumberRef::value() const {
   return object<MutableHeapNumber>()->value();
 }
 
-bool ObjectRef::IsSmi() const {
-  AllowHandleDereference allow_handle_dereference;
-  return object_->IsSmi();
-}
-
-int ObjectRef::AsSmi() const { return object<Smi>()->value(); }
-
 bool ObjectRef::equals(const ObjectRef& other) const {
-  return object<Object>().equals(other.object<Object>());
+  return data_ == other.data_;
 }
 
 StringRef ObjectRef::TypeOf() const {
@@ -63,7 +222,43 @@ ObjectRef ContextRef::get(int index) const {
   return ObjectRef(broker(), value);
 }
 
-JSHeapBroker::JSHeapBroker(Isolate* isolate) : isolate_(isolate) {}
+JSHeapBroker::JSHeapBroker(Isolate* isolate, Zone* zone)
+    : isolate_(isolate),
+      zone_(zone),
+      refs_(zone),
+      mode_(FLAG_concurrent_compiler_frontend ? kSerializing : kDisabled) {
+  if (FLAG_trace_heap_broker) {
+    PrintF("[%p] Constructing heap broker.\n", this);
+  }
+}
+
+bool JSHeapBroker::SerializingAllowed() const {
+  return mode() == kSerializing ||
+         (!FLAG_strict_heap_broker && mode() == kSerialized);
+}
+
+void JSHeapBroker::SerializeStandardObjects() {
+  if (FLAG_trace_heap_broker) {
+    PrintF("[%p] Serializing standard objects.\n", this);
+  }
+
+  // Stuff used by JSGraph:
+  GetOrCreateData(isolate()->factory()->empty_fixed_array());
+
+  // Stuff used by JSCreateLowering:
+  GetOrCreateData(isolate()->factory()->eval_context_map());
+  GetOrCreateData(isolate()->factory()->function_context_map());
+  GetOrCreateData(isolate()->factory()->many_closures_cell_map());
+  // TODO(neis): Strings used by typeof.
+
+  // Stuff used by JSTypedLowering:
+  GetOrCreateData(isolate()->factory()->length_string());
+  GetOrCreateData(
+      isolate()->builtins()->builtin_handle(Builtins::kArrayPrototypeShift));
+  GetOrCreateData(isolate()->builtins()->builtin_handle(
+      Builtins::kCallFunctionForwardVarargs));
+  // TODO(neis): Other code objects corresponding to TFJ builtins.
+}
 
 HeapObjectType JSHeapBroker::HeapObjectTypeFromMap(Map* map) const {
   AllowHandleDereference allow_handle_dereference;
@@ -95,28 +290,58 @@ HeapObjectType JSHeapBroker::HeapObjectTypeFromMap(Map* map) const {
   return HeapObjectType(map->instance_type(), flags, oddball_type);
 }
 
-// static
-base::Optional<int> JSHeapBroker::TryGetSmi(Handle<Object> object) {
-  AllowHandleDereference allow_handle_dereference;
-  if (!object->IsSmi()) return base::Optional<int>();
-  return Smi::cast(*object)->value();
+ObjectData* JSHeapBroker::GetData(Handle<Object> object) const {
+  auto it = refs_.find(object.address());
+  return it != refs_.end() ? it->second : nullptr;
 }
 
-#define DEFINE_IS_AND_AS(Name)                        \
-  bool ObjectRef::Is##Name() const {                  \
-    AllowHandleDereference allow_handle_dereference;  \
-    return object<Object>()->Is##Name();              \
-  }                                                   \
-  Name##Ref ObjectRef::As##Name() const {             \
-    DCHECK(Is##Name());                               \
-    return Name##Ref(broker(), object<HeapObject>()); \
+ObjectData* JSHeapBroker::GetOrCreateData(Handle<Object> object) {
+  CHECK(SerializingAllowed());
+  ObjectData* data = GetData(object);
+  if (data == nullptr) {
+    // TODO(neis): Remove these Allow* once we serialize everything upfront.
+    AllowHandleAllocation handle_allocation;
+    AllowHandleDereference handle_dereference;
+    data = ObjectData::Serialize(this, object);
+  }
+  CHECK_NOT_NULL(data);
+  return data;
+}
+
+void JSHeapBroker::AddData(Handle<Object> object, ObjectData* data) {
+  if (FLAG_trace_heap_broker) {
+    PrintF("[%p] Creating data %p for handle %" V8PRIuPTR " (", this, data,
+           object.address());
+    object->ShortPrint();
+    PrintF(")\n");
+  }
+  CHECK_NOT_NULL(isolate()->handle_scope_data()->canonical_scope);
+  CHECK(refs_.insert({object.address(), data}).second);
+}
+
+#define DEFINE_IS_AND_AS(Name)                                    \
+  bool ObjectRef::Is##Name() const { return data()->Is##Name(); } \
+  Name##Ref ObjectRef::As##Name() const {                         \
+    DCHECK(Is##Name());                                           \
+    return Name##Ref(data());                                     \
   }
 HEAP_BROKER_OBJECT_LIST(DEFINE_IS_AND_AS)
 #undef DEFINE_IS_AND_AS
 
+bool ObjectRef::IsSmi() const { return data()->is_smi; }
+
+int ObjectRef::AsSmi() const {
+  // Handle-dereference is always allowed for Handle<Smi>.
+  return object<Smi>()->value();
+}
+
 HeapObjectType HeapObjectRef::type() const {
-  AllowHandleDereference allow_handle_dereference;
-  return broker()->HeapObjectTypeFromMap(object<HeapObject>()->map());
+  if (broker()->mode() == JSHeapBroker::kDisabled) {
+    AllowHandleDereference allow_handle_dereference;
+    return broker()->HeapObjectTypeFromMap(object<HeapObject>()->map());
+  } else {
+    return data()->AsHeapObject()->type;
+  }
 }
 
 base::Optional<MapRef> HeapObjectRef::TryGetObjectCreateMap() const {
@@ -135,6 +360,8 @@ bool HeapObjectRef::IsSeqString() const {
   AllowHandleDereference allow_handle_dereference;
   return object<HeapObject>()->IsSeqString();
 }
+
+// TODO(neis): Provide StringShape() on StringRef.
 
 bool HeapObjectRef::IsExternalString() const {
   AllowHandleDereference allow_handle_dereference;
@@ -167,13 +394,12 @@ void JSFunctionRef::EnsureHasInitialMap() const {
 }
 
 // TODO(mslekova): Pre-compute these on the main thread.
-MapRef MapRef::AsElementsKind(ElementsKind kind,
-                              const JSHeapBroker* broker) const {
+MapRef MapRef::AsElementsKind(ElementsKind kind) const {
   AllowHandleAllocation handle_allocation;
   AllowHeapAllocation heap_allocation;
   AllowHandleDereference allow_handle_dereference;
-  return MapRef(broker,
-                Map::AsElementsKind(broker->isolate(), object<Map>(), kind));
+  return MapRef(broker(),
+                Map::AsElementsKind(broker()->isolate(), object<Map>(), kind));
 }
 
 SlackTrackingResult JSFunctionRef::FinishSlackTracking() const {
@@ -199,10 +425,14 @@ MapRef JSFunctionRef::initial_map() const {
 }
 
 SharedFunctionInfoRef JSFunctionRef::shared() const {
-  AllowHandleAllocation handle_allocation;
-  AllowHandleDereference allow_handle_dereference;
-  return SharedFunctionInfoRef(
-      broker(), handle(object<JSFunction>()->shared(), broker()->isolate()));
+  if (broker()->mode() == JSHeapBroker::kDisabled) {
+    AllowHandleAllocation handle_allocation;
+    AllowHandleDereference allow_handle_dereference;
+    return SharedFunctionInfoRef(
+        broker(), handle(object<JSFunction>()->shared(), broker()->isolate()));
+  } else {
+    return SharedFunctionInfoRef(data()->AsJSFunction()->shared);
+  }
 }
 
 JSGlobalProxyRef JSFunctionRef::global_proxy() const {
@@ -417,14 +647,16 @@ void JSObjectRef::EnsureElementsTenured() {
   // the compilation job starts.
   AllowHandleAllocation allow_handle_allocation;
   AllowHandleDereference allow_handle_dereference;
+  AllowHeapAllocation allow_heap_allocation;
+
   Handle<FixedArrayBase> object_elements = elements().object<FixedArrayBase>();
   if (Heap::InNewSpace(*object_elements)) {
     // If we would like to pretenure a fixed cow array, we must ensure that
     // the array is already in old space, otherwise we'll create too many
     // old-to-new-space pointers (overflowing the store buffer).
-    object_elements = Handle<FixedArrayBase>(
+    object_elements =
         broker()->isolate()->factory()->CopyAndTenureFixedCOWArray(
-            Handle<FixedArray>::cast(object_elements)));
+            Handle<FixedArray>::cast(object_elements));
     object<JSObject>()->set_elements(*object_elements);
   }
 }
@@ -539,13 +771,13 @@ MapRef MapRef::FindFieldOwner(int descriptor) const {
   return MapRef(broker(), owner);
 }
 
-FieldTypeRef MapRef::GetFieldType(int descriptor) const {
+ObjectRef MapRef::GetFieldType(int descriptor) const {
   AllowHandleAllocation handle_allocation;
   AllowHandleDereference allow_handle_dereference;
   Handle<FieldType> field_type(
       object<Map>()->instance_descriptors()->GetFieldType(descriptor),
       broker()->isolate());
-  return FieldTypeRef(broker(), field_type);
+  return ObjectRef(broker(), field_type);
 }
 
 ElementsKind JSArrayRef::GetElementsKind() const {
@@ -717,10 +949,14 @@ MapRef NativeContextRef::fast_aliased_arguments_map() const {
 }
 
 MapRef NativeContextRef::sloppy_arguments_map() const {
-  AllowHandleAllocation handle_allocation;
-  AllowHandleDereference allow_handle_dereference;
-  return MapRef(broker(), handle(object<Context>()->sloppy_arguments_map(),
-                                 broker()->isolate()));
+  if (broker()->mode() == JSHeapBroker::kDisabled) {
+    AllowHandleAllocation handle_allocation;
+    AllowHandleDereference allow_handle_dereference;
+    return MapRef(broker(), handle(object<Context>()->sloppy_arguments_map(),
+                                   broker()->isolate()));
+  } else {
+    return MapRef(data()->AsNativeContext()->sloppy_arguments_map());
+  }
 }
 
 MapRef NativeContextRef::strict_arguments_map() const {
@@ -730,11 +966,11 @@ MapRef NativeContextRef::strict_arguments_map() const {
                                  broker()->isolate()));
 }
 
-MapRef NativeContextRef::js_array_fast_elements_map_index() const {
+MapRef NativeContextRef::js_array_fast_elements_map() const {
   AllowHandleAllocation handle_allocation;
   AllowHandleDereference allow_handle_dereference;
   return MapRef(broker(),
-                handle(object<Context>()->js_array_fast_elements_map_index(),
+                handle(object<Context>()->js_array_fast_elements_map(),
                        broker()->isolate()));
 }
 
@@ -827,6 +1063,14 @@ MapRef NativeContextRef::ObjectLiteralMapFromCache() const {
   return MapRef(broker(), map);
 }
 
+MapRef NativeContextRef::GetInitialJSArrayMap(ElementsKind kind) const {
+  AllowHandleAllocation handle_allocation;
+  AllowHandleDereference allow_handle_dereference;
+  Handle<Map> map(object<Context>()->GetInitialJSArrayMap(kind),
+                  broker()->isolate());
+  return MapRef(broker(), map);
+}
+
 bool ObjectRef::BooleanValue() {
   AllowHandleDereference allow_handle_dereference;
   return object<Object>()->BooleanValue(broker()->isolate());
@@ -875,6 +1119,33 @@ PropertyDetails PropertyCellRef::property_details() const {
   AllowHandleDereference allow_handle_dereference;
   return object<PropertyCell>()->property_details();
 }
+
+ObjectRef::ObjectRef(JSHeapBroker* broker, Handle<Object> object) {
+  switch (broker->mode()) {
+    case JSHeapBroker::kSerialized:
+      data_ = FLAG_strict_heap_broker ? broker->GetData(object)
+                                      : broker->GetOrCreateData(object);
+      break;
+    case JSHeapBroker::kSerializing:
+      data_ = broker->GetOrCreateData(object);
+      break;
+    case JSHeapBroker::kDisabled:
+      data_ = broker->GetData(object);
+      if (data_ == nullptr) {
+        AllowHandleDereference handle_dereference;
+        data_ =
+            new (broker->zone()) ObjectData(broker, object, object->IsSmi());
+      }
+      break;
+  }
+  CHECK_NOT_NULL(data_);
+}
+
+Handle<Object> ObjectRef::object() const { return data_->object; }
+
+JSHeapBroker* ObjectRef::broker() const { return data_->broker; }
+
+ObjectData* ObjectRef::data() const { return data_; }
 
 }  // namespace compiler
 }  // namespace internal

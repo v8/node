@@ -10,6 +10,7 @@
 #include "src/builtins/builtins.h"
 #include "src/builtins/growable-fixed-array-gen.h"
 #include "src/handles-inl.h"
+#include "src/heap/factory-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -312,6 +313,7 @@ void TypedArrayBuiltinsAssembler::ConstructByLength(TNode<Context> context,
                                                     TNode<JSTypedArray> holder,
                                                     TNode<Object> length,
                                                     TNode<Smi> element_size) {
+  // TODO(7881): support larger-than-smi typed array lengths
   CSA_ASSERT(this, TaggedIsPositiveSmi(element_size));
 
   Label invalid_length(this, Label::kDeferred), done(this);
@@ -322,6 +324,7 @@ void TypedArrayBuiltinsAssembler::ConstructByLength(TNode<Context> context,
   // The maximum length of a TypedArray is MaxSmi().
   // Note: this is not per spec, but rather a constraint of our current
   // representation (which uses Smis).
+  // TODO(7881): support larger-than-smi typed array lengths
   GotoIf(TaggedIsNotSmi(converted_length), &invalid_length);
   // The goto above ensures that byte_length is a Smi.
   TNode<Smi> smi_converted_length = CAST(converted_length);
@@ -750,12 +753,6 @@ TF_BUILTIN(CreateTypedArray, TypedArrayBuiltinsAssembler) {
   Return(result);
 }
 
-TF_BUILTIN(TypedArrayConstructorLazyDeoptContinuation,
-           TypedArrayBuiltinsAssembler) {
-  Node* result = Parameter(Descriptor::kResult);
-  Return(result);
-}
-
 // ES #sec-typedarray-constructors
 TF_BUILTIN(TypedArrayConstructor, TypedArrayBuiltinsAssembler) {
   TNode<Context> context = CAST(Parameter(Descriptor::kContext));
@@ -1164,18 +1161,17 @@ void TypedArrayBuiltinsAssembler::DispatchTypedArrayByElementsKind(
   Label next(this), if_unknown_type(this, Label::kDeferred);
 
   int32_t elements_kinds[] = {
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) TYPE##_ELEMENTS,
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) TYPE##_ELEMENTS,
       TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
   };
 
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) \
-  Label if_##type##array(this);
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) Label if_##type##array(this);
   TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
 
   Label* elements_kind_labels[] = {
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) &if_##type##array,
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) &if_##type##array,
       TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
   };
@@ -1184,11 +1180,12 @@ void TypedArrayBuiltinsAssembler::DispatchTypedArrayByElementsKind(
   Switch(elements_kind, &if_unknown_type, elements_kinds, elements_kind_labels,
          arraysize(elements_kinds));
 
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size)                    \
-  BIND(&if_##type##array);                                                 \
-  {                                                                        \
-    case_function(TYPE##_ELEMENTS, size, Context::TYPE##_ARRAY_FUN_INDEX); \
-    Goto(&next);                                                           \
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype)   \
+  BIND(&if_##type##array);                          \
+  {                                                 \
+    case_function(TYPE##_ELEMENTS, sizeof(ctype),   \
+                  Context::TYPE##_ARRAY_FUN_INDEX); \
+    Goto(&next);                                    \
   }
   TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
@@ -1491,19 +1488,19 @@ TF_BUILTIN(TypedArrayPrototypeToStringTag, TypedArrayBuiltinsAssembler) {
   size_t const kTypedElementsKindCount = LAST_FIXED_TYPED_ARRAY_ELEMENTS_KIND -
                                          FIRST_FIXED_TYPED_ARRAY_ELEMENTS_KIND +
                                          1;
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) \
-  Label return_##type##array(this);                     \
-  BIND(&return_##type##array);                          \
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) \
+  Label return_##type##array(this);               \
+  BIND(&return_##type##array);                    \
   Return(StringConstant(#Type "Array"));
   TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
   Label* elements_kind_labels[kTypedElementsKindCount] = {
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) &return_##type##array,
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) &return_##type##array,
       TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
   };
   int32_t elements_kinds[kTypedElementsKindCount] = {
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) \
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) \
   TYPE##_ELEMENTS - FIRST_FIXED_TYPED_ARRAY_ELEMENTS_KIND,
       TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
@@ -1650,44 +1647,6 @@ TF_BUILTIN(TypedArrayOf, TypedArrayBuiltinsAssembler) {
                  "%TypedArray%.of");
 }
 
-void TypedArrayBuiltinsAssembler::IterableToListSlowPath(
-    TNode<Context> context, TNode<Object> iterable, TNode<Object> iterator_fn,
-    Variable* created_list) {
-  IteratorBuiltinsAssembler iterator_assembler(state());
-
-  // 1. Let iteratorRecord be ? GetIterator(items, method).
-  IteratorRecord iterator_record =
-      iterator_assembler.GetIterator(context, iterable, iterator_fn);
-
-  // 2. Let values be a new empty List.
-  GrowableFixedArray values(state());
-
-  Variable* vars[] = {values.var_array(), values.var_length(),
-                      values.var_capacity()};
-  Label loop_start(this, 3, vars), loop_end(this);
-  Goto(&loop_start);
-  // 3. Let next be true.
-  // 4. Repeat, while next is not false
-  BIND(&loop_start);
-  {
-    //  a. Set next to ? IteratorStep(iteratorRecord).
-    TNode<Object> next = CAST(
-        iterator_assembler.IteratorStep(context, iterator_record, &loop_end));
-    //  b. If next is not false, then
-    //   i. Let nextValue be ? IteratorValue(next).
-    TNode<Object> next_value =
-        CAST(iterator_assembler.IteratorValue(context, next));
-    //   ii. Append nextValue to the end of the List values.
-    values.Push(next_value);
-    Goto(&loop_start);
-  }
-  BIND(&loop_end);
-
-  // 5. Return values.
-  TNode<JSArray> js_array_values = values.ToJSArray(context);
-  created_list->Bind(js_array_values);
-}
-
 // This builtin always returns a new JSArray and is thus safe to use even in the
 // presence of code that may call back into user-JS.
 TF_BUILTIN(IterableToList, TypedArrayBuiltinsAssembler) {
@@ -1695,33 +1654,8 @@ TF_BUILTIN(IterableToList, TypedArrayBuiltinsAssembler) {
   TNode<Object> iterable = CAST(Parameter(Descriptor::kIterable));
   TNode<Object> iterator_fn = CAST(Parameter(Descriptor::kIteratorFn));
 
-  Label fast_path(this), slow_path(this), done(this);
-
-  TVARIABLE(JSArray, created_list);
-
-  // This is a fast-path for ignoring the iterator.
-  // TODO(petermarshall): Port IterableToListCanBeElided to CSA.
-  Node* elided =
-      CallRuntime(Runtime::kIterableToListCanBeElided, context, iterable);
-  CSA_ASSERT(this, IsBoolean(elided));
-  Branch(IsTrue(elided), &fast_path, &slow_path);
-
-  BIND(&fast_path);
-  {
-    TNode<JSArray> input_array = CAST(iterable);
-    TNode<JSArray> new_array = CAST(CloneFastJSArray(context, input_array));
-    created_list = new_array;
-    Goto(&done);
-  }
-
-  BIND(&slow_path);
-  {
-    IterableToListSlowPath(context, iterable, iterator_fn, &created_list);
-    Goto(&done);
-  }
-
-  BIND(&done);
-  Return(created_list.value());
+  IteratorBuiltinsAssembler iterator_assembler(state());
+  Return(iterator_assembler.IterableToList(context, iterable, iterator_fn));
 }
 
 // ES6 #sec-%typedarray%.from
@@ -1807,6 +1741,7 @@ TF_BUILTIN(TypedArrayFrom, TypedArrayBuiltinsAssembler) {
 
   BIND(&from_array_like);
   {
+    // TODO(7881): support larger-than-smi typed array lengths
     Label if_length_not_smi(this, Label::kDeferred);
     final_source = source;
 

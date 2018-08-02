@@ -17,6 +17,7 @@
 #include "src/compiler/type-cache.h"
 #include "src/compiler/types.h"
 #include "src/objects-inl.h"
+#include "src/objects/js-generator.h"
 #include "src/objects/module-inl.h"
 
 namespace v8 {
@@ -93,7 +94,7 @@ class JSBinopReduction final {
     if (BothInputsAre(Type::String()) ||
         BinaryOperationHintOf(node_->op()) == BinaryOperationHint::kString) {
       HeapObjectBinopMatcher m(node_);
-      const JSHeapBroker* broker = lowering_->js_heap_broker();
+      JSHeapBroker* broker = lowering_->js_heap_broker();
       if (m.right().HasValue() && m.right().Ref(broker).IsString()) {
         StringRef right_string = m.right().Ref(broker).AsString();
         if (right_string.length() >= ConsString::kMinLength) return true;
@@ -408,7 +409,7 @@ class JSBinopReduction final {
 // - relax effects from generic but not-side-effecting operations
 
 JSTypedLowering::JSTypedLowering(Editor* editor, JSGraph* jsgraph,
-                                 const JSHeapBroker* js_heap_broker, Zone* zone)
+                                 JSHeapBroker* js_heap_broker, Zone* zone)
     : AdvancedReducer(editor),
       jsgraph_(jsgraph),
       js_heap_broker_(js_heap_broker),
@@ -527,6 +528,33 @@ Reduction JSTypedLowering::ReduceJSAdd(Node* node) {
       Reduction const reduction = ReduceJSToStringInput(r.left());
       if (reduction.Changed()) {
         NodeProperties::ReplaceValueInput(node, reduction.replacement(), 0);
+      }
+    }
+    // We might be able to constant-fold the String concatenation now.
+    if (r.BothInputsAre(Type::String())) {
+      HeapObjectBinopMatcher m(node);
+      if (m.IsFoldable()) {
+        StringRef left = m.left().Ref(js_heap_broker()).AsString();
+        StringRef right = m.right().Ref(js_heap_broker()).AsString();
+        if (left.length() + right.length() > String::kMaxLength) {
+          // No point in trying to optimize this, as it will just throw.
+          return NoChange();
+        }
+        // TODO(mslekova): get rid of these allows by doing either one of:
+        // 1. remove the optimization and check if it ruins the performance
+        // 2. leave a placeholder and do the actual allocations once back on the
+        // MT
+        AllowHandleDereference allow_handle_dereference;
+        AllowHandleAllocation allow_handle_allocation;
+        AllowHeapAllocation allow_heap_allocation;
+        ObjectRef cons(
+            js_heap_broker(),
+            factory()
+                ->NewConsString(left.object<String>(), right.object<String>())
+                .ToHandleChecked());
+        Node* value = jsgraph()->Constant(cons);
+        ReplaceWithValue(node, value);
+        return Replace(value);
       }
     }
     // We might know for sure that we're creating a ConsString here.
@@ -1356,7 +1384,7 @@ Node* JSTypedLowering::BuildGetModuleCell(Node* node) {
 
   if (module_type.IsHeapConstant()) {
     ModuleRef module_constant = module_type.AsHeapConstant()->Ref().AsModule();
-    CellRef cell_constant(module_constant.GetCell(cell_index));
+    CellRef cell_constant = module_constant.GetCell(cell_index);
     return jsgraph()->Constant(cell_constant);
   }
 
@@ -1415,8 +1443,8 @@ Reduction JSTypedLowering::ReduceJSStoreModule(Node* node) {
 
 namespace {
 
-void ReduceBuiltin(Isolate* isolate, JSGraph* jsgraph, Node* node,
-                   int builtin_index, int arity, CallDescriptor::Flags flags) {
+void ReduceBuiltin(JSGraph* jsgraph, Node* node, int builtin_index, int arity,
+                   CallDescriptor::Flags flags) {
   // Patch {node} to a direct CEntry call.
   //
   // ----------- A r g u m e n t s -----------
@@ -1678,8 +1706,7 @@ Reduction JSTypedLowering::ReduceJSCall(Node* node) {
     } else if (shared.HasBuiltinId() &&
                Builtins::HasCppImplementation(shared.builtin_id())) {
       // Patch {node} to a direct CEntry call.
-      ReduceBuiltin(isolate(), jsgraph(), node, shared.builtin_id(), arity,
-                    flags);
+      ReduceBuiltin(jsgraph(), node, shared.builtin_id(), arity, flags);
     } else if (shared.HasBuiltinId() &&
                Builtins::KindOf(shared.builtin_id()) == Builtins::TFJ) {
       // Patch {node} to a direct code object call.

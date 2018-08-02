@@ -12,6 +12,7 @@
 #include "src/debug/debug-interface.h"
 #include "src/objects-inl.h"
 #include "src/objects/debug-objects-inl.h"
+#include "src/objects/shared-function-info.h"
 #include "src/trap-handler/trap-handler.h"
 #include "src/wasm/jump-table-assembler.h"
 #include "src/wasm/module-compiler.h"
@@ -674,7 +675,11 @@ Handle<String> WasmModuleObject::GetFunctionName(
   MaybeHandle<String> name =
       GetFunctionNameOrNull(isolate, module_object, func_index);
   if (!name.is_null()) return name.ToHandleChecked();
-  return isolate->factory()->NewStringFromStaticChars("<WASM UNNAMED>");
+  EmbeddedVector<char, 32> buffer;
+  int length = SNPrintF(buffer, "wasm-function[%u]", func_index);
+  return isolate->factory()
+      ->NewStringFromOneByte(Vector<uint8_t>::cast(buffer.SubVector(0, length)))
+      .ToHandleChecked();
 }
 
 Vector<const uint8_t> WasmModuleObject::GetRawFunctionName(
@@ -874,19 +879,19 @@ MaybeHandle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
                                             uint32_t maximum_pages) {
   if (!old_buffer->is_growable()) return {};
   void* old_mem_start = old_buffer->backing_store();
-  uint32_t old_size = 0;
-  CHECK(old_buffer->byte_length()->ToUint32(&old_size));
-  DCHECK_EQ(0, old_size % wasm::kWasmPageSize);
-  uint32_t old_pages = old_size / wasm::kWasmPageSize;
-  DCHECK_GE(std::numeric_limits<uint32_t>::max(),
-            old_size + pages * wasm::kWasmPageSize);
-  if (old_pages > maximum_pages || pages > maximum_pages - old_pages) return {};
-  size_t new_size =
-      static_cast<size_t>(old_pages + pages) * wasm::kWasmPageSize;
-  if (new_size > FLAG_wasm_max_mem_pages * wasm::kWasmPageSize ||
-      new_size > kMaxInt) {
+  size_t old_size = old_buffer->byte_length()->Number();
+  CHECK_GE(wasm::kV8MaxWasmMemoryBytes, old_size);
+  CHECK_EQ(0, old_size % wasm::kWasmPageSize);
+  size_t old_pages = old_size / wasm::kWasmPageSize;
+  if (old_pages > maximum_pages ||            // already reached maximum
+      (pages > maximum_pages - old_pages) ||  // exceeds remaining
+      (pages > FLAG_wasm_max_mem_pages - old_pages)) {  // exceeds limit
     return {};
   }
+  size_t new_size =
+      static_cast<size_t>(old_pages + pages) * wasm::kWasmPageSize;
+  CHECK_GE(wasm::kV8MaxWasmMemoryBytes, new_size);
+
   // Reusing the backing store from externalized buffers causes problems with
   // Blink's array buffers. The connection between the two is lost, which can
   // lead to Blink not knowing about the other reference to the buffer and
@@ -939,7 +944,7 @@ MaybeHandle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
 }
 
 // May GC, because SetSpecializationMemInfoFrom may GC
-void SetInstanceMemory(Isolate* isolate, Handle<WasmInstanceObject> instance,
+void SetInstanceMemory(Handle<WasmInstanceObject> instance,
                        Handle<JSArrayBuffer> buffer) {
   instance->SetRawMemory(reinterpret_cast<byte*>(buffer->backing_store()),
                          buffer->byte_length()->Number());
@@ -947,8 +952,8 @@ void SetInstanceMemory(Isolate* isolate, Handle<WasmInstanceObject> instance,
   // To flush out bugs earlier, in DEBUG mode, check that all pages of the
   // memory are accessible by reading and writing one byte on each page.
   byte* mem_start = instance->memory_start();
-  uintptr_t mem_size = instance->memory_size();
-  for (uint32_t offset = 0; offset < mem_size; offset += wasm::kWasmPageSize) {
+  size_t mem_size = instance->memory_size();
+  for (size_t offset = 0; offset < mem_size; offset += wasm::kWasmPageSize) {
     byte val = mem_start[offset];
     USE(val);
     mem_start[offset] = val;
@@ -971,14 +976,9 @@ Handle<WasmMemoryObject> WasmMemoryObject::New(
       isolate->factory()->NewJSObject(memory_ctor, TENURED));
 
   Handle<JSArrayBuffer> buffer;
-  if (maybe_buffer.is_null()) {
+  if (!maybe_buffer.ToHandle(&buffer)) {
     // If no buffer was provided, create a 0-length one.
     buffer = wasm::SetupArrayBuffer(isolate, nullptr, 0, false);
-  } else {
-    buffer = maybe_buffer.ToHandleChecked();
-    // Paranoid check that the buffer size makes sense.
-    uint32_t mem_size = 0;
-    CHECK(buffer->byte_length()->ToUint32(&mem_size));
   }
   memory_obj->set_array_buffer(*buffer);
   memory_obj->set_maximum_pages(maximum);
@@ -1027,11 +1027,10 @@ void WasmMemoryObject::AddInstance(Isolate* isolate,
       FixedArrayOfWeakCells::Add(isolate, old_instances, instance);
   memory->set_instances(*new_instances);
   Handle<JSArrayBuffer> buffer(memory->array_buffer(), isolate);
-  SetInstanceMemory(isolate, instance, buffer);
+  SetInstanceMemory(instance, buffer);
 }
 
-void WasmMemoryObject::RemoveInstance(Isolate* isolate,
-                                      Handle<WasmMemoryObject> memory,
+void WasmMemoryObject::RemoveInstance(Handle<WasmMemoryObject> memory,
                                       Handle<WasmInstanceObject> instance) {
   if (memory->has_instances()) {
     memory->instances()->Remove(instance);
@@ -1067,7 +1066,7 @@ int32_t WasmMemoryObject::Grow(Isolate* isolate,
       if (!elem->IsWasmInstanceObject()) continue;
       Handle<WasmInstanceObject> instance(WasmInstanceObject::cast(elem),
                                           isolate);
-      SetInstanceMemory(isolate, instance, new_buffer);
+      SetInstanceMemory(instance, new_buffer);
     }
   }
   memory_object->set_array_buffer(*new_buffer);
@@ -1194,14 +1193,25 @@ bool WasmInstanceObject::EnsureIndirectFunctionTableWithMinimumSize(
   return true;
 }
 
-void WasmInstanceObject::SetRawMemory(byte* mem_start, uint32_t mem_size) {
-  DCHECK_LE(mem_size, wasm::kV8MaxWasmMemoryPages * wasm::kWasmPageSize);
-  uint32_t mem_size64 = mem_size;
-  uint32_t mem_mask64 = base::bits::RoundUpToPowerOfTwo32(mem_size) - 1;
-  DCHECK_LE(mem_size, mem_mask64 + 1);
+void WasmInstanceObject::SetRawMemory(byte* mem_start, size_t mem_size) {
+  CHECK_LE(mem_size, wasm::kV8MaxWasmMemoryBytes);
+#if V8_HOST_ARCH_64_BIT
+  uint64_t mem_mask64 = base::bits::RoundUpToPowerOfTwo64(mem_size) - 1;
   set_memory_start(mem_start);
-  set_memory_size(mem_size64);
+  set_memory_size(mem_size);
   set_memory_mask(mem_mask64);
+#else
+  // Must handle memory > 2GiB specially.
+  CHECK_LE(mem_size, size_t{kMaxUInt32});
+  uint32_t mem_mask32 =
+      (mem_size > 2 * size_t{GB})
+          ? 0xFFFFFFFFu
+          : base::bits::RoundUpToPowerOfTwo32(static_cast<uint32_t>(mem_size)) -
+                1;
+  set_memory_start(mem_start);
+  set_memory_size(mem_size);
+  set_memory_mask(mem_mask32);
+#endif
 }
 
 const WasmModule* WasmInstanceObject::module() {
@@ -1298,8 +1308,7 @@ void InstanceFinalizer(const v8::WeakCallbackInfo<void>& data) {
   // the next GC cycle, so we need to manually break some links (such as
   // the weak references from {WasmMemoryObject::instances}.
   if (instance->has_memory_object()) {
-    WasmMemoryObject::RemoveInstance(isolate,
-                                     handle(instance->memory_object(), isolate),
+    WasmMemoryObject::RemoveInstance(handle(instance->memory_object(), isolate),
                                      handle(instance, isolate));
   }
 

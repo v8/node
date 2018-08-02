@@ -7,13 +7,14 @@
 #include <type_traits>
 
 #include "include/v8-value-serializer-version.h"
-#include "src/api.h"
+#include "src/api-inl.h"
 #include "src/base/logging.h"
 #include "src/conversions.h"
 #include "src/flags.h"
 #include "src/handles-inl.h"
 #include "src/heap/factory.h"
 #include "src/isolate.h"
+#include "src/maybe-handles-inl.h"
 #include "src/objects-inl.h"
 #include "src/objects/js-collection-inl.h"
 #include "src/objects/js-regexp-inl.h"
@@ -849,9 +850,9 @@ Maybe<bool> ValueSerializer::WriteJSArrayBufferView(JSArrayBufferView* view) {
   ArrayBufferViewTag tag = ArrayBufferViewTag::kInt8Array;
   if (view->IsJSTypedArray()) {
     switch (JSTypedArray::cast(view)->type()) {
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) \
-  case kExternal##Type##Array:                          \
-    tag = ArrayBufferViewTag::k##Type##Array;           \
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) \
+  case kExternal##Type##Array:                    \
+    tag = ArrayBufferViewTag::k##Type##Array;     \
     break;
       TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
@@ -894,14 +895,13 @@ Maybe<bool> ValueSerializer::WriteWasmModule(Handle<WasmModuleObject> object) {
     memcpy(destination, wire_bytes.start(), wire_bytes.size());
   }
 
-  size_t module_size =
-      wasm::GetSerializedNativeModuleSize(isolate_, native_module);
+  wasm::WasmSerializer wasm_serializer(isolate_, native_module);
+  size_t module_size = wasm_serializer.GetSerializedNativeModuleSize();
   CHECK_GE(std::numeric_limits<uint32_t>::max(), module_size);
   WriteVarint<uint32_t>(static_cast<uint32_t>(module_size));
   uint8_t* module_buffer;
   if (ReserveRawBytes(module_size).To(&module_buffer)) {
-    if (!wasm::SerializeNativeModule(isolate_, native_module,
-                                     {module_buffer, module_size})) {
+    if (!wasm_serializer.SerializeNativeModule({module_buffer, module_size})) {
       return Nothing<bool>();
     }
   }
@@ -1730,10 +1730,10 @@ MaybeHandle<JSArrayBufferView> ValueDeserializer::ReadJSArrayBufferView(
       AddObjectWithID(id, data_view);
       return data_view;
     }
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) \
-  case ArrayBufferViewTag::k##Type##Array:              \
-    external_array_type = kExternal##Type##Array;       \
-    element_size = size;                                \
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) \
+  case ArrayBufferViewTag::k##Type##Array:        \
+    external_array_type = kExternal##Type##Array; \
+    element_size = sizeof(ctype);                 \
     break;
       TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE

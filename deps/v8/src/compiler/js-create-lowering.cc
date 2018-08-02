@@ -21,6 +21,7 @@
 #include "src/objects-inl.h"
 #include "src/objects/arguments.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/js-generator.h"
 #include "src/objects/js-promise.h"
 #include "src/objects/js-regexp-inl.h"
 
@@ -59,6 +60,7 @@ const int kBlockContextAllocationLimit = 16;
 }  // namespace
 
 Reduction JSCreateLowering::Reduce(Node* node) {
+  DisallowHeapAccess disallow_heap_access;
   switch (node->opcode()) {
     case IrOpcode::kJSCreate:
       return ReduceJSCreate(node);
@@ -110,7 +112,6 @@ Reduction JSCreateLowering::Reduce(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreate(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreate, node->opcode());
   Node* const target = NodeProperties::GetValueInput(node, 0);
   Type const target_type = NodeProperties::GetType(target);
@@ -166,7 +167,6 @@ Reduction JSCreateLowering::ReduceJSCreate(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateArguments(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateArguments, node->opcode());
   CreateArgumentsType type = CreateArgumentsTypeOf(node->op());
   Node* const frame_state = NodeProperties::GetFrameStateInput(node);
@@ -260,7 +260,7 @@ Reduction JSCreateLowering::ReduceJSCreateArguments(Node* node) {
                              arguments_frame, rest_length, effect);
         // Load the JSArray object map.
         Node* const jsarray_map = jsgraph()->Constant(
-            native_context_ref().js_array_fast_elements_map_index());
+            native_context_ref().js_array_fast_elements_map());
         // Actually allocate and initialize the jsarray.
         AllocationBuilder a(jsgraph(), effect, control);
         Node* properties = jsgraph()->EmptyFixedArrayConstant();
@@ -379,7 +379,7 @@ Reduction JSCreateLowering::ReduceJSCreateArguments(Node* node) {
       effect = elements->op()->EffectOutputCount() > 0 ? elements : effect;
       // Load the JSArray object map.
       Node* const jsarray_map = jsgraph()->Constant(
-          native_context_ref().js_array_fast_elements_map_index());
+          native_context_ref().js_array_fast_elements_map());
       // Actually allocate and initialize the jsarray.
       AllocationBuilder a(jsgraph(), effect, control);
       Node* properties = jsgraph()->EmptyFixedArrayConstant();
@@ -404,7 +404,6 @@ Reduction JSCreateLowering::ReduceJSCreateArguments(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateGeneratorObject(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateGeneratorObject, node->opcode());
   Node* const closure = NodeProperties::GetValueInput(node, 0);
   Node* const receiver = NodeProperties::GetValueInput(node, 1);
@@ -492,7 +491,7 @@ Reduction JSCreateLowering::ReduceNewArray(Node* node, Node* length,
   // integer, always creates a holey backing store.
   if (!IsHoleyElementsKind(initial_map.elements_kind())) {
     initial_map = initial_map.AsElementsKind(
-        GetHoleyElementsKind(initial_map.elements_kind()), js_heap_broker());
+        GetHoleyElementsKind(initial_map.elements_kind()));
   }
 
   // Check that the {limit} is an unsigned integer in the valid range.
@@ -541,7 +540,7 @@ Reduction JSCreateLowering::ReduceNewArray(Node* node, Node* length,
   ElementsKind elements_kind = initial_map.elements_kind();
   if (NodeProperties::GetType(length).Max() > 0.0) {
     elements_kind = GetHoleyElementsKind(elements_kind);
-    initial_map = initial_map.AsElementsKind(elements_kind, js_heap_broker());
+    initial_map = initial_map.AsElementsKind(elements_kind);
   }
   DCHECK(IsFastElementsKind(elements_kind));
 
@@ -690,7 +689,6 @@ Reduction JSCreateLowering::ReduceNewArrayToStubCall(
 }
 
 Reduction JSCreateLowering::ReduceJSCreateArray(Node* node) {
-  DisallowHeapAccess disallow_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateArray, node->opcode());
   CreateArrayParameters const& p = CreateArrayParametersOf(node->op());
   int const arity = static_cast<int>(p.arity());
@@ -733,8 +731,7 @@ Reduction JSCreateLowering::ReduceJSCreateArray(Node* node) {
       if (site) {
         ElementsKind elements_kind = site->GetElementsKind();
         if (initial_map.elements_kind() != elements_kind) {
-          initial_map =
-              initial_map.AsElementsKind(elements_kind, js_heap_broker());
+          initial_map = initial_map.AsElementsKind(elements_kind);
         }
         can_inline_call = site->CanInlineCall();
         pretenure = dependencies()->DependOnPretenureMode(*site);
@@ -758,8 +755,7 @@ Reduction JSCreateLowering::ReduceJSCreateArray(Node* node) {
               elements_kind, IsHoleyElementsKind(elements_kind)
                                  ? HOLEY_ELEMENTS
                                  : PACKED_ELEMENTS);
-          initial_map =
-              initial_map.AsElementsKind(elements_kind, js_heap_broker());
+          initial_map = initial_map.AsElementsKind(elements_kind);
           return ReduceNewArray(node, std::vector<Node*>{length}, initial_map,
                                 pretenure);
         }
@@ -815,8 +811,7 @@ Reduction JSCreateLowering::ReduceJSCreateArray(Node* node) {
           // we cannot inline this invocation of the Array constructor here.
           return NoChange();
         }
-        initial_map =
-            initial_map.AsElementsKind(elements_kind, js_heap_broker());
+        initial_map = initial_map.AsElementsKind(elements_kind);
 
         return ReduceNewArray(node, values, initial_map, pretenure);
       }
@@ -830,7 +825,6 @@ Reduction JSCreateLowering::ReduceJSCreateArray(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateArrayIterator(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateArrayIterator, node->opcode());
   CreateArrayIteratorParameters const& p =
       CreateArrayIteratorParametersOf(node->op());
@@ -890,7 +884,6 @@ MapRef MapForCollectionIterationKind(const NativeContextRef& native_context,
 }  // namespace
 
 Reduction JSCreateLowering::ReduceJSCreateCollectionIterator(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateCollectionIterator, node->opcode());
   CreateCollectionIteratorParameters const& p =
       CreateCollectionIteratorParametersOf(node->op());
@@ -922,7 +915,6 @@ Reduction JSCreateLowering::ReduceJSCreateCollectionIterator(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateBoundFunction(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateBoundFunction, node->opcode());
   CreateBoundFunctionParameters const& p =
       CreateBoundFunctionParametersOf(node->op());
@@ -963,7 +955,6 @@ Reduction JSCreateLowering::ReduceJSCreateBoundFunction(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateClosure(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateClosure, node->opcode());
   CreateClosureParameters const& p = CreateClosureParametersOf(node->op());
   SharedFunctionInfoRef shared(js_heap_broker(), p.shared_info());
@@ -1026,7 +1017,6 @@ Reduction JSCreateLowering::ReduceJSCreateClosure(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateIterResultObject(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateIterResultObject, node->opcode());
   Node* value = NodeProperties::GetValueInput(node, 0);
   Node* done = NodeProperties::GetValueInput(node, 1);
@@ -1051,7 +1041,6 @@ Reduction JSCreateLowering::ReduceJSCreateIterResultObject(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateStringIterator(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateStringIterator, node->opcode());
   Node* string = NodeProperties::GetValueInput(node, 0);
   Node* effect = NodeProperties::GetEffectInput(node);
@@ -1073,14 +1062,13 @@ Reduction JSCreateLowering::ReduceJSCreateStringIterator(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateKeyValueArray(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateKeyValueArray, node->opcode());
   Node* key = NodeProperties::GetValueInput(node, 0);
   Node* value = NodeProperties::GetValueInput(node, 1);
   Node* effect = NodeProperties::GetEffectInput(node);
 
-  Node* array_map = jsgraph()->Constant(
-      native_context_ref().js_array_fast_elements_map_index());
+  Node* array_map =
+      jsgraph()->Constant(native_context_ref().js_array_fast_elements_map());
   Node* properties = jsgraph()->EmptyFixedArrayConstant();
   Node* length = jsgraph()->Constant(2);
 
@@ -1104,7 +1092,6 @@ Reduction JSCreateLowering::ReduceJSCreateKeyValueArray(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreatePromise(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreatePromise, node->opcode());
   Node* effect = NodeProperties::GetEffectInput(node);
 
@@ -1133,7 +1120,6 @@ Reduction JSCreateLowering::ReduceJSCreatePromise(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateLiteralArrayOrObject(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK(node->opcode() == IrOpcode::kJSCreateLiteralArray ||
          node->opcode() == IrOpcode::kJSCreateLiteralObject);
   CreateLiteralParameters const& p = CreateLiteralParametersOf(node->op());
@@ -1163,27 +1149,22 @@ Reduction JSCreateLowering::ReduceJSCreateLiteralArrayOrObject(Node* node) {
 Reduction JSCreateLowering::ReduceJSCreateEmptyLiteralArray(Node* node) {
   DCHECK_EQ(IrOpcode::kJSCreateEmptyLiteralArray, node->opcode());
   FeedbackParameter const& p = FeedbackParameterOf(node->op());
-  Handle<Object> feedback(
-      p.feedback().vector()->Get(p.feedback().slot())->ToObject(), isolate());
-  if (feedback->IsAllocationSite()) {
-    Handle<AllocationSite> site = Handle<AllocationSite>::cast(feedback);
-    DCHECK(!site->PointsToLiteral());
-    Handle<Map> const initial_map(
-        native_context()->GetInitialJSArrayMap(site->GetElementsKind()),
-        isolate());
-    auto site_ref = AllocationSiteRef(js_heap_broker(), site);
-    PretenureFlag const pretenure =
-        dependencies()->DependOnPretenureMode(site_ref);
-    dependencies()->DependOnElementsKind(site_ref);
+  FeedbackVectorRef fv(js_heap_broker(), p.feedback().vector());
+  ObjectRef feedback = fv.get(p.feedback().slot());
+  if (feedback.IsAllocationSite()) {
+    AllocationSiteRef site = feedback.AsAllocationSite();
+    DCHECK(!site.PointsToLiteral());
+    MapRef initial_map =
+        native_context_ref().GetInitialJSArrayMap(site.GetElementsKind());
+    PretenureFlag const pretenure = dependencies()->DependOnPretenureMode(site);
+    dependencies()->DependOnElementsKind(site);
     Node* length = jsgraph()->ZeroConstant();
-    return ReduceNewArray(node, length, 0,
-                          MapRef(js_heap_broker(), initial_map), pretenure);
+    return ReduceNewArray(node, length, 0, initial_map, pretenure);
   }
   return NoChange();
 }
 
 Reduction JSCreateLowering::ReduceJSCreateEmptyLiteralObject(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateEmptyLiteralObject, node->opcode());
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
@@ -1215,7 +1196,6 @@ Reduction JSCreateLowering::ReduceJSCreateEmptyLiteralObject(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateLiteralRegExp(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateLiteralRegExp, node->opcode());
   CreateLiteralParameters const& p = CreateLiteralParametersOf(node->op());
   Node* effect = NodeProperties::GetEffectInput(node);
@@ -1233,7 +1213,6 @@ Reduction JSCreateLowering::ReduceJSCreateLiteralRegExp(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateFunctionContext(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateFunctionContext, node->opcode());
   const CreateFunctionContextParameters& parameters =
       CreateFunctionContextParametersOf(node->op());
@@ -1281,7 +1260,6 @@ Reduction JSCreateLowering::ReduceJSCreateFunctionContext(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateWithContext(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateWithContext, node->opcode());
   ScopeInfoRef scope_info(js_heap_broker(), ScopeInfoOf(node->op()));
   Node* extension = NodeProperties::GetValueInput(node, 0);
@@ -1303,7 +1281,6 @@ Reduction JSCreateLowering::ReduceJSCreateWithContext(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateCatchContext(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateCatchContext, node->opcode());
   ScopeInfoRef scope_info(js_heap_broker(), ScopeInfoOf(node->op()));
   Node* exception = NodeProperties::GetValueInput(node, 0);
@@ -1329,7 +1306,6 @@ Reduction JSCreateLowering::ReduceJSCreateCatchContext(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateBlockContext(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateBlockContext, node->opcode());
   ScopeInfoRef scope_info(js_heap_broker(), ScopeInfoOf(node->op()));
   int const context_length = scope_info.ContextLength();
@@ -1363,7 +1339,6 @@ Reduction JSCreateLowering::ReduceJSCreateBlockContext(Node* node) {
 }
 
 Reduction JSCreateLowering::ReduceJSCreateObject(Node* node) {
-  DisallowHeapAccess no_heap_access;
   DCHECK_EQ(IrOpcode::kJSCreateObject, node->opcode());
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);

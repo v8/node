@@ -21,6 +21,7 @@
 #include "src/heap/sweeper.h"
 #include "src/msan.h"
 #include "src/objects-inl.h"
+#include "src/objects/js-array-inl.h"
 #include "src/snapshot/snapshot.h"
 #include "src/v8.h"
 #include "src/vm-state-inl.h"
@@ -907,9 +908,11 @@ void MemoryChunk::SetOldGenerationPageFlags(bool is_marking) {
   if (is_marking) {
     SetFlag(MemoryChunk::POINTERS_TO_HERE_ARE_INTERESTING);
     SetFlag(MemoryChunk::POINTERS_FROM_HERE_ARE_INTERESTING);
+    SetFlag(MemoryChunk::INCREMENTAL_MARKING);
   } else {
     ClearFlag(MemoryChunk::POINTERS_TO_HERE_ARE_INTERESTING);
     SetFlag(MemoryChunk::POINTERS_FROM_HERE_ARE_INTERESTING);
+    ClearFlag(MemoryChunk::INCREMENTAL_MARKING);
   }
 }
 
@@ -917,8 +920,10 @@ void MemoryChunk::SetYoungGenerationPageFlags(bool is_marking) {
   SetFlag(MemoryChunk::POINTERS_TO_HERE_ARE_INTERESTING);
   if (is_marking) {
     SetFlag(MemoryChunk::POINTERS_FROM_HERE_ARE_INTERESTING);
+    SetFlag(MemoryChunk::INCREMENTAL_MARKING);
   } else {
     ClearFlag(MemoryChunk::POINTERS_FROM_HERE_ARE_INTERESTING);
+    ClearFlag(MemoryChunk::INCREMENTAL_MARKING);
   }
 }
 
@@ -1957,7 +1962,11 @@ void PagedSpace::Verify(Isolate* isolate, ObjectVisitor* visitor) {
       CHECK(object->address() + size <= top);
       end_of_previous_object = object->address() + size;
 
-      if (object->IsJSArrayBuffer()) {
+      if (object->IsExternalString()) {
+        ExternalString* external_string = ExternalString::cast(object);
+        size_t size = external_string->ExternalPayloadSize();
+        external_page_bytes[ExternalBackingStoreType::kExternalString] += size;
+      } else if (object->IsJSArrayBuffer()) {
         JSArrayBuffer* array_buffer = JSArrayBuffer::cast(object);
         if (ArrayBufferTracker::IsTracked(array_buffer)) {
           size_t size = NumberToSize(array_buffer->byte_length());
@@ -2441,7 +2450,11 @@ void NewSpace::Verify(Isolate* isolate) {
       int size = object->Size();
       object->IterateBody(map, size, &visitor);
 
-      if (object->IsJSArrayBuffer()) {
+      if (object->IsExternalString()) {
+        ExternalString* external_string = ExternalString::cast(object);
+        size_t size = external_string->ExternalPayloadSize();
+        external_space_bytes[ExternalBackingStoreType::kExternalString] += size;
+      } else if (object->IsJSArrayBuffer()) {
         JSArrayBuffer* array_buffer = JSArrayBuffer::cast(object);
         if (ArrayBufferTracker::IsTracked(array_buffer)) {
           size_t size = NumberToSize(array_buffer->byte_length());
@@ -2542,7 +2555,7 @@ bool SemiSpace::GrowTo(size_t new_capacity) {
   if (!is_committed()) {
     if (!Commit()) return false;
   }
-  DCHECK_EQ(new_capacity & Page::kPageAlignmentMask, 0u);
+  DCHECK_EQ(new_capacity & kPageAlignmentMask, 0u);
   DCHECK_LE(new_capacity, maximum_capacity_);
   DCHECK_GT(new_capacity, current_capacity_);
   const size_t delta = new_capacity - current_capacity_;
@@ -2581,7 +2594,7 @@ void SemiSpace::RewindPages(int num_pages) {
 }
 
 bool SemiSpace::ShrinkTo(size_t new_capacity) {
-  DCHECK_EQ(new_capacity & Page::kPageAlignmentMask, 0u);
+  DCHECK_EQ(new_capacity & kPageAlignmentMask, 0u);
   DCHECK_GE(new_capacity, minimum_capacity_);
   DCHECK_LT(new_capacity, current_capacity_);
   if (is_committed()) {

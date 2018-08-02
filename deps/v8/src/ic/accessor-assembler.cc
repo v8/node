@@ -479,12 +479,15 @@ void AccessorAssembler::HandleLoadICSmiHandlerCase(
 
     // Context is stored either in data2 or data3 field depending on whether
     // the access check is enabled for this handler or not.
-    TNode<Object> context_cell = Select<Object>(
+    TNode<MaybeObject> maybe_context = Select<MaybeObject>(
         IsSetWord<LoadHandler::DoAccessCheckOnReceiverBits>(handler_word),
-        [=] { return CAST(LoadHandlerDataField(handler, 3)); },
-        [=] { return CAST(LoadHandlerDataField(handler, 2)); });
+        [=] { return LoadHandlerDataField(handler, 3); },
+        [=] { return LoadHandlerDataField(handler, 2); });
 
-    Node* context = LoadWeakCellValueUnchecked(CAST(context_cell));
+    CSA_ASSERT(this, IsWeakOrClearedHeapObject(maybe_context));
+    TNode<Object> context = Select<Object>(
+        IsClearedWeakHeapObject(maybe_context), [=] { return SmiConstant(0); },
+        [=] { return ToWeakHeapObject(maybe_context); });
     Node* foreign =
         LoadObjectField(call_handler_info, CallHandlerInfo::kJsCallbackOffset);
     Node* callback = LoadObjectField(foreign, Foreign::kForeignAddressOffset,
@@ -670,8 +673,9 @@ Node* AccessorAssembler::HandleProtoHandler(
 
       BIND(&if_do_access_check);
       {
-        TNode<WeakCell> data2 = CAST(LoadHandlerDataField(handler, 2));
-        Node* expected_native_context = LoadWeakCellValue(data2, miss);
+        TNode<MaybeObject> data2 = LoadHandlerDataField(handler, 2);
+        CSA_ASSERT(this, IsWeakOrClearedHeapObject(data2));
+        TNode<Object> expected_native_context = ToWeakHeapObject(data2, miss);
         EmitAccessCheck(expected_native_context, p->context, p->receiver, &done,
                         miss);
       }
@@ -731,18 +735,20 @@ void AccessorAssembler::HandleLoadICProtoHandler(
       },
       miss, ic_mode);
 
-  TNode<Object> maybe_holder_cell = CAST(LoadHandlerDataField(handler, 1));
+  TNode<MaybeObject> maybe_holder = LoadHandlerDataField(handler, 1);
 
   Label load_from_cached_holder(this), done(this);
 
-  Branch(IsNull(maybe_holder_cell), &done, &load_from_cached_holder);
+  Branch(IsStrongReferenceTo(maybe_holder, NullConstant()), &done,
+         &load_from_cached_holder);
 
   BIND(&load_from_cached_holder);
   {
     // For regular holders, having passed the receiver map check and the
-    // validity cell check implies that |holder| is alive. However, for
-    // global object receivers, the |maybe_holder_cell| may be cleared.
-    Node* holder = LoadWeakCellValue(CAST(maybe_holder_cell), miss);
+    // validity cell check implies that |holder| is alive. However, for global
+    // object receivers, |maybe_holder| may be cleared.
+    CSA_ASSERT(this, IsWeakOrClearedHeapObject(maybe_holder));
+    Node* holder = ToWeakHeapObject(maybe_holder, miss);
 
     var_holder->Bind(holder);
     Goto(&done);
@@ -1277,8 +1283,9 @@ void AccessorAssembler::HandleStoreICProtoHandler(
     GotoIf(WordEqual(handler_kind, IntPtrConstant(StoreHandler::kNormal)),
            &if_add_normal);
 
-    TNode<WeakCell> holder_cell = CAST(LoadHandlerDataField(handler, 1));
-    Node* holder = LoadWeakCellValue(holder_cell, miss);
+    TNode<MaybeObject> maybe_holder = LoadHandlerDataField(handler, 1);
+    CSA_ASSERT(this, IsWeakOrClearedHeapObject(maybe_holder));
+    TNode<Object> holder = ToWeakHeapObject(maybe_holder, miss);
 
     GotoIf(WordEqual(handler_kind, IntPtrConstant(StoreHandler::kGlobalProxy)),
            &if_store_global_proxy);
@@ -1334,12 +1341,16 @@ void AccessorAssembler::HandleStoreICProtoHandler(
 
       // Context is stored either in data2 or data3 field depending on whether
       // the access check is enabled for this handler or not.
-      TNode<Object> context_cell = Select<Object>(
+      TNode<MaybeObject> maybe_context = Select<MaybeObject>(
           IsSetWord<LoadHandler::DoAccessCheckOnReceiverBits>(handler_word),
-          [=] { return CAST(LoadHandlerDataField(handler, 3)); },
-          [=] { return CAST(LoadHandlerDataField(handler, 2)); });
+          [=] { return LoadHandlerDataField(handler, 3); },
+          [=] { return LoadHandlerDataField(handler, 2); });
 
-      Node* context = LoadWeakCellValueUnchecked(CAST(context_cell));
+      CSA_ASSERT(this, IsWeakOrClearedHeapObject(maybe_context));
+      TNode<Object> context =
+          Select<Object>(IsClearedWeakHeapObject(maybe_context),
+                         [=] { return SmiConstant(0); },
+                         [=] { return ToWeakHeapObject(maybe_context); });
 
       Node* foreign = LoadObjectField(call_handler_info,
                                       CallHandlerInfo::kJsCallbackOffset);
@@ -2471,6 +2482,8 @@ void AccessorAssembler::LoadIC_Uninitialized(const LoadICParameters* p) {
   StoreFeedbackVectorSlot(p->vector, p->slot,
                           LoadRoot(Heap::kpremonomorphic_symbolRootIndex),
                           SKIP_WRITE_BARRIER, 0, SMI_PARAMETERS);
+  StoreWeakReferenceInFeedbackVector(p->vector, p->slot, receiver_map,
+                                     kPointerSize, SMI_PARAMETERS);
 
   {
     // Special case for Function.prototype load, because it's very common
@@ -2480,15 +2493,8 @@ void AccessorAssembler::LoadIC_Uninitialized(const LoadICParameters* p) {
               &not_function_prototype);
     GotoIfNot(IsPrototypeString(p->name), &not_function_prototype);
 
-    // if (!(has_prototype_slot() && !has_non_instance_prototype())) use generic
-    // property loading mechanism.
-    GotoIfNot(
-        Word32Equal(
-            Word32And(LoadMapBitField(receiver_map),
-                      Int32Constant(Map::HasPrototypeSlotBit::kMask |
-                                    Map::HasNonInstancePrototypeBit::kMask)),
-            Int32Constant(Map::HasPrototypeSlotBit::kMask)),
-        &not_function_prototype);
+    GotoIf(PrototypeRequiresRuntimeLookup(CAST(receiver)),
+           &not_function_prototype);
     Return(LoadJSFunctionPrototype(receiver, &miss));
     BIND(&not_function_prototype);
   }
@@ -3378,6 +3384,129 @@ void AccessorAssembler::GenerateStoreInArrayLiteralIC() {
 
   StoreICParameters p(context, array, index, value, slot, vector);
   StoreInArrayLiteralIC(&p);
+}
+
+void AccessorAssembler::GenerateCloneObjectIC() {
+  typedef CloneObjectWithVectorDescriptor Descriptor;
+  Node* source = Parameter(Descriptor::kSource);
+  Node* flags = Parameter(Descriptor::kFlags);
+  Node* slot = Parameter(Descriptor::kSlot);
+  Node* vector = Parameter(Descriptor::kVector);
+  Node* context = Parameter(Descriptor::kContext);
+  TVARIABLE(MaybeObject, var_handler);
+  Label if_handler(this, &var_handler);
+  Label miss(this, Label::kDeferred), try_polymorphic(this, Label::kDeferred),
+      try_megamorphic(this, Label::kDeferred);
+
+  CSA_SLOW_ASSERT(this, TaggedIsNotSmi(source));
+  Node* source_map = LoadMap(UncheckedCast<HeapObject>(source));
+  GotoIf(IsDeprecatedMap(source_map), &miss);
+  TNode<MaybeObject> feedback = TryMonomorphicCase(
+      slot, vector, source_map, &if_handler, &var_handler, &try_polymorphic);
+
+  BIND(&if_handler);
+  {
+    Comment("CloneObjectIC_if_handler");
+
+    // Handlers for the CloneObjectIC stub are weak references to the Map of
+    // a result object.
+    TNode<Map> result_map = CAST(var_handler.value());
+    TVARIABLE(Object, var_properties, EmptyFixedArrayConstant());
+    TVARIABLE(FixedArrayBase, var_elements, EmptyFixedArrayConstant());
+
+    Label allocate_object(this);
+    GotoIf(IsNullOrUndefined(source), &allocate_object);
+    CSA_SLOW_ASSERT(this, IsJSObjectMap(result_map));
+
+    // The IC fast case should only be taken if the result map a compatible
+    // elements kind with the source object.
+    TNode<FixedArrayBase> source_elements = LoadElements(source);
+
+    auto flags = ExtractFixedArrayFlag::kAllFixedArraysDontCopyCOW;
+    var_elements = CAST(CloneFixedArray(source_elements, flags));
+
+    // Copy the PropertyArray backing store. The source PropertyArray must be
+    // either an Smi, or a PropertyArray.
+    // FIXME: Make a CSA macro for this
+    TNode<Object> source_properties =
+        LoadObjectField(source, JSObject::kPropertiesOrHashOffset);
+    {
+      GotoIf(TaggedIsSmi(source_properties), &allocate_object);
+      GotoIf(IsEmptyFixedArray(source_properties), &allocate_object);
+
+      // This IC requires that the source object has fast properties
+      CSA_SLOW_ASSERT(this, IsPropertyArray(CAST(source_properties)));
+      TNode<IntPtrT> length = LoadPropertyArrayLength(
+          UncheckedCast<PropertyArray>(source_properties));
+      GotoIf(IntPtrEqual(length, IntPtrConstant(0)), &allocate_object);
+
+      auto mode = INTPTR_PARAMETERS;
+      var_properties = CAST(AllocatePropertyArray(length, mode));
+      CopyPropertyArrayValues(source_properties, var_properties.value(), length,
+                              SKIP_WRITE_BARRIER, mode);
+    }
+
+    Goto(&allocate_object);
+    BIND(&allocate_object);
+    TNode<JSObject> object = UncheckedCast<JSObject>(AllocateJSObjectFromMap(
+        result_map, var_properties.value(), var_elements.value()));
+    ReturnIf(IsNullOrUndefined(source), object);
+
+    // Lastly, clone any in-object properties.
+    // Determine the inobject property capacity of both objects, and copy the
+    // smaller number into the resulting object.
+    Node* source_start = LoadMapInobjectPropertiesStartInWords(source_map);
+    Node* source_size = LoadMapInstanceSizeInWords(source_map);
+    Node* result_start = LoadMapInobjectPropertiesStartInWords(result_map);
+    Node* field_offset_difference =
+        TimesPointerSize(IntPtrSub(result_start, source_start));
+    BuildFastLoop(source_start, source_size,
+                  [=](Node* field_index) {
+                    Node* field_offset = TimesPointerSize(field_index);
+                    Node* field = LoadObjectField(source, field_offset);
+                    Node* result_offset =
+                        IntPtrAdd(field_offset, field_offset_difference);
+                    StoreObjectFieldNoWriteBarrier(object, result_offset,
+                                                   field);
+                  },
+                  1, INTPTR_PARAMETERS, IndexAdvanceMode::kPost);
+    Return(object);
+  }
+
+  BIND(&try_polymorphic);
+  TNode<HeapObject> strong_feedback = ToStrongHeapObject(feedback, &miss);
+  {
+    Comment("CloneObjectIC_try_polymorphic");
+    GotoIfNot(IsWeakFixedArrayMap(LoadMap(strong_feedback)), &try_megamorphic);
+    HandlePolymorphicCase(source_map, CAST(strong_feedback), &if_handler,
+                          &var_handler, &miss, 2);
+  }
+
+  BIND(&try_megamorphic);
+  {
+    Comment("CloneObjectIC_try_megamorphic");
+    CSA_ASSERT(
+        this,
+        Word32Or(WordEqual(strong_feedback,
+                           LoadRoot(Heap::kuninitialized_symbolRootIndex)),
+                 WordEqual(strong_feedback,
+                           LoadRoot(Heap::kmegamorphic_symbolRootIndex))));
+    GotoIfNot(WordEqual(strong_feedback,
+                        LoadRoot(Heap::kmegamorphic_symbolRootIndex)),
+              &miss);
+    TailCallRuntime(Runtime::kCloneObjectIC_Slow, context, source, flags);
+  }
+
+  BIND(&miss);
+  {
+    Comment("CloneObjectIC_miss");
+    Node* map_or_result = CallRuntime(Runtime::kCloneObjectIC_Miss, context,
+                                      source, flags, slot, vector);
+    var_handler = UncheckedCast<MaybeObject>(map_or_result);
+    GotoIf(IsMap(map_or_result), &if_handler);
+    CSA_ASSERT(this, IsJSObject(map_or_result));
+    Return(map_or_result);
+  }
 }
 
 }  // namespace internal

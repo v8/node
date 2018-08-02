@@ -11,6 +11,7 @@
 #include "src/compiler/code-assembler.h"
 #include "src/globals.h"
 #include "src/objects.h"
+#include "src/objects/bigint.h"
 #include "src/roots.h"
 
 namespace v8 {
@@ -1002,6 +1003,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   TNode<Object> LoadPropertyArrayElement(SloppyTNode<PropertyArray> object,
                                          SloppyTNode<IntPtrT> index);
+  TNode<IntPtrT> LoadPropertyArrayLength(TNode<PropertyArray> object);
 
   // Load an array element from a FixedArray / WeakFixedArray, untag it and
   // return it as Word32.
@@ -1107,6 +1109,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   TNode<Map> LoadJSArrayElementsMap(SloppyTNode<Int32T> kind,
                                     SloppyTNode<Context> native_context);
 
+  TNode<Word32T> IsGeneratorFunction(TNode<JSFunction> function);
+  TNode<Word32T> HasPrototypeProperty(TNode<JSFunction> function);
+  TNode<Word32T> PrototypeRequiresRuntimeLookup(TNode<JSFunction> function);
   // Load the "prototype" property of a JSFunction.
   Node* LoadJSFunctionPrototype(Node* function, Label* if_bailout);
 
@@ -2461,8 +2466,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   // Store a weak in-place reference into the FeedbackVector.
   TNode<MaybeObject> StoreWeakReferenceInFeedbackVector(
-      SloppyTNode<FeedbackVector> feedback_vector, SloppyTNode<IntPtrT> slot,
-      TNode<HeapObject> value);
+      SloppyTNode<FeedbackVector> feedback_vector, Node* slot,
+      SloppyTNode<HeapObject> value, int additional_offset = 0,
+      ParameterMode parameter_mode = INTPTR_PARAMETERS);
 
   // Create a new AllocationSite and install it into a feedback vector.
   TNode<AllocationSite> CreateAllocationSiteInFeedbackVector(
@@ -2945,13 +2951,13 @@ class ToDirectStringAssembler : public CodeStubAssembler {
 
   // Returns a pointer to the beginning of the string data.
   // Jumps to if_bailout if the external string cannot be unpacked.
-  Node* PointerToData(Label* if_bailout) {
+  TNode<RawPtrT> PointerToData(Label* if_bailout) {
     return TryToSequential(PTR_TO_DATA, if_bailout);
   }
 
   // Returns a pointer that, offset-wise, looks like a String.
   // Jumps to if_bailout if the external string cannot be unpacked.
-  Node* PointerToString(Label* if_bailout) {
+  TNode<RawPtrT> PointerToString(Label* if_bailout) {
     return TryToSequential(PTR_TO_STRING, if_bailout);
   }
 
@@ -2963,7 +2969,7 @@ class ToDirectStringAssembler : public CodeStubAssembler {
   Node* is_external() { return var_is_external_.value(); }
 
  private:
-  Node* TryToSequential(StringPointerKind ptr_kind, Label* if_bailout);
+  TNode<RawPtrT> TryToSequential(StringPointerKind ptr_kind, Label* if_bailout);
 
   Variable var_string_;
   Variable var_instance_type_;

@@ -5,6 +5,7 @@
 #ifndef V8_OBJECTS_FIXED_ARRAY_H_
 #define V8_OBJECTS_FIXED_ARRAY_H_
 
+#include "src/maybe-handles.h"
 #include "src/objects.h"
 
 // Has to be the last include (doesn't have include guards):
@@ -362,10 +363,30 @@ class WeakArrayList : public HeapObject {
   static const int kMaxCapacity =
       (FixedArray::kMaxSize - kHeaderSize) / kPointerSize;
 
- protected:
   static Handle<WeakArrayList> EnsureSpace(Isolate* isolate,
                                            Handle<WeakArrayList> array,
                                            int length);
+
+  // Returns the number of non-cleaned weak references in the array.
+  int CountLiveWeakReferences() const;
+
+  // Returns whether an entry was found and removed.
+  bool RemoveOne(MaybeObjectHandle value);
+
+  class Iterator {
+   public:
+    explicit Iterator(WeakArrayList* array) : index_(0), array_(array) {}
+
+    inline HeapObject* Next();
+
+   private:
+    int index_;
+    WeakArrayList* array_;
+#ifdef DEBUG
+    DisallowHeapAllocation no_gc_;
+#endif  // DEBUG
+    DISALLOW_COPY_AND_ASSIGN(Iterator);
+  };
 
  private:
   static int OffsetOfElementAt(int index) {
@@ -590,26 +611,12 @@ class PodArray : public ByteArray {
     copy_in(index * sizeof(T), reinterpret_cast<const byte*>(&value),
             sizeof(T));
   }
-  int length() { return ByteArray::length() / sizeof(T); }
+  inline int length();
   DECL_CAST(PodArray<T>)
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(PodArray<T>);
 };
-
-// V has parameters (Type, type, TYPE, C type, element_size)
-#define TYPED_ARRAYS(V)                                     \
-  V(Uint8, uint8, UINT8, uint8_t, 1)                        \
-  V(Int8, int8, INT8, int8_t, 1)                            \
-  V(Uint16, uint16, UINT16, uint16_t, 2)                    \
-  V(Int16, int16, INT16, int16_t, 2)                        \
-  V(Uint32, uint32, UINT32, uint32_t, 4)                    \
-  V(Int32, int32, INT32, int32_t, 4)                        \
-  V(Float32, float32, FLOAT32, float, 4)                    \
-  V(Float64, float64, FLOAT64, double, 8)                   \
-  V(Uint8Clamped, uint8_clamped, UINT8_CLAMPED, uint8_t, 1) \
-  V(BigUint64, biguint64, BIGUINT64, uint64_t, 8)           \
-  V(BigInt64, bigint64, BIGINT64, int64_t, 8)
 
 class FixedTypedArrayBase : public FixedArrayBase {
  public:
@@ -700,18 +707,18 @@ class FixedTypedArray : public FixedTypedArrayBase {
   DISALLOW_IMPLICIT_CONSTRUCTORS(FixedTypedArray);
 };
 
-#define FIXED_TYPED_ARRAY_TRAITS(Type, type, TYPE, elementType, size)    \
-  STATIC_ASSERT(size <= FixedTypedArrayBase::kMaxElementSize);           \
-  class Type##ArrayTraits {                                              \
-   public: /* NOLINT */                                                  \
-    typedef elementType ElementType;                                     \
-    static const InstanceType kInstanceType = FIXED_##TYPE##_ARRAY_TYPE; \
-    static const char* Designator() { return #type " array"; }           \
-    static inline Handle<Object> ToHandle(Isolate* isolate,              \
-                                          elementType scalar);           \
-    static inline elementType defaultValue();                            \
-  };                                                                     \
-                                                                         \
+#define FIXED_TYPED_ARRAY_TRAITS(Type, type, TYPE, elementType)               \
+  STATIC_ASSERT(sizeof(elementType) <= FixedTypedArrayBase::kMaxElementSize); \
+  class Type##ArrayTraits {                                                   \
+   public: /* NOLINT */                                                       \
+    typedef elementType ElementType;                                          \
+    static const InstanceType kInstanceType = FIXED_##TYPE##_ARRAY_TYPE;      \
+    static const char* Designator() { return #type " array"; }                \
+    static inline Handle<Object> ToHandle(Isolate* isolate,                   \
+                                          elementType scalar);                \
+    static inline elementType defaultValue();                                 \
+  };                                                                          \
+                                                                              \
   typedef FixedTypedArray<Type##ArrayTraits> Fixed##Type##Array;
 
 TYPED_ARRAYS(FIXED_TYPED_ARRAY_TRAITS)

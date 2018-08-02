@@ -61,7 +61,6 @@ class HeapTester;
 class AccessCompilerData;
 class AddressToIndexHashMap;
 class AstStringConstants;
-class BasicBlockProfiler;
 class Bootstrapper;
 class BuiltinsConstantsTableBuilder;
 class CancelableTaskManager;
@@ -396,6 +395,9 @@ class ThreadLocalTop BASE_EMBEDDED {
   // Call back function to report unsafe JS accesses.
   v8::FailedAccessCheckCallback failed_access_check_callback_ = nullptr;
 
+  // Address of the thread-local "thread in wasm" flag.
+  Address thread_in_wasm_flag_address_ = kNullAddress;
+
  private:
   v8::TryCatch* try_catch_handler_ = nullptr;
 };
@@ -552,6 +554,11 @@ class Isolate : private HiddenFactory {
     DCHECK_NOT_NULL(isolate);
     return isolate;
   }
+
+  // Get the isolate that the given HeapObject lives in, returning true on
+  // success. If the object is not writable (i.e. lives in read-only space),
+  // return false.
+  inline static bool FromWritableHeapObject(HeapObject* obj, Isolate** isolate);
 
   // Usually called by Init(), but can be called early e.g. to allow
   // testing components that require logging but not the whole
@@ -812,7 +819,7 @@ class Isolate : private HiddenFactory {
   };
   CatchType PredictExceptionCatcher();
 
-  void ScheduleThrow(Object* exception);
+  V8_EXPORT_PRIVATE void ScheduleThrow(Object* exception);
   // Re-set pending message, script and positions reported to the TryCatch
   // back to the TLS for re-use when rethrowing.
   void RestorePendingMessageFromTryCatch(v8::TryCatch* handler);
@@ -1109,6 +1116,13 @@ class Isolate : private HiddenFactory {
     return language_variant_regexp_matcher_;
   }
 
+  const std::string& default_locale() { return default_locale_; }
+
+  void set_default_locale(const std::string& locale) {
+    DCHECK_EQ(default_locale_.length(), 0);
+    default_locale_ = locale;
+  }
+
   void set_language_tag_regexp_matchers(
       icu::RegexMatcher* language_singleton_regexp_matcher,
       icu::RegexMatcher* language_tag_regexp_matcher,
@@ -1276,9 +1290,6 @@ class Isolate : private HiddenFactory {
 
   void SetUseCounterCallback(v8::Isolate::UseCounterCallback callback);
   void CountUsage(v8::Isolate::UseCounterFeature feature);
-
-  BasicBlockProfiler* GetOrCreateBasicBlockProfiler();
-  BasicBlockProfiler* basic_block_profiler() { return basic_block_profiler_; }
 
   std::string GetTurboCfgFileName();
 
@@ -1621,6 +1632,7 @@ class Isolate : private HiddenFactory {
   icu::RegexMatcher* language_singleton_regexp_matcher_;
   icu::RegexMatcher* language_tag_regexp_matcher_;
   icu::RegexMatcher* language_variant_regexp_matcher_;
+  std::string default_locale_;
 #endif  // V8_INTL_SUPPORT
 
   // Whether the isolate has been created for snapshotting.
@@ -1712,7 +1724,6 @@ class Isolate : private HiddenFactory {
   bool is_running_microtasks_;
 
   v8::Isolate::UseCounterCallback use_counter_callback_;
-  BasicBlockProfiler* basic_block_profiler_;
 
   std::vector<Object*> partial_snapshot_cache_;
 

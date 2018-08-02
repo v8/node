@@ -46,7 +46,7 @@
 #include "src/isolate-inl.h"
 #include "src/keys.h"
 #include "src/log.h"
-#include "src/lookup.h"
+#include "src/lookup-inl.h"
 #include "src/macro-assembler.h"
 #include "src/map-updater.h"
 #include "src/messages.h"
@@ -60,7 +60,9 @@
 #include "src/objects/frame-array-inl.h"
 #include "src/objects/hash-table-inl.h"
 #include "src/objects/js-collection-inl.h"
+#include "src/objects/js-generator-inl.h"
 #ifdef V8_INTL_SUPPORT
+#include "src/objects/js-list-format.h"
 #include "src/objects/js-locale.h"
 #endif  // V8_INTL_SUPPORT
 #include "src/objects/js-regexp-inl.h"
@@ -81,7 +83,7 @@
 #include "src/snapshot/code-serializer.h"
 #include "src/snapshot/snapshot.h"
 #include "src/source-position-table.h"
-#include "src/string-builder.h"
+#include "src/string-builder-inl.h"
 #include "src/string-search.h"
 #include "src/string-stream.h"
 #include "src/unicode-cache-inl.h"
@@ -866,13 +868,13 @@ MaybeHandle<FixedArray> CreateListFromArrayLikeFastPath(
           isolate, array, length);
     } else if (object->IsJSTypedArray()) {
       Handle<JSTypedArray> array = Handle<JSTypedArray>::cast(object);
-      uint32_t length = array->length_value();
+      size_t length = array->length_value();
       if (array->WasNeutered() ||
-          length > static_cast<uint32_t>(FixedArray::kMaxLength)) {
+          length > static_cast<size_t>(FixedArray::kMaxLength)) {
         return MaybeHandle<FixedArray>();
       }
       return array->GetElementsAccessor()->CreateListFromArrayLike(
-          isolate, array, length);
+          isolate, array, static_cast<uint32_t>(length));
     }
   }
   return MaybeHandle<FixedArray>();
@@ -1416,6 +1418,8 @@ int JSObject::GetHeaderSize(InstanceType type,
     case JS_MODULE_NAMESPACE_TYPE:
       return JSModuleNamespace::kHeaderSize;
 #ifdef V8_INTL_SUPPORT
+    case JS_INTL_LIST_FORMAT_TYPE:
+      return JSListFormat::kSize;
     case JS_INTL_LOCALE_TYPE:
       return JSLocale::kSize;
     case JS_INTL_RELATIVE_TIME_FORMAT_TYPE:
@@ -1539,7 +1543,7 @@ MaybeHandle<Object> Object::GetPropertyWithAccessor(LookupIterator* it) {
     if (info->replace_on_access() && receiver->IsJSReceiver()) {
       RETURN_ON_EXCEPTION(isolate,
                           Accessors::ReplaceAccessorWithDataProperty(
-                              isolate, receiver, holder, name, result),
+                              receiver, holder, name, result),
                           Object);
     }
     return reboxed_result;
@@ -1588,8 +1592,7 @@ Address CallHandlerInfo::redirected_callback() const {
   return ExternalReference::Create(&fun, type).address();
 }
 
-bool AccessorInfo::IsCompatibleReceiverMap(Isolate* isolate,
-                                           Handle<AccessorInfo> info,
+bool AccessorInfo::IsCompatibleReceiverMap(Handle<AccessorInfo> info,
                                            Handle<Map> map) {
   if (!info->HasExpectedReceiverType()) return true;
   if (!map->IsJSObjectMap()) return false;
@@ -2573,7 +2576,7 @@ bool String::MakeExternal(v8::String::ExternalStringResource* resource) {
   DisallowHeapAllocation no_allocation;
   // Externalizing twice leaks the external resource, so it's
   // prohibited by the API.
-  DCHECK(!this->IsExternalString());
+  DCHECK(this->SupportsExternalization());
   DCHECK(!resource->IsCompressible());
 #ifdef ENABLE_SLOW_DCHECKS
   if (FLAG_enable_slow_asserts) {
@@ -2588,11 +2591,11 @@ bool String::MakeExternal(v8::String::ExternalStringResource* resource) {
   int size = this->Size();  // Byte size of the original string.
   // Abort if size does not allow in-place conversion.
   if (size < ExternalString::kShortSize) return false;
-  MemoryChunk* chunk = MemoryChunk::FromHeapObject(this);
+  Isolate* isolate;
   // Read-only strings cannot be made external, since that would mutate the
   // string.
-  if (chunk->owner()->identity() == RO_SPACE) return false;
-  Heap* heap = chunk->heap();
+  if (!Isolate::FromWritableHeapObject(this, &isolate)) return false;
+  Heap* heap = isolate->heap();
   bool is_one_byte = this->IsOneByteRepresentation();
   bool is_internalized = this->IsInternalizedString();
   bool has_pointers = StringShape(this).IsIndirect();
@@ -2642,7 +2645,7 @@ bool String::MakeExternal(v8::String::ExternalStringResource* resource) {
   this->synchronized_set_map(new_map);
 
   ExternalTwoByteString* self = ExternalTwoByteString::cast(this);
-  self->set_resource(resource);
+  self->SetResource(isolate, resource);
   heap->RegisterExternalString(this);
   if (is_internalized) self->Hash();  // Force regeneration of the hash value.
   return true;
@@ -2653,7 +2656,7 @@ bool String::MakeExternal(v8::String::ExternalOneByteStringResource* resource) {
   DisallowHeapAllocation no_allocation;
   // Externalizing twice leaks the external resource, so it's
   // prohibited by the API.
-  DCHECK(!this->IsExternalString());
+  DCHECK(this->SupportsExternalization());
   DCHECK(!resource->IsCompressible());
 #ifdef ENABLE_SLOW_DCHECKS
   if (FLAG_enable_slow_asserts) {
@@ -2673,11 +2676,11 @@ bool String::MakeExternal(v8::String::ExternalOneByteStringResource* resource) {
   int size = this->Size();  // Byte size of the original string.
   // Abort if size does not allow in-place conversion.
   if (size < ExternalString::kShortSize) return false;
-  MemoryChunk* chunk = MemoryChunk::FromHeapObject(this);
+  Isolate* isolate;
   // Read-only strings cannot be made external, since that would mutate the
   // string.
-  if (chunk->owner()->identity() == RO_SPACE) return false;
-  Heap* heap = chunk->heap();
+  if (!Isolate::FromWritableHeapObject(this, &isolate)) return false;
+  Heap* heap = isolate->heap();
   bool is_internalized = this->IsInternalizedString();
   bool has_pointers = StringShape(this).IsIndirect();
 
@@ -2716,10 +2719,29 @@ bool String::MakeExternal(v8::String::ExternalOneByteStringResource* resource) {
   this->synchronized_set_map(new_map);
 
   ExternalOneByteString* self = ExternalOneByteString::cast(this);
-  self->set_resource(resource);
+  self->SetResource(isolate, resource);
   heap->RegisterExternalString(this);
   if (is_internalized) self->Hash();  // Force regeneration of the hash value.
   return true;
+}
+
+bool String::SupportsExternalization() {
+  if (this->IsThinString()) {
+    return i::ThinString::cast(this)->actual()->SupportsExternalization();
+  }
+
+  Isolate* isolate;
+  // RO_SPACE strings cannot be externalized.
+  if (!Isolate::FromWritableHeapObject(this, &isolate)) {
+    return false;
+  }
+
+  // Already an external string.
+  if (StringShape(this).IsExternal()) {
+    return false;
+  }
+
+  return !isolate->heap()->IsInGCPostProcessing();
 }
 
 void String::StringShortPrint(StringStream* accumulator, bool show_details) {
@@ -3111,6 +3133,9 @@ VisitorId Map::GetVisitorId(Map* map) {
     case PRE_PARSED_SCOPE_DATA_TYPE:
       return kVisitPreParsedScopeData;
 
+    case UNCOMPILED_DATA_WITHOUT_PRE_PARSED_SCOPE_TYPE:
+      return kVisitUncompiledDataWithoutPreParsedScope;
+
     case UNCOMPILED_DATA_WITH_PRE_PARSED_SCOPE_TYPE:
       return kVisitUncompiledDataWithPreParsedScope;
 
@@ -3143,6 +3168,7 @@ VisitorId Map::GetVisitorId(Map* map) {
     case JS_REGEXP_TYPE:
     case JS_REGEXP_STRING_ITERATOR_TYPE:
 #ifdef V8_INTL_SUPPORT
+    case JS_INTL_LIST_FORMAT_TYPE:
     case JS_INTL_LOCALE_TYPE:
     case JS_INTL_RELATIVE_TIME_FORMAT_TYPE:
 #endif  // V8_INTL_SUPPORT
@@ -3164,7 +3190,6 @@ VisitorId Map::GetVisitorId(Map* map) {
     case HEAP_NUMBER_TYPE:
     case MUTABLE_HEAP_NUMBER_TYPE:
     case FEEDBACK_METADATA_TYPE:
-    case UNCOMPILED_DATA_WITHOUT_PRE_PARSED_SCOPE_TYPE:
       return kVisitDataObject;
 
     case BIGINT_TYPE:
@@ -3433,13 +3458,13 @@ void HeapObject::HeapObjectShortPrint(std::ostream& os) {  // NOLINT
     case FREE_SPACE_TYPE:
       os << "<FreeSpace[" << FreeSpace::cast(this)->size() << "]>";
       break;
-#define TYPED_ARRAY_SHORT_PRINT(Type, type, TYPE, ctype, size)                \
+#define TYPED_ARRAY_SHORT_PRINT(Type, type, TYPE, ctype)                      \
   case FIXED_##TYPE##_ARRAY_TYPE:                                             \
     os << "<Fixed" #Type "Array[" << Fixed##Type##Array::cast(this)->length() \
        << "]>";                                                               \
     break;
 
-    TYPED_ARRAYS(TYPED_ARRAY_SHORT_PRINT)
+      TYPED_ARRAYS(TYPED_ARRAY_SHORT_PRINT)
 #undef TYPED_ARRAY_SHORT_PRINT
 
     case PRE_PARSED_SCOPE_DATA_TYPE: {
@@ -3676,7 +3701,7 @@ String* JSReceiver::class_name() {
   if (IsJSSet()) return roots.Set_string();
   if (IsJSSetIterator()) return roots.SetIterator_string();
   if (IsJSTypedArray()) {
-#define SWITCH_KIND(Type, type, TYPE, ctype, size) \
+#define SWITCH_KIND(Type, type, TYPE, ctype)       \
   if (map()->elements_kind() == TYPE##_ELEMENTS) { \
     return roots.Type##Array_string();             \
   }
@@ -7368,6 +7393,16 @@ Maybe<bool> JSReceiver::ValidateAndApplyPropertyDescriptor(
   return Just(true);
 }
 
+// static
+Maybe<bool> JSReceiver::CreateDataProperty(Isolate* isolate,
+                                           Handle<JSReceiver> object,
+                                           Handle<Name> key,
+                                           Handle<Object> value,
+                                           ShouldThrow should_throw) {
+  LookupIterator it = LookupIterator::PropertyOrElement(isolate, object, key,
+                                                        LookupIterator::OWN);
+  return CreateDataProperty(&it, value, should_throw);
+}
 
 // static
 Maybe<bool> JSReceiver::CreateDataProperty(LookupIterator* it,
@@ -8070,9 +8105,9 @@ bool JSObject::ReferencesObject(Object* obj) {
   switch (kind) {
     // Raw pixels and external arrays do not reference other
     // objects.
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size)                        \
-    case TYPE##_ELEMENTS:                                                      \
-      break;
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) \
+  case TYPE##_ELEMENTS:                           \
+    break;
 
     TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
@@ -8825,8 +8860,7 @@ bool JSObject::HasEnumerableElements() {
       }
       return false;
     }
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) \
-    case TYPE##_ELEMENTS:
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) case TYPE##_ELEMENTS:
 
       TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
@@ -10177,6 +10211,38 @@ Handle<DescriptorArray> DescriptorArray::CopyUpToAddAttributes(
   return descriptors;
 }
 
+// Create a new descriptor array with only enumerable, configurable, writeable
+// data properties, but identical field locations.
+Handle<DescriptorArray> DescriptorArray::CopyForFastObjectClone(
+    Isolate* isolate, Handle<DescriptorArray> src, int enumeration_index,
+    int slack) {
+  if (enumeration_index + slack == 0) {
+    return isolate->factory()->empty_descriptor_array();
+  }
+
+  int size = enumeration_index;
+  Handle<DescriptorArray> descriptors =
+      DescriptorArray::Allocate(isolate, size, slack);
+
+  for (int i = 0; i < size; ++i) {
+    Name* key = src->GetKey(i);
+    PropertyDetails details = src->GetDetails(i);
+
+    SLOW_DCHECK(!key->IsPrivateField() && details.IsEnumerable() &&
+                details.kind() == kData);
+
+    // Ensure the ObjectClone property details are NONE, and that all source
+    // details did not contain DONT_ENUM.
+    PropertyDetails new_details(kData, NONE, details.location(),
+                                details.constness(), details.representation(),
+                                details.field_index());
+    descriptors->Set(i, key, src->GetValue(i), new_details);
+  }
+
+  descriptors->Sort();
+
+  return descriptors;
+}
 
 bool DescriptorArray::IsEqualUpTo(DescriptorArray* desc, int nof_descriptors) {
   for (int i = 0; i < nof_descriptors; i++) {
@@ -10533,6 +10599,32 @@ Handle<WeakArrayList> WeakArrayList::EnsureSpace(Isolate* isolate,
   return array;
 }
 
+int WeakArrayList::CountLiveWeakReferences() const {
+  int live_weak_references = 0;
+  for (int i = 0; i < length(); i++) {
+    if (Get(i)->IsWeakHeapObject()) {
+      ++live_weak_references;
+    }
+  }
+  return live_weak_references;
+}
+
+bool WeakArrayList::RemoveOne(MaybeObjectHandle value) {
+  if (length() == 0) return false;
+  // Optimize for the most recently added element to be removed again.
+  for (int i = length() - 1; i >= 0; --i) {
+    if (Get(i) == *value) {
+      // Users should make sure that there are no duplicates.
+      Set(i, HeapObjectReference::ClearedValue());
+      if (i == length() - 1) {
+        set_length(length() - 1);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 // static
 Handle<WeakArrayList> PrototypeUsers::Add(Isolate* isolate,
                                           Handle<WeakArrayList> array,
@@ -10586,14 +10678,7 @@ WeakArrayList* PrototypeUsers::Compact(Handle<WeakArrayList> array, Heap* heap,
   if (array->length() == 0) {
     return *array;
   }
-  // Count the amount of live references.
-  int new_length = kFirstIndex;
-  for (int i = kFirstIndex; i < array->length(); i++) {
-    MaybeObject* element = array->Get(i);
-    if (element->IsSmi()) continue;
-    if (element->IsClearedWeakHeapObject()) continue;
-    ++new_length;
-  }
+  int new_length = kFirstIndex + array->CountLiveWeakReferences();
   if (new_length == array->length()) {
     return *array;
   }
@@ -13764,8 +13849,60 @@ MaybeHandle<SharedFunctionInfo> Script::FindSharedFunctionInfo(
 Script::Iterator::Iterator(Isolate* isolate)
     : iterator_(isolate->heap()->script_list()) {}
 
+Script* Script::Iterator::Next() {
+  Object* o = iterator_.Next();
+  if (o != nullptr) {
+    return Script::cast(o);
+  }
+  return nullptr;
+}
 
-Script* Script::Iterator::Next() { return iterator_.Next<Script>(); }
+Code* SharedFunctionInfo::GetCode() const {
+  // ======
+  // NOTE: This chain of checks MUST be kept in sync with the equivalent CSA
+  // GetSharedFunctionInfoCode method in code-stub-assembler.cc.
+  // ======
+
+  Isolate* isolate = GetIsolate();
+  Object* data = function_data();
+  if (data->IsSmi()) {
+    // Holding a Smi means we are a builtin.
+    DCHECK(HasBuiltinId());
+    return isolate->builtins()->builtin(builtin_id());
+  } else if (data->IsBytecodeArray()) {
+    // Having a bytecode array means we are a compiled, interpreted function.
+    DCHECK(HasBytecodeArray());
+    return isolate->builtins()->builtin(Builtins::kInterpreterEntryTrampoline);
+  } else if (data->IsFixedArray()) {
+    // Having a fixed array means we are an asm.js/wasm function.
+    DCHECK(HasAsmWasmData());
+    return isolate->builtins()->builtin(Builtins::kInstantiateAsmJs);
+  } else if (data->IsUncompiledData()) {
+    // Having uncompiled data (with or without scope) means we need to compile.
+    DCHECK(HasUncompiledData());
+    return isolate->builtins()->builtin(Builtins::kCompileLazy);
+  } else if (data->IsFunctionTemplateInfo()) {
+    // Having a function template info means we are an API function.
+    DCHECK(IsApiFunction());
+    return isolate->builtins()->builtin(Builtins::kHandleApiCall);
+  } else if (data->IsWasmExportedFunctionData()) {
+    // Having a WasmExportedFunctionData means the code is in there.
+    DCHECK(HasWasmExportedFunctionData());
+    return wasm_exported_function_data()->wrapper_code();
+  } else if (data->IsInterpreterData()) {
+    Code* code = InterpreterTrampoline();
+    DCHECK(code->IsCode());
+    DCHECK(code->is_interpreter_trampoline_builtin());
+    return code;
+  }
+  UNREACHABLE();
+}
+
+WasmExportedFunctionData* SharedFunctionInfo::wasm_exported_function_data()
+    const {
+  DCHECK(HasWasmExportedFunctionData());
+  return WasmExportedFunctionData::cast(function_data());
+}
 
 SharedFunctionInfo::ScriptIterator::ScriptIterator(Isolate* isolate,
                                                    Script* script)
@@ -13802,11 +13939,11 @@ SharedFunctionInfo::GlobalIterator::GlobalIterator(Isolate* isolate)
       sfi_iterator_(isolate, script_iterator_.Next()) {}
 
 SharedFunctionInfo* SharedFunctionInfo::GlobalIterator::Next() {
-  SharedFunctionInfo* next = noscript_sfi_iterator_.Next<SharedFunctionInfo>();
-  if (next != nullptr) return next;
+  HeapObject* next = noscript_sfi_iterator_.Next();
+  if (next != nullptr) return SharedFunctionInfo::cast(next);
   for (;;) {
     next = sfi_iterator_.Next();
-    if (next != nullptr) return next;
+    if (next != nullptr) return SharedFunctionInfo::cast(next);
     Script* next_script = script_iterator_.Next();
     if (next_script == nullptr) return nullptr;
     sfi_iterator_.Reset(next_script);
@@ -13843,19 +13980,21 @@ void SharedFunctionInfo::SetScript(Handle<SharedFunctionInfo> shared,
 #endif
     list->Set(function_literal_id, HeapObjectReference::Weak(*shared));
   } else {
-    Handle<Object> list = isolate->factory()->noscript_shared_function_infos();
+    Handle<WeakArrayList> list =
+        isolate->factory()->noscript_shared_function_infos();
 
 #ifdef DEBUG
     if (FLAG_enable_slow_asserts) {
-      FixedArrayOfWeakCells::Iterator iterator(*list);
-      SharedFunctionInfo* next;
-      while ((next = iterator.Next<SharedFunctionInfo>()) != nullptr) {
+      WeakArrayList::Iterator iterator(*list);
+      HeapObject* next;
+      while ((next = iterator.Next()) != nullptr) {
         DCHECK_NE(next, *shared);
       }
     }
 #endif  // DEBUG
 
-    list = FixedArrayOfWeakCells::Add(isolate, list, shared);
+    list =
+        WeakArrayList::AddToEnd(isolate, list, MaybeObjectHandle::Weak(shared));
 
     isolate->heap()->SetRootNoScriptSharedFunctionInfos(*list);
   }
@@ -13879,8 +14018,8 @@ void SharedFunctionInfo::SetScript(Handle<SharedFunctionInfo> shared,
     }
   } else {
     // Remove shared function info from root array.
-    Object* list = isolate->heap()->noscript_shared_function_infos();
-    CHECK(FixedArrayOfWeakCells::cast(list)->Remove(shared));
+    WeakArrayList* list = isolate->heap()->noscript_shared_function_infos();
+    CHECK(list->RemoveOne(MaybeObjectHandle::Weak(shared)));
   }
 
   // Finally set new script.
@@ -14142,7 +14281,6 @@ void SharedFunctionInfo::InitFromFunctionLiteral(
   shared_info->set_is_declaration(lit->is_declaration());
   shared_info->set_is_named_expression(lit->is_named_expression());
   shared_info->set_is_anonymous_expression(lit->is_anonymous_expression());
-  shared_info->set_inferred_name(*lit->inferred_name());
   shared_info->set_allows_lazy_compilation(lit->AllowsLazyCompilation());
   shared_info->set_language_mode(lit->language_mode());
   shared_info->set_is_wrapped(lit->is_wrapped());
@@ -14195,8 +14333,9 @@ void SharedFunctionInfo::InitFromFunctionLiteral(
                 .ToHandle(&pre_parsed_scope_data)) {
           Handle<UncompiledData> data =
               isolate->factory()->NewUncompiledDataWithPreParsedScope(
-                  lit->start_position(), lit->end_position(),
-                  lit->function_literal_id(), pre_parsed_scope_data);
+                  lit->inferred_name(), lit->start_position(),
+                  lit->end_position(), lit->function_literal_id(),
+                  pre_parsed_scope_data);
           shared_info->set_uncompiled_data(*data);
           needs_position_info = false;
         }
@@ -14206,7 +14345,7 @@ void SharedFunctionInfo::InitFromFunctionLiteral(
   if (needs_position_info) {
     Handle<UncompiledData> data =
         isolate->factory()->NewUncompiledDataWithoutPreParsedScope(
-            lit->start_position(), lit->end_position(),
+            lit->inferred_name(), lit->start_position(), lit->end_position(),
             lit->function_literal_id());
     shared_info->set_uncompiled_data(*data);
   }
@@ -14224,9 +14363,10 @@ void SharedFunctionInfo::SetExpectedNofPropertiesFromEstimate(
   // so we can afford to adjust the estimate generously.
   estimate += 8;
 
-  // Limit actual estimate to fit in a 16 bit field, we will never allocate
+  // Limit actual estimate to fit in a 8 bit field, we will never allocate
   // more than this in any case.
-  estimate = std::min(estimate, kMaxUInt16);
+  STATIC_ASSERT(JSObject::kMaxInObjectProperties <= kMaxUInt8);
+  estimate = std::min(estimate, kMaxUInt8);
 
   set_expected_nof_properties(estimate);
 }
@@ -16015,10 +16155,9 @@ int JSObject::GetFastElementsUsage() {
     case SLOW_STRING_WRAPPER_ELEMENTS:
     case DICTIONARY_ELEMENTS:
     case NO_ELEMENTS:
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size)                      \
-    case TYPE##_ELEMENTS:                                                    \
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) case TYPE##_ELEMENTS:
 
-    TYPED_ARRAYS(TYPED_ARRAY_CASE)
+      TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
     UNREACHABLE();
   }
@@ -17037,9 +17176,9 @@ Maybe<bool> JSTypedArray::DefineOwnProperty(Isolate* isolate,
 
 ExternalArrayType JSTypedArray::type() {
   switch (elements()->map()->instance_type()) {
-#define INSTANCE_TYPE_TO_ARRAY_TYPE(Type, type, TYPE, ctype, size)            \
-    case FIXED_##TYPE##_ARRAY_TYPE:                                           \
-      return kExternal##Type##Array;
+#define INSTANCE_TYPE_TO_ARRAY_TYPE(Type, type, TYPE, ctype) \
+  case FIXED_##TYPE##_ARRAY_TYPE:                            \
+    return kExternal##Type##Array;
 
     TYPED_ARRAYS(INSTANCE_TYPE_TO_ARRAY_TYPE)
 #undef INSTANCE_TYPE_TO_ARRAY_TYPE
@@ -17052,9 +17191,9 @@ ExternalArrayType JSTypedArray::type() {
 
 size_t JSTypedArray::element_size() {
   switch (elements()->map()->instance_type()) {
-#define INSTANCE_TYPE_TO_ELEMENT_SIZE(Type, type, TYPE, ctype, size) \
-  case FIXED_##TYPE##_ARRAY_TYPE:                                    \
-    return size;
+#define INSTANCE_TYPE_TO_ELEMENT_SIZE(Type, type, TYPE, ctype) \
+  case FIXED_##TYPE##_ARRAY_TYPE:                              \
+    return sizeof(ctype);
 
     TYPED_ARRAYS(INSTANCE_TYPE_TO_ELEMENT_SIZE)
 #undef INSTANCE_TYPE_TO_ELEMENT_SIZE
@@ -17197,10 +17336,12 @@ void MigrateExternalStringResource(Isolate* isolate, String* from, String* to) {
   const typename StringClass::Resource* to_resource = cast_to->resource();
   if (to_resource == nullptr) {
     // |to| is a just-created internalized copy of |from|. Migrate the resource.
-    cast_to->set_resource(cast_from->resource());
+    cast_to->SetResource(isolate, cast_from->resource());
     // Zap |from|'s resource pointer to reflect the fact that |from| has
     // relinquished ownership of its resource.
-    cast_from->set_resource(nullptr);
+    isolate->heap()->UpdateExternalString(
+        from, ExternalString::cast(from)->ExternalPayloadSize(), 0);
+    cast_from->SetResource(isolate, nullptr);
   } else if (to_resource != cast_from->resource()) {
     // |to| already existed and has its own resource. Finalize |from|.
     isolate->heap()->FinalizeExternalString(from);

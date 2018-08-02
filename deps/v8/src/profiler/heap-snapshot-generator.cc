@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "src/api.h"
+#include "src/api-inl.h"
 #include "src/code-stubs.h"
 #include "src/conversions.h"
 #include "src/debug/debug.h"
@@ -16,7 +16,9 @@
 #include "src/objects-inl.h"
 #include "src/objects/api-callbacks.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/js-array-inl.h"
 #include "src/objects/js-collection-inl.h"
+#include "src/objects/js-generator-inl.h"
 #include "src/objects/js-promise-inl.h"
 #include "src/objects/js-regexp-inl.h"
 #include "src/objects/literal-objects-inl.h"
@@ -854,6 +856,8 @@ void V8HeapExplorer::ExtractReferences(int entry, HeapObject* obj) {
       ExtractJSCollectionReferences(entry, JSMap::cast(obj));
     } else if (obj->IsJSPromise()) {
       ExtractJSPromiseReferences(entry, JSPromise::cast(obj));
+    } else if (obj->IsJSGeneratorObject()) {
+      ExtractJSGeneratorObjectReferences(entry, JSGeneratorObject::cast(obj));
     }
     ExtractJSObjectReferences(entry, JSObject::cast(obj));
   } else if (obj->IsString()) {
@@ -1195,16 +1199,12 @@ void V8HeapExplorer::ExtractSharedFunctionInfoReferences(
   SetInternalReference(obj, entry, "name_or_scope_info",
                        shared->name_or_scope_info(),
                        SharedFunctionInfo::kNameOrScopeInfoOffset);
-  SetInternalReference(obj, entry,
-                       "script", shared->script(),
-                       SharedFunctionInfo::kScriptOffset);
+  SetInternalReference(obj, entry, "script_or_debug_info",
+                       shared->script_or_debug_info(),
+                       SharedFunctionInfo::kScriptOrDebugInfoOffset);
   SetInternalReference(obj, entry,
                        "function_data", shared->function_data(),
                        SharedFunctionInfo::kFunctionDataOffset);
-  SetInternalReference(
-      obj, entry, "function_identifier_or_debug_info",
-      shared->function_identifier_or_debug_info(),
-      SharedFunctionInfo::kFunctionIdentifierOrDebugInfoOffset);
   SetInternalReference(
       obj, entry, "raw_outer_scope_info_or_feedback_metadata",
       shared->raw_outer_scope_info_or_feedback_metadata(),
@@ -1358,6 +1358,19 @@ void V8HeapExplorer::ExtractJSPromiseReferences(int entry, JSPromise* promise) {
   SetInternalReference(promise, entry, "reactions_or_result",
                        promise->reactions_or_result(),
                        JSPromise::kReactionsOrResultOffset);
+}
+
+void V8HeapExplorer::ExtractJSGeneratorObjectReferences(
+    int entry, JSGeneratorObject* generator) {
+  SetInternalReference(generator, entry, "function", generator->function(),
+                       JSGeneratorObject::kFunctionOffset);
+  SetInternalReference(generator, entry, "context", generator->context(),
+                       JSGeneratorObject::kContextOffset);
+  SetInternalReference(generator, entry, "receiver", generator->receiver(),
+                       JSGeneratorObject::kReceiverOffset);
+  SetInternalReference(generator, entry, "parameters_and_registers",
+                       generator->parameters_and_registers(),
+                       JSGeneratorObject::kParametersAndRegistersOffset);
 }
 
 void V8HeapExplorer::ExtractFixedArrayReferences(int entry, FixedArray* array) {

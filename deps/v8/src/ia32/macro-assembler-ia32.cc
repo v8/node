@@ -1591,6 +1591,15 @@ void TurboAssembler::Abort(AbortReason reason) {
     return;
   }
 
+  if (should_abort_hard()) {
+    // We don't care if we constructed a frame. Just pretend we did.
+    FrameScope assume_frame(this, StackFrame::NONE);
+    PrepareCallCFunction(1, eax);
+    mov(Operand(esp, 0), Immediate(static_cast<int>(reason)));
+    CallCFunction(ExternalReference::abort_with_reason(), 1);
+    return;
+  }
+
   Move(edx, Smi::FromInt(static_cast<int>(reason)));
 
   // Disable stub call restrictions to always allow calls to abort.
@@ -1733,9 +1742,9 @@ void TurboAssembler::CheckPageFlag(Register object, Register scratch, int mask,
                                    Label::Distance condition_met_distance) {
   DCHECK(cc == zero || cc == not_zero);
   if (scratch == object) {
-    and_(scratch, Immediate(~Page::kPageAlignmentMask));
+    and_(scratch, Immediate(~kPageAlignmentMask));
   } else {
-    mov(scratch, Immediate(~Page::kPageAlignmentMask));
+    mov(scratch, Immediate(~kPageAlignmentMask));
     and_(scratch, object);
   }
   if (mask < (1 << kBitsPerByte)) {

@@ -9,6 +9,7 @@
 #include "src/globals.h"
 #include "src/handles.h"
 #include "src/heap/heap.h"
+#include "src/maybe-handles.h"
 #include "src/messages.h"
 #include "src/objects/code.h"
 #include "src/objects/dictionary.h"
@@ -36,6 +37,7 @@ class DebugInfo;
 class EnumCache;
 class FreshlyAllocatedBigInt;
 class Isolate;
+class JSGeneratorObject;
 class JSMap;
 class JSMapIterator;
 class JSModuleNamespace;
@@ -728,12 +730,14 @@ class V8_EXPORT_PRIVATE Factory {
   Handle<PreParsedScopeData> NewPreParsedScopeData(int length);
 
   Handle<UncompiledDataWithoutPreParsedScope>
-  NewUncompiledDataWithoutPreParsedScope(int32_t start_position,
+  NewUncompiledDataWithoutPreParsedScope(Handle<String> inferred_name,
+                                         int32_t start_position,
                                          int32_t end_position,
                                          int32_t function_literal_id);
 
   Handle<UncompiledDataWithPreParsedScope> NewUncompiledDataWithPreParsedScope(
-      int32_t start_position, int32_t end_position, int32_t function_literal_id,
+      Handle<String> inferred_name, int32_t start_position,
+      int32_t end_position, int32_t function_literal_id,
       Handle<PreParsedScopeData>);
 
   // Create an External object for V8's external API.

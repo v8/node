@@ -167,7 +167,7 @@ struct V8_EXPORT_PRIVATE AssemblerOptions {
       Isolate* isolate, bool explicitly_support_serialization = false);
 };
 
-class AssemblerBase : public Malloced {
+class V8_EXPORT_PRIVATE AssemblerBase : public Malloced {
  public:
   AssemblerBase(const AssemblerOptions& options, void* buffer, int buffer_size);
   virtual ~AssemblerBase();
@@ -514,6 +514,9 @@ class RelocInfo {
   // Is the relocation mode affected by GC?
   static inline bool IsGCRelocMode(Mode mode) { return mode <= LAST_GCED_ENUM; }
   static inline bool IsShareableRelocMode(Mode mode) {
+    static_assert(RelocInfo::NONE >= RelocInfo::FIRST_SHAREABLE_RELOC_MODE,
+                  "Users of this function rely on NONE being a sharable "
+                  "relocation mode.");
     return mode >= RelocInfo::FIRST_SHAREABLE_RELOC_MODE;
   }
   static inline bool IsCodeTarget(Mode mode) { return mode == CODE_TARGET; }

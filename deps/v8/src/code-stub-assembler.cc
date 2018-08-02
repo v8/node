@@ -10,6 +10,7 @@
 #include "src/objects/api-callbacks.h"
 #include "src/objects/descriptor-array.h"
 #include "src/objects/ordered-hash-table-inl.h"
+#include "src/wasm/wasm-objects.h"
 
 namespace v8 {
 namespace internal {
@@ -1989,6 +1990,13 @@ TNode<Object> CodeStubAssembler::LoadPropertyArrayElement(
                                needs_poisoning));
 }
 
+TNode<IntPtrT> CodeStubAssembler::LoadPropertyArrayLength(
+    TNode<PropertyArray> object) {
+  TNode<IntPtrT> value =
+      LoadAndUntagObjectField(object, PropertyArray::kLengthAndHashOffset);
+  return Signed(DecodeWord<PropertyArray::LengthField>(value));
+}
+
 TNode<RawPtrT> CodeStubAssembler::LoadFixedTypedArrayBackingStore(
     TNode<FixedTypedArrayBase> typed_array) {
   // Backing store = external_pointer + base_pointer.
@@ -2426,6 +2434,48 @@ TNode<Map> CodeStubAssembler::LoadJSArrayElementsMap(
   CSA_ASSERT(this, IsNativeContext(native_context));
   return UncheckedCast<Map>(
       LoadContextElement(native_context, Context::ArrayMapIndex(kind)));
+}
+
+TNode<Word32T> CodeStubAssembler::IsGeneratorFunction(
+    TNode<JSFunction> function) {
+  TNode<SharedFunctionInfo> const shared_function_info =
+      CAST(LoadObjectField(function, JSFunction::kSharedFunctionInfoOffset));
+
+  TNode<Uint32T> const function_kind =
+      DecodeWord32<SharedFunctionInfo::FunctionKindBits>(LoadObjectField(
+          shared_function_info, SharedFunctionInfo::kFlagsOffset,
+          MachineType::Uint32()));
+
+  return Word32Or(
+      Word32Or(
+          Word32Or(
+              Word32Equal(function_kind,
+                          Int32Constant(FunctionKind::kAsyncGeneratorFunction)),
+              Word32Equal(
+                  function_kind,
+                  Int32Constant(FunctionKind::kAsyncConciseGeneratorMethod))),
+          Word32Equal(function_kind,
+                      Int32Constant(FunctionKind::kGeneratorFunction))),
+      Word32Equal(function_kind,
+                  Int32Constant(FunctionKind::kConciseGeneratorMethod)));
+}
+
+TNode<Word32T> CodeStubAssembler::HasPrototypeProperty(
+    TNode<JSFunction> function) {
+  TNode<Int32T> mask = Int32Constant(Map::HasPrototypeSlotBit::kMask |
+                                     Map::IsConstructorBit::kMask);
+  return Word32Or(
+      Word32Equal(Word32And(LoadMapBitField(LoadMap(function)), mask), mask),
+      IsGeneratorFunction(function));
+}
+
+TNode<Word32T> CodeStubAssembler::PrototypeRequiresRuntimeLookup(
+    TNode<JSFunction> function) {
+  TNode<Map> map = LoadMap(function);
+
+  return Word32Or(
+      Word32Not(HasPrototypeProperty(function)),
+      IsSetWord32<Map::HasNonInstancePrototypeBit>(LoadMapBitField(map)));
 }
 
 Node* CodeStubAssembler::LoadJSFunctionPrototype(Node* function,
@@ -6081,11 +6131,11 @@ TNode<String> ToDirectStringAssembler::TryToDirect(Label* if_bailout) {
   return CAST(var_string_.value());
 }
 
-Node* ToDirectStringAssembler::TryToSequential(StringPointerKind ptr_kind,
-                                               Label* if_bailout) {
+TNode<RawPtrT> ToDirectStringAssembler::TryToSequential(
+    StringPointerKind ptr_kind, Label* if_bailout) {
   CHECK(ptr_kind == PTR_TO_DATA || ptr_kind == PTR_TO_STRING);
 
-  VARIABLE(var_result, MachineType::PointerRepresentation());
+  TVARIABLE(RawPtrT, var_result);
   Label out(this), if_issequential(this), if_isexternal(this, Label::kDeferred);
   Branch(is_external(), &if_isexternal, &if_issequential);
 
@@ -6093,12 +6143,12 @@ Node* ToDirectStringAssembler::TryToSequential(StringPointerKind ptr_kind,
   {
     STATIC_ASSERT(SeqOneByteString::kHeaderSize ==
                   SeqTwoByteString::kHeaderSize);
-    Node* result = BitcastTaggedToWord(var_string_.value());
+    TNode<IntPtrT> result = BitcastTaggedToWord(var_string_.value());
     if (ptr_kind == PTR_TO_DATA) {
       result = IntPtrAdd(result, IntPtrConstant(SeqOneByteString::kHeaderSize -
                                                 kHeapObjectTag));
     }
-    var_result.Bind(result);
+    var_result = ReinterpretCast<RawPtrT>(result);
     Goto(&out);
   }
 
@@ -6107,14 +6157,14 @@ Node* ToDirectStringAssembler::TryToSequential(StringPointerKind ptr_kind,
     GotoIf(IsShortExternalStringInstanceType(var_instance_type_.value()),
            if_bailout);
 
-    Node* const string = var_string_.value();
-    Node* result = LoadObjectField(string, ExternalString::kResourceDataOffset,
-                                   MachineType::Pointer());
+    TNode<String> string = CAST(var_string_.value());
+    TNode<IntPtrT> result =
+        LoadObjectField<IntPtrT>(string, ExternalString::kResourceDataOffset);
     if (ptr_kind == PTR_TO_STRING) {
       result = IntPtrSub(result, IntPtrConstant(SeqOneByteString::kHeaderSize -
                                                 kHeapObjectTag));
     }
-    var_result.Bind(result);
+    var_result = ReinterpretCast<RawPtrT>(result);
     Goto(&out);
   }
 
@@ -8248,15 +8298,7 @@ TNode<Object> CodeStubAssembler::CallGetterIfAccessor(
                     LoadObjectField(accessor_info, AccessorInfo::kNameOffset)),
                 if_bailout);
 
-      // if (!(has_prototype_slot() && !has_non_instance_prototype())) use
-      // generic property loading mechanism.
-      GotoIfNot(
-          Word32Equal(
-              Word32And(LoadMapBitField(receiver_map),
-                        Int32Constant(Map::HasPrototypeSlotBit::kMask |
-                                      Map::HasNonInstancePrototypeBit::kMask)),
-              Int32Constant(Map::HasPrototypeSlotBit::kMask)),
-          if_bailout);
+      GotoIf(PrototypeRequiresRuntimeLookup(CAST(receiver)), if_bailout);
       var_value.Bind(LoadJSFunctionPrototype(receiver, if_bailout));
       Goto(&done);
     }
@@ -8709,15 +8751,7 @@ Node* CodeStubAssembler::OrdinaryHasInstance(Node* context, Node* callable,
   GotoIfNot(InstanceTypeEqual(callable_instance_type, JS_FUNCTION_TYPE),
             &return_runtime);
 
-  // Goto runtime if {callable} is not a constructor or has
-  // a non-instance "prototype".
-  Node* callable_bitfield = LoadMapBitField(callable_map);
-  GotoIfNot(Word32Equal(
-                Word32And(callable_bitfield,
-                          Int32Constant(Map::HasNonInstancePrototypeBit::kMask |
-                                        Map::IsConstructorBit::kMask)),
-                Int32Constant(Map::IsConstructorBit::kMask)),
-            &return_runtime);
+  GotoIf(PrototypeRequiresRuntimeLookup(CAST(callable)), &return_runtime);
 
   // Get the "prototype" (or initial map) of the {callable}.
   Node* callable_prototype =
@@ -9209,13 +9243,14 @@ void CodeStubAssembler::EmitBigTypedArrayElementStore(
     TNode<JSTypedArray> object, TNode<FixedTypedArrayBase> elements,
     TNode<IntPtrT> intptr_key, TNode<Object> value, TNode<Context> context,
     Label* opt_if_neutered) {
+  TNode<BigInt> bigint_value = ToBigInt(context, value);
+
   if (opt_if_neutered != nullptr) {
-    // Check if buffer has been neutered.
+    // Check if buffer has been neutered. Must happen after {ToBigInt}!
     Node* buffer = LoadObjectField(object, JSArrayBufferView::kBufferOffset);
     GotoIf(IsDetachedBuffer(buffer), opt_if_neutered);
   }
 
-  TNode<BigInt> bigint_value = ToBigInt(context, value);
   TNode<RawPtrT> backing_store = LoadFixedTypedArrayBackingStore(elements);
   TNode<IntPtrT> offset = ElementOffsetFromIndex(intptr_key, BIGINT64_ELEMENTS,
                                                  INTPTR_PARAMETERS, 0);
@@ -9390,12 +9425,13 @@ Node* CodeStubAssembler::CheckForCapacityGrow(
     Node* object, Node* elements, ElementsKind kind,
     KeyedAccessStoreMode store_mode, Node* length, Node* key,
     ParameterMode mode, bool is_js_array, Label* bailout) {
+  DCHECK(IsFastElementsKind(kind));
   VARIABLE(checked_elements, MachineRepresentation::kTagged);
   Label grow_case(this), no_grow_case(this), done(this),
       grow_bailout(this, Label::kDeferred);
 
   Node* condition;
-  if (IsHoleyOrDictionaryElementsKind(kind)) {
+  if (IsHoleyElementsKind(kind)) {
     condition = UintPtrGreaterThanOrEqual(key, length);
   } else {
     // We don't support growing here unless the value is being appended.
@@ -9571,7 +9607,7 @@ void CodeStubAssembler::TrapAllocationMemento(Node* object,
 }
 
 TNode<IntPtrT> CodeStubAssembler::PageFromAddress(TNode<IntPtrT> address) {
-  return WordAnd(address, IntPtrConstant(~Page::kPageAlignmentMask));
+  return WordAnd(address, IntPtrConstant(~kPageAlignmentMask));
 }
 
 TNode<AllocationSite> CodeStubAssembler::CreateAllocationSiteInFeedbackVector(
@@ -9623,10 +9659,13 @@ TNode<AllocationSite> CodeStubAssembler::CreateAllocationSiteInFeedbackVector(
 }
 
 TNode<MaybeObject> CodeStubAssembler::StoreWeakReferenceInFeedbackVector(
-    SloppyTNode<FeedbackVector> feedback_vector, SloppyTNode<IntPtrT> slot,
-    TNode<HeapObject> value) {
+    SloppyTNode<FeedbackVector> feedback_vector, Node* slot,
+    SloppyTNode<HeapObject> value, int additional_offset,
+    ParameterMode parameter_mode) {
   TNode<MaybeObject> weak_value = MakeWeak(value);
-  StoreFeedbackVectorSlot(feedback_vector, slot, weak_value);
+  StoreFeedbackVectorSlot(feedback_vector, slot, weak_value,
+                          UPDATE_WRITE_BARRIER, additional_offset,
+                          parameter_mode);
   return weak_value;
 }
 

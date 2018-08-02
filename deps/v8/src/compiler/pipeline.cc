@@ -40,6 +40,7 @@
 #include "src/compiler/js-create-lowering.h"
 #include "src/compiler/js-generic-lowering.h"
 #include "src/compiler/js-heap-broker.h"
+#include "src/compiler/js-heap-copy-reducer.h"
 #include "src/compiler/js-inlining-heuristic.h"
 #include "src/compiler/js-intrinsic-lowering.h"
 #include "src/compiler/js-native-context-specialization.h"
@@ -83,6 +84,7 @@
 #include "src/register-configuration.h"
 #include "src/utils.h"
 #include "src/wasm/function-body-decoder.h"
+#include "src/wasm/wasm-engine.h"
 
 namespace v8 {
 namespace internal {
@@ -135,7 +137,7 @@ class PipelineData {
     javascript_ = new (graph_zone_) JSOperatorBuilder(graph_zone_);
     jsgraph_ = new (graph_zone_)
         JSGraph(isolate_, graph_, common_, javascript_, simplified_, machine_);
-    js_heap_broker_ = new (codegen_zone_) JSHeapBroker(isolate_);
+    js_heap_broker_ = new (codegen_zone_) JSHeapBroker(isolate_, codegen_zone_);
     dependencies_ =
         new (codegen_zone_) CompilationDependencies(isolate_, codegen_zone_);
   }
@@ -527,7 +529,9 @@ class PipelineImpl final {
 
   OptimizedCompilationInfo* info() const;
   Isolate* isolate() const;
+  CodeGenerator* code_generator() const;
 
+ private:
   PipelineData* const data_;
 };
 
@@ -1074,7 +1078,7 @@ PipelineWasmCompilationJob::ExecuteJobImpl() {
   if (!pipeline_.SelectInstructions(&linkage_)) return FAILED;
   pipeline_.AssembleCode(&linkage_);
 
-  CodeGenerator* code_generator = pipeline_.data_->code_generator();
+  CodeGenerator* code_generator = pipeline_.code_generator();
   CodeDesc code_desc;
   code_generator->tasm()->GetCode(nullptr, &code_desc);
 
@@ -1276,6 +1280,21 @@ struct UntyperPhase {
     RemoveTypeReducer remove_type_reducer;
     AddReducer(data, &graph_reducer, &remove_type_reducer);
     graph_reducer.ReduceGraph();
+  }
+};
+
+struct CopyMetadataForConcurrentCompilePhase {
+  static const char* phase_name() {
+    return "copy metadata for concurrent compile";
+  }
+
+  void Run(PipelineData* data, Zone* temp_zone) {
+    GraphReducer graph_reducer(temp_zone, data->graph(),
+                               data->jsgraph()->Dead());
+    JSHeapCopyReducer heap_copy_reducer(data->js_heap_broker());
+    AddReducer(data, &graph_reducer, &heap_copy_reducer);
+    graph_reducer.ReduceGraph();
+    data->js_heap_broker()->StopSerializing();
   }
 };
 
@@ -2015,14 +2034,19 @@ bool PipelineImpl::CreateGraph() {
     Run<TyperPhase>(&typer);
     RunPrintAndVerify(TyperPhase::phase_name());
 
+    // Do some hacky things to prepare for the optimization phase.
+    // (caching handles, etc.).
+    Run<ConcurrentOptimizationPrepPhase>();
+
+    if (FLAG_concurrent_compiler_frontend) {
+      data->js_heap_broker()->SerializeStandardObjects();
+      Run<CopyMetadataForConcurrentCompilePhase>();
+    }
+
     // Lower JSOperators where we can determine types.
     Run<TypedLoweringPhase>();
     RunPrintAndVerify(TypedLoweringPhase::phase_name());
   }
-
-  // Do some hacky things to prepare for the optimization phase.
-  // (caching handles, etc.).
-  Run<ConcurrentOptimizationPrepPhase>();
 
   data->EndPhaseKind();
 
@@ -2271,8 +2295,8 @@ bool Pipeline::AllocateRegistersForTesting(const RegisterConfiguration* config,
                                 Code::STUB);
   ZoneStats zone_stats(sequence->isolate()->allocator());
   PipelineData data(&zone_stats, &info, sequence->isolate(), sequence);
+  data.InitializeFrameData(nullptr);
   PipelineImpl pipeline(&data);
-  pipeline.data_->InitializeFrameData(nullptr);
   pipeline.AllocateRegisters(config, nullptr, run_verifier);
   return !data.compilation_failed();
 }
@@ -2641,6 +2665,10 @@ void PipelineImpl::AllocateRegisters(const RegisterConfiguration* config,
 OptimizedCompilationInfo* PipelineImpl::info() const { return data_->info(); }
 
 Isolate* PipelineImpl::isolate() const { return data_->isolate(); }
+
+CodeGenerator* PipelineImpl::code_generator() const {
+  return data_->code_generator();
+}
 
 }  // namespace compiler
 }  // namespace internal

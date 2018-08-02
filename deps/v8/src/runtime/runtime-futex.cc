@@ -9,6 +9,7 @@
 #include "src/conversions-inl.h"
 #include "src/futex-emulation.h"
 #include "src/globals.h"
+#include "src/objects/js-array-inl.h"
 
 // Implement Futex API for SharedArrayBuffers as defined in the
 // SharedArrayBuffer draft spec, found here:
@@ -30,7 +31,7 @@ RUNTIME_FUNCTION(Runtime_AtomicsNumWaitersForTesting) {
   Handle<JSArrayBuffer> array_buffer = sta->GetBuffer();
   size_t addr = (index << 2) + NumberToSize(sta->byte_offset());
 
-  return FutexEmulation::NumWaitersForTesting(isolate, array_buffer, addr);
+  return FutexEmulation::NumWaitersForTesting(array_buffer, addr);
 }
 
 RUNTIME_FUNCTION(Runtime_SetAllowAtomicsWait) {

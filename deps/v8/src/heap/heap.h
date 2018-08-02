@@ -47,7 +47,7 @@ class DeoptimizationData;
 class HandlerTable;
 class IncrementalMarking;
 class JSArrayBuffer;
-
+class ExternalString;
 using v8::MemoryPressureLevel;
 
 // Heap roots that are known to be immortal immovable, for which we can safely
@@ -492,6 +492,14 @@ class Heap {
   // by pointer size.
   static inline void CopyBlock(Address dst, Address src, int byte_size);
 
+  V8_EXPORT_PRIVATE static void GenerationalBarrierSlow(HeapObject* object,
+                                                        Address slot,
+                                                        HeapObject* value);
+  V8_EXPORT_PRIVATE static void MarkingBarrierSlow(HeapObject* object,
+                                                   Address slot,
+                                                   HeapObject* value);
+  V8_EXPORT_PRIVATE static bool PageFlagsAreConsistent(HeapObject* object);
+
   // Notifies the heap that is ok to start marking or other activities that
   // should not happen during deserialization.
   void NotifyDeserializationComplete();
@@ -678,7 +686,10 @@ class Heap {
     external_memory_concurrently_freed_ = 0;
   }
 
-  void CompactFixedArraysOfWeakCells();
+  void ProcessMovedExternalString(Page* old_page, Page* new_page,
+                                  ExternalString* string);
+
+  void CompactWeakArrayLists();
 
   void AddRetainedMap(Handle<Map> map);
 
@@ -842,6 +853,10 @@ class Heap {
     return kRootsBuiltinsOffset;
   }
 
+  static constexpr int root_register_addressable_end_offset() {
+    return kRootRegisterAddressableEndOffset;
+  }
+
   Address root_register_addressable_end() {
     return reinterpret_cast<Address>(roots_array_start()) +
            kRootRegisterAddressableEndOffset;
@@ -972,9 +987,7 @@ class Heap {
   // ===========================================================================
 
   // Write barrier support for object[offset] = o;
-  inline void RecordWrite(Object* object, MaybeObject** slot,
-                          MaybeObject* value);
-  inline void RecordWrite(Object* object, Object** slot, Object* value);
+  // See heap/heap-write-barrier-inl.h for stand-alone methods.
   inline void RecordWriteIntoCode(Code* host, RelocInfo* rinfo, Object* target);
   void RecordWriteIntoCodeSlow(Code* host, RelocInfo* rinfo, Object* target);
   void RecordWritesIntoCode(Code* code);
@@ -1088,6 +1101,11 @@ class Heap {
 
   // Registers an external string.
   inline void RegisterExternalString(String* string);
+
+  // Called when a string's resource is changed. The size of the payload is sent
+  // as argument of the method.
+  inline void UpdateExternalString(String* string, size_t old_payload,
+                                   size_t new_payload);
 
   // Finalizes an external string by deleting the associated external
   // data and clearing the resource pointer.
@@ -1481,6 +1499,7 @@ class Heap {
 
     // Registers an external string.
     inline void AddString(String* string);
+    bool Contains(HeapObject* obj);
 
     void IterateAll(RootVisitor* v);
     void IterateNewSpaceStrings(RootVisitor* v);
@@ -1614,8 +1633,6 @@ class Heap {
   }
 
   int NumberOfScavengeTasks();
-
-  void PreprocessStackTraces();
 
   // Checks whether a global GC is necessary
   GarbageCollector SelectGarbageCollector(AllocationSpace space,

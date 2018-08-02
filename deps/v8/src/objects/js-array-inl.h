@@ -6,6 +6,8 @@
 #define V8_OBJECTS_JS_ARRAY_INL_H_
 
 #include "src/objects/js-array.h"
+
+#include "src/objects-inl.h"  // Needed for write barriers
 #include "src/wasm/wasm-engine.h"
 
 // Has to be the last include (doesn't have include guards):
@@ -21,11 +23,6 @@ CAST_ACCESSOR(JSArrayIterator)
 CAST_ACCESSOR(JSTypedArray)
 
 ACCESSORS(JSArray, length, Object, kLengthOffset)
-
-template <>
-inline bool Is<JSArray>(Object* obj) {
-  return obj->IsJSArray();
-}
 
 void JSArray::set_length(Smi* length) {
   // Don't need a write barrier for a Smi.
@@ -166,7 +163,7 @@ Object* JSArrayBufferView::byte_offset() const {
 
 void JSArrayBufferView::set_byte_offset(Object* value, WriteBarrierMode mode) {
   WRITE_FIELD(this, kByteOffsetOffset, value);
-  CONDITIONAL_WRITE_BARRIER(GetHeap(), this, kByteOffsetOffset, value, mode);
+  CONDITIONAL_WRITE_BARRIER(this, kByteOffsetOffset, value, mode);
 }
 
 Object* JSArrayBufferView::byte_length() const {
@@ -176,7 +173,7 @@ Object* JSArrayBufferView::byte_length() const {
 
 void JSArrayBufferView::set_byte_length(Object* value, WriteBarrierMode mode) {
   WRITE_FIELD(this, kByteLengthOffset, value);
-  CONDITIONAL_WRITE_BARRIER(GetHeap(), this, kByteLengthOffset, value, mode);
+  CONDITIONAL_WRITE_BARRIER(this, kByteLengthOffset, value, mode);
 }
 
 ACCESSORS(JSArrayBufferView, buffer, Object, kBufferOffset)
@@ -194,16 +191,19 @@ Object* JSTypedArray::length() const {
   return Object::cast(READ_FIELD(this, kLengthOffset));
 }
 
-uint32_t JSTypedArray::length_value() const {
+size_t JSTypedArray::length_value() const {
   if (WasNeutered()) return 0;
-  uint32_t index = 0;
-  CHECK(Object::cast(READ_FIELD(this, kLengthOffset))->ToArrayLength(&index));
-  return index;
+  double val = Object::cast(READ_FIELD(this, kLengthOffset))->Number();
+  DCHECK_LE(val, kMaxSafeInteger);   // 2^53-1
+  DCHECK_GE(val, -kMaxSafeInteger);  // -2^53+1
+  DCHECK_LE(val, std::numeric_limits<size_t>::max());
+  DCHECK_GE(val, std::numeric_limits<size_t>::min());
+  return static_cast<size_t>(val);
 }
 
 void JSTypedArray::set_length(Object* value, WriteBarrierMode mode) {
   WRITE_FIELD(this, kLengthOffset, value);
-  CONDITIONAL_WRITE_BARRIER(GetHeap(), this, kLengthOffset, value, mode);
+  CONDITIONAL_WRITE_BARRIER(this, kLengthOffset, value, mode);
 }
 
 bool JSTypedArray::is_on_heap() const {

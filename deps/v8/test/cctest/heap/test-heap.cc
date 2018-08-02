@@ -28,7 +28,7 @@
 #include <stdlib.h>
 #include <utility>
 
-#include "src/api.h"
+#include "src/api-inl.h"
 #include "src/assembler-inl.h"
 #include "src/code-stubs.h"
 #include "src/compilation-cache.h"
@@ -46,6 +46,7 @@
 #include "src/ic/ic.h"
 #include "src/macro-assembler-inl.h"
 #include "src/objects-inl.h"
+#include "src/objects/js-array-inl.h"
 #include "src/objects/js-collection-inl.h"
 #include "src/regexp/jsregexp.h"
 #include "src/snapshot/snapshot.h"
@@ -5492,7 +5493,8 @@ TEST(Regress631969) {
     s3->MakeExternal(&external_string);
     CcTest::CollectGarbage(OLD_SPACE);
     // This avoids the GC from trying to free stack allocated resources.
-    i::Handle<i::ExternalOneByteString>::cast(s3)->set_resource(nullptr);
+    i::Handle<i::ExternalOneByteString>::cast(s3)->SetResource(isolate,
+                                                               nullptr);
   }
 }
 

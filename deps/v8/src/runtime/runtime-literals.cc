@@ -22,7 +22,7 @@ bool IsUninitializedLiteralSite(Object* literal_site) {
   return literal_site == Smi::kZero;
 }
 
-bool HasBoilerplate(Isolate* isolate, Handle<Object> literal_site) {
+bool HasBoilerplate(Handle<Object> literal_site) {
   return !literal_site->IsSmi();
 }
 
@@ -196,7 +196,7 @@ MaybeHandle<JSObject> JSObjectWalkVisitor<ContextObject>::StructureWalk(
       UNREACHABLE();
       break;
 
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) case TYPE##_ELEMENTS:
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) case TYPE##_ELEMENTS:
 
       TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
@@ -486,7 +486,7 @@ MaybeHandle<JSObject> CreateLiteral(Isolate* isolate,
   Handle<AllocationSite> site;
   Handle<JSObject> boilerplate;
 
-  if (HasBoilerplate(isolate, literal_site)) {
+  if (HasBoilerplate(literal_site)) {
     site = Handle<AllocationSite>::cast(literal_site);
     boilerplate = Handle<JSObject>(site->boilerplate(), isolate);
   } else {
@@ -507,10 +507,7 @@ MaybeHandle<JSObject> CreateLiteral(Isolate* isolate,
       }
       return boilerplate;
     } else {
-      PretenureFlag pretenure_flag =
-          Heap::InNewSpace(*vector) ? NOT_TENURED : TENURED;
-      boilerplate =
-          Boilerplate::Create(isolate, description, flags, pretenure_flag);
+      boilerplate = Boilerplate::Create(isolate, description, flags, TENURED);
     }
     // Install AllocationSite objects.
     AllocationSiteCreationContext creation_context(isolate);
@@ -573,7 +570,7 @@ RUNTIME_FUNCTION(Runtime_CreateRegExpLiteral) {
   // Check if boilerplate exists. If not, create it first.
   Handle<Object> literal_site(vector->Get(literal_slot)->ToObject(), isolate);
   Handle<Object> boilerplate;
-  if (!HasBoilerplate(isolate, literal_site)) {
+  if (!HasBoilerplate(literal_site)) {
     ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
         isolate, boilerplate,
         JSRegExp::New(isolate, pattern, JSRegExp::Flags(flags)));

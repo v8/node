@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <memory>
 
-#include "src/api.h"
+#include "src/api-inl.h"
 #include "src/asmjs/asm-js.h"
 #include "src/assembler-inl.h"
 #include "src/ast/prettyprinter.h"
@@ -130,11 +130,7 @@ void LogFunctionCompilation(CodeEventListener::LogEventsAndTags tag,
 // Implementation of UnoptimizedCompilationJob
 
 CompilationJob::Status UnoptimizedCompilationJob::ExecuteJob() {
-  DisallowHeapAllocation no_allocation;
-  DisallowHandleAllocation no_handles;
-  DisallowHandleDereference no_deref;
-  DisallowCodeDependencyChange no_dependency_change;
-
+  DisallowHeapAccess no_heap_access;
   // Delegate to the underlying implementation.
   DCHECK_EQ(state(), State::kReadyToExecute);
   ScopedTimer t(&time_taken_to_execute_);
@@ -212,11 +208,7 @@ CompilationJob::Status OptimizedCompilationJob::PrepareJob(Isolate* isolate) {
 }
 
 CompilationJob::Status OptimizedCompilationJob::ExecuteJob() {
-  DisallowHeapAllocation no_allocation;
-  DisallowHandleAllocation no_handles;
-  DisallowHandleDereference no_deref;
-  DisallowCodeDependencyChange no_dependency_change;
-
+  DisallowHeapAccess no_heap_access;
   // Delegate to the underlying implementation.
   DCHECK_EQ(state(), State::kReadyToExecute);
   ScopedTimer t(&time_taken_to_execute_);
@@ -478,9 +470,7 @@ std::unique_ptr<UnoptimizedCompilationJob> ExecuteUnoptimizedCompileJobs(
 std::unique_ptr<UnoptimizedCompilationJob> GenerateUnoptimizedCode(
     ParseInfo* parse_info, AccountingAllocator* allocator,
     UnoptimizedCompilationJobList* inner_function_jobs) {
-  DisallowHeapAllocation no_allocation;
-  DisallowHandleAllocation no_handles;
-  DisallowHandleDereference no_deref;
+  DisallowHeapAccess no_heap_access;
   DCHECK(inner_function_jobs->empty());
 
   if (!Compiler::Analyze(parse_info)) {
@@ -922,9 +912,7 @@ MaybeHandle<SharedFunctionInfo> CompileToplevel(ParseInfo* parse_info,
 std::unique_ptr<UnoptimizedCompilationJob> CompileTopLevelOnBackgroundThread(
     ParseInfo* parse_info, AccountingAllocator* allocator,
     UnoptimizedCompilationJobList* inner_function_jobs) {
-  DisallowHeapAllocation no_allocation;
-  DisallowHandleAllocation no_handles;
-  DisallowHandleDereference no_deref;
+  DisallowHeapAccess no_heap_access;
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
                "V8.CompileCodeBackground");
   RuntimeCallTimerScope runtimeTimer(
@@ -978,7 +966,7 @@ BackgroundCompileTask::BackgroundCompileTask(ScriptStreamingData* source,
     info->set_runtime_call_stats(nullptr);
   }
   info->set_toplevel();
-  std::unique_ptr<Utf16CharacterStream> stream(
+  std::unique_ptr<ScannerStream> stream(
       ScannerStream::For(source->source_stream.get(), source->encoding,
                          info->runtime_call_stats()));
   info->set_character_stream(std::move(stream));
@@ -1003,9 +991,7 @@ BackgroundCompileTask::BackgroundCompileTask(ScriptStreamingData* source,
 
 void BackgroundCompileTask::Run() {
   TimedHistogramScope timer(timer_);
-  DisallowHeapAllocation no_allocation;
-  DisallowHandleAllocation no_handles;
-  DisallowHandleDereference no_deref;
+  DisallowHeapAccess no_heap_access;
 
   source_->info->set_on_background_thread(true);
 
@@ -1621,8 +1607,7 @@ MaybeHandle<SharedFunctionInfo> Compiler::GetSharedFunctionInfoForScript(
   MaybeHandle<SharedFunctionInfo> maybe_result;
   if (extension == nullptr) {
     bool can_consume_code_cache =
-        compile_options == ScriptCompiler::kConsumeCodeCache &&
-        !isolate->debug()->is_active();
+        compile_options == ScriptCompiler::kConsumeCodeCache;
     if (can_consume_code_cache) {
       compile_timer.set_consuming_code_cache();
     }
@@ -1712,8 +1697,7 @@ MaybeHandle<JSFunction> Compiler::GetWrappedFunction(
 
   MaybeHandle<SharedFunctionInfo> maybe_result;
   bool can_consume_code_cache =
-      compile_options == ScriptCompiler::kConsumeCodeCache &&
-      !isolate->debug()->is_active();
+      compile_options == ScriptCompiler::kConsumeCodeCache;
   if (can_consume_code_cache) {
     compile_timer.set_consuming_code_cache();
     // Then check cached code provided by embedder.

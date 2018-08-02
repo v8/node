@@ -45,6 +45,7 @@
 #include "src/macro-assembler.h"
 #include "test/cctest/cctest.h"
 #include "test/cctest/test-utils-arm64.h"
+#include "test/common/assembler-tester.h"
 
 namespace v8 {
 namespace internal {
@@ -198,7 +199,6 @@ static void InitializeVM() {
 
 #define RUN()                                              \
   MakeAssemblerBufferExecutable(buf, allocated);           \
-  Assembler::FlushICache(buf, masm.SizeOfGeneratedCode()); \
   {                                                        \
     void (*test_function)(void);                           \
     memcpy(&test_function, &buf, sizeof(buf));             \

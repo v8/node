@@ -9,17 +9,11 @@
 #include "src/base/optional.h"
 #include "src/globals.h"
 #include "src/objects.h"
+#include "src/zone/zone-containers.h"
 
 namespace v8 {
 namespace internal {
 namespace compiler {
-
-class DisallowHeapAccess {
-  DisallowHeapAllocation no_heap_allocation_;
-  DisallowHandleAllocation no_handle_allocation_;
-  DisallowHandleDereference no_handle_dereference_;
-  DisallowCodeDependencyChange no_dependency_change_;
-};
 
 enum class OddballType : uint8_t {
   kNone,     // Not an Oddball.
@@ -89,27 +83,30 @@ class HeapObjectType {
 
 class CompilationDependencies;
 class JSHeapBroker;
+class ObjectData;
 #define FORWARD_DECL(Name) class Name##Ref;
 HEAP_BROKER_OBJECT_LIST(FORWARD_DECL)
 #undef FORWARD_DECL
 
 class ObjectRef {
  public:
-  explicit ObjectRef(const JSHeapBroker* broker, Handle<Object> object)
-      : broker_(broker), object_(object) {}
+  ObjectRef(JSHeapBroker* broker, Handle<Object> object);
+  explicit ObjectRef(ObjectData* data) : data_(data) { CHECK_NOT_NULL(data_); }
 
+  bool equals(const ObjectRef& other) const;
+
+  Handle<Object> object() const;
+  // TODO(neis): Remove eventually.
   template <typename T>
   Handle<T> object() const {
     AllowHandleDereference handle_dereference;
-    return Handle<T>::cast(object_);
+    return Handle<T>::cast(object());
   }
 
   OddballType oddball_type() const;
 
   bool IsSmi() const;
   int AsSmi() const;
-
-  bool equals(const ObjectRef& other) const;
 
 #define HEAP_IS_METHOD_DECL(Name) bool Is##Name() const;
   HEAP_BROKER_OBJECT_LIST(HEAP_IS_METHOD_DECL)
@@ -124,16 +121,11 @@ class ObjectRef {
   double OddballToNumber() const;
 
  protected:
-  const JSHeapBroker* broker() const { return broker_; }
+  JSHeapBroker* broker() const;
+  ObjectData* data() const;
 
  private:
-  const JSHeapBroker* broker_;
-  Handle<Object> object_;
-};
-
-class FieldTypeRef : public ObjectRef {
- public:
-  using ObjectRef::ObjectRef;
+  ObjectData* data_;
 };
 
 class HeapObjectRef : public ObjectRef {
@@ -234,7 +226,7 @@ class NativeContextRef : public ContextRef {
   MapRef fast_aliased_arguments_map() const;
   MapRef sloppy_arguments_map() const;
   MapRef strict_arguments_map() const;
-  MapRef js_array_fast_elements_map_index() const;
+  MapRef js_array_fast_elements_map() const;
   MapRef initial_array_iterator_map() const;
   MapRef set_value_iterator_map() const;
   MapRef set_key_value_iterator_map() const;
@@ -248,6 +240,7 @@ class NativeContextRef : public ContextRef {
 
   MapRef GetFunctionMapFromIndex(int index) const;
   MapRef ObjectLiteralMapFromCache() const;
+  MapRef GetInitialJSArrayMap(ElementsKind kind) const;
 };
 
 class NameRef : public HeapObjectRef {
@@ -303,7 +296,7 @@ class MapRef : public HeapObjectRef {
   ObjectRef constructor_or_backpointer() const;
   ElementsKind elements_kind() const;
 
-  MapRef AsElementsKind(ElementsKind kind, const JSHeapBroker* broker) const;
+  MapRef AsElementsKind(ElementsKind kind) const;
 
   bool is_stable() const;
   bool has_prototype_slot() const;
@@ -317,7 +310,7 @@ class MapRef : public HeapObjectRef {
   bool IsFixedCowArrayMap() const;
 
   // Concerning the underlying instance_descriptors:
-  FieldTypeRef GetFieldType(int descriptor) const;
+  ObjectRef GetFieldType(int descriptor) const;
 };
 
 class FixedArrayBaseRef : public HeapObjectRef {
@@ -414,22 +407,42 @@ class InternalizedStringRef : public StringRef {
 
 class V8_EXPORT_PRIVATE JSHeapBroker : public NON_EXPORTED_BASE(ZoneObject) {
  public:
-  JSHeapBroker(Isolate* isolate);
+  JSHeapBroker(Isolate* isolate, Zone* zone);
+  void SerializeStandardObjects();
 
   HeapObjectType HeapObjectTypeFromMap(Handle<Map> map) const {
     AllowHandleDereference handle_dereference;
     return HeapObjectTypeFromMap(*map);
   }
 
-  static base::Optional<int> TryGetSmi(Handle<Object> object);
-
   Isolate* isolate() const { return isolate_; }
+  Zone* zone() const { return zone_; }
+
+  enum BrokerMode { kDisabled, kSerializing, kSerialized };
+  BrokerMode mode() const { return mode_; }
+  void StopSerializing() {
+    CHECK_EQ(mode_, kSerializing);
+    mode_ = kSerialized;
+  }
+  bool SerializingAllowed() const;
+
+  // Returns nullptr iff handle unknown.
+  ObjectData* GetData(Handle<Object>) const;
+  // Never returns nullptr.
+  ObjectData* GetOrCreateData(Handle<Object>);
+  void AddData(Handle<Object> object, ObjectData* data);
 
  private:
   friend class HeapObjectRef;
+  friend class ObjectRef;
+
+  // TODO(neis): Remove eventually.
   HeapObjectType HeapObjectTypeFromMap(Map* map) const;
 
   Isolate* const isolate_;
+  Zone* const zone_;
+  ZoneUnorderedMap<Address, ObjectData*> refs_;
+  BrokerMode mode_;
 };
 
 }  // namespace compiler

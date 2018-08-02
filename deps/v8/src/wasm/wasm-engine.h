@@ -75,7 +75,7 @@ class V8_EXPORT_PRIVATE WasmEngine {
   // The {is_shared} flag indicates if the bytes backing the module could
   // be shared across threads, i.e. could be concurrently modified.
   void AsyncCompile(Isolate* isolate,
-                    std::unique_ptr<CompilationResultResolver> resolver,
+                    std::shared_ptr<CompilationResultResolver> resolver,
                     const ModuleWireBytes& bytes, bool is_shared);
 
   // Begin an asynchronous instantiation of the given WASM module.
@@ -86,7 +86,17 @@ class V8_EXPORT_PRIVATE WasmEngine {
 
   std::shared_ptr<StreamingDecoder> StartStreamingCompilation(
       Isolate* isolate, Handle<Context> context,
-      std::unique_ptr<CompilationResultResolver> resolver);
+      std::shared_ptr<CompilationResultResolver> resolver);
+
+  // Exports the sharable parts of the given module object so that they can be
+  // transferred to a different Context/Isolate using the same engine.
+  std::shared_ptr<NativeModule> ExportNativeModule(
+      Handle<WasmModuleObject> module_object);
+
+  // Imports the shared part of a module from a different Context/Isolate using
+  // the the same engine, recreating a full module object in the given Isolate.
+  Handle<WasmModuleObject> ImportNativeModule(
+      Isolate* isolate, std::shared_ptr<NativeModule> shared_module);
 
   WasmCodeManager* code_manager() const { return code_manager_.get(); }
 
@@ -103,40 +113,40 @@ class V8_EXPORT_PRIVATE WasmEngine {
   // Used to redirect tracing output from {stdout} to a file.
   CodeTracer* GetCodeTracer();
 
-  // We register and unregister CancelableTaskManagers that run engine-dependent
-  // tasks. These tasks need to be shutdown if the engine is shut down.
-  void Register(CancelableTaskManager* task_manager);
-  void Unregister(CancelableTaskManager* task_manager);
-
   // Remove {job} from the list of active compile jobs.
   std::unique_ptr<AsyncCompileJob> RemoveCompileJob(AsyncCompileJob* job);
 
-  // Returns true if at lease one AsyncCompileJob is currently running.
-  bool HasRunningCompileJob() const { return !jobs_.empty(); }
+  // Returns true if at least one AsyncCompileJob that belongs to the given
+  // Isolate is currently running.
+  bool HasRunningCompileJob(Isolate* isolate);
 
   // Cancel all AsyncCompileJobs that belong to the given Isolate. Their
   // deletion is delayed until all tasks accessing the AsyncCompileJob finish
   // their execution. This is used to clean-up the isolate to be reused.
-  void AbortCompileJobsOnIsolate(Isolate*);
+  void AbortCompileJobsOnIsolate(Isolate* isolate);
 
-  void TearDown();
+  // Deletes all AsyncCompileJobs that belong to the given Isolate. Similar to
+  // the above {AbortCompileJobsOnIsolate} but does not delay deletion because
+  // this is only used during tear-down of the Isolate.
+  void DeleteCompileJobsOnIsolate(Isolate* isolate);
+
+  // Call on process start and exit.
+  static void InitializeOncePerProcess();
+  static void GlobalTearDown();
+
+  // Constructs a WasmEngine instance. Depending on whether we are sharing
+  // engines this might be a pointer to a new instance or to a shared one.
+  static std::shared_ptr<WasmEngine> GetWasmEngine();
 
  private:
   AsyncCompileJob* CreateAsyncCompileJob(
       Isolate* isolate, std::unique_ptr<byte[]> bytes_copy, size_t length,
       Handle<Context> context,
-      std::unique_ptr<CompilationResultResolver> resolver);
+      std::shared_ptr<CompilationResultResolver> resolver);
 
-  // We use an AsyncCompileJob as the key for itself so that we can delete the
-  // job from the map when it is finished.
-  std::unordered_map<AsyncCompileJob*, std::unique_ptr<AsyncCompileJob>> jobs_;
   std::unique_ptr<WasmCodeManager> code_manager_;
   WasmMemoryTracker memory_tracker_;
   AccountingAllocator allocator_;
-
-  // Contains all CancelableTaskManagers that run tasks that are dependent
-  // on the isolate.
-  std::list<CancelableTaskManager*> task_managers_;
 
   // This mutex protects all information which is mutated concurrently or
   // fields that are initialized lazily on the first access.
@@ -144,6 +154,10 @@ class V8_EXPORT_PRIVATE WasmEngine {
 
   //////////////////////////////////////////////////////////////////////////////
   // Protected by {mutex_}:
+
+  // We use an AsyncCompileJob as the key for itself so that we can delete the
+  // job from the map when it is finished.
+  std::unordered_map<AsyncCompileJob*, std::unique_ptr<AsyncCompileJob>> jobs_;
 
   std::unique_ptr<CompilationStatistics> compilation_stats_;
   std::unique_ptr<CodeTracer> code_tracer_;

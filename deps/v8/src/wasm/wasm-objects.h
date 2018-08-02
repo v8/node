@@ -174,8 +174,8 @@ class WasmModuleObject : public JSObject {
                                                    uint32_t func_index);
 
   // Get the function name of the function identified by the given index.
-  // Returns "<WASM UNNAMED>" if the function is unnamed or the name is not a
-  // valid UTF-8 string.
+  // Returns "wasm-function[func_index]" if the function is unnamed or the
+  // name is not a valid UTF-8 string.
   static Handle<String> GetFunctionName(Isolate*, Handle<WasmModuleObject>,
                                         uint32_t func_index);
 
@@ -301,7 +301,7 @@ class WasmMemoryObject : public JSObject {
   static void AddInstance(Isolate* isolate, Handle<WasmMemoryObject> memory,
                           Handle<WasmInstanceObject> object);
   // Remove an instance from the internal (weak) list.
-  static void RemoveInstance(Isolate* isolate, Handle<WasmMemoryObject> memory,
+  static void RemoveInstance(Handle<WasmMemoryObject> memory,
                              Handle<WasmInstanceObject> object);
   uint32_t current_pages();
   inline bool has_maximum_pages();
@@ -390,8 +390,8 @@ class WasmInstanceObject : public JSObject {
   DECL_ACCESSORS(null_value, Oddball)
   DECL_ACCESSORS(centry_stub, Code)
   DECL_PRIMITIVE_ACCESSORS(memory_start, byte*)
-  DECL_PRIMITIVE_ACCESSORS(memory_size, uint32_t)
-  DECL_PRIMITIVE_ACCESSORS(memory_mask, uint32_t)
+  DECL_PRIMITIVE_ACCESSORS(memory_size, size_t)
+  DECL_PRIMITIVE_ACCESSORS(memory_mask, size_t)
   DECL_PRIMITIVE_ACCESSORS(roots_array_address, Address)
   DECL_PRIMITIVE_ACCESSORS(stack_limit_address, Address)
   DECL_PRIMITIVE_ACCESSORS(real_stack_limit_address, Address)
@@ -426,8 +426,8 @@ class WasmInstanceObject : public JSObject {
   V(kCEntryStubOffset, kPointerSize)                                    \
   V(kFirstUntaggedOffset, 0)                             /* marker */   \
   V(kMemoryStartOffset, kPointerSize)                    /* untagged */ \
-  V(kMemorySizeOffset, kUInt32Size)                      /* untagged */ \
-  V(kMemoryMaskOffset, kUInt32Size)                      /* untagged */ \
+  V(kMemorySizeOffset, kSizetSize)                       /* untagged */ \
+  V(kMemoryMaskOffset, kSizetSize)                       /* untagged */ \
   V(kRootsArrayAddressOffset, kPointerSize)              /* untagged */ \
   V(kStackLimitAddressOffset, kPointerSize)              /* untagged */ \
   V(kRealStackLimitAddressOffset, kPointerSize)          /* untagged */ \
@@ -452,7 +452,7 @@ class WasmInstanceObject : public JSObject {
 
   bool has_indirect_function_table();
 
-  void SetRawMemory(byte* mem_start, uint32_t mem_size);
+  void SetRawMemory(byte* mem_start, size_t mem_size);
 
   // Get the debug info associated with the given wasm object.
   // If no debug info exists yet, it is created automatically.

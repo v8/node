@@ -253,6 +253,7 @@
   'regress/regress-2249': [SKIP],
   'regress/regress-4121': [SKIP],
   'compare-known-objects-slow': [SKIP],
+  'compiler/array-multiple-receiver-maps': [SKIP],
   # Tests taking too long
   'packed-elements': [SKIP],
   'regress/regress-1122': [SKIP],
@@ -319,6 +320,9 @@
   'asm/sqlite3/*': [SKIP],
   # TODO(mips-team): Fix Wasm for big-endian.
   'wasm/*': [SKIP],
+  # TODO(mips-team): Fix SEGV on regress-864509.js on big endian
+  # (https://crbug.com/v8/7953).
+  'regress/wasm/regress-864509': [SKIP],
 }],  # 'byteorder == big'
 
 ##############################################################################

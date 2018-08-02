@@ -23,7 +23,7 @@ class CompilationDependencies::Dependency : public ZoneObject {
 
 class InitialMapDependency final : public CompilationDependencies::Dependency {
  public:
-  InitialMapDependency(JSFunctionRef function, MapRef initial_map)
+  InitialMapDependency(const JSFunctionRef& function, const MapRef& initial_map)
       : function_(function), initial_map_(initial_map) {
     DCHECK(IsSane());
   }
@@ -36,8 +36,8 @@ class InitialMapDependency final : public CompilationDependencies::Dependency {
 
   bool IsValid() const override {
     Handle<JSFunction> function = function_.object<JSFunction>();
-    CHECK(function->has_initial_map());
-    return function->initial_map() == *initial_map_.object<Map>();
+    return function->has_initial_map() &&
+           function->initial_map() == *initial_map_.object<Map>();
   }
 
   void Install(Isolate* isolate, Handle<WeakCell> code) override {
@@ -129,7 +129,7 @@ class PretenureModeDependency final
 class FieldTypeDependency final : public CompilationDependencies::Dependency {
  public:
   FieldTypeDependency(const MapRef& owner, int descriptor,
-                      const FieldTypeRef& type)
+                      const ObjectRef& type)
       : owner_(owner), descriptor_(descriptor), type_(type) {
     DCHECK(IsSane());
   }
@@ -156,7 +156,7 @@ class FieldTypeDependency final : public CompilationDependencies::Dependency {
  private:
   MapRef owner_;
   int descriptor_;
-  FieldTypeRef type_;
+  ObjectRef type_;
 };
 
 class GlobalPropertyDependency final
@@ -291,7 +291,7 @@ PretenureFlag CompilationDependencies::DependOnPretenureMode(
 void CompilationDependencies::DependOnFieldType(const MapRef& map,
                                                 int descriptor) {
   MapRef owner = map.FindFieldOwner(descriptor);
-  FieldTypeRef type = owner.GetFieldType(descriptor);
+  ObjectRef type = owner.GetFieldType(descriptor);
   DCHECK(type.equals(map.GetFieldType(descriptor)));
   dependencies_.push_front(new (zone_)
                                FieldTypeDependency(owner, descriptor, type));
@@ -346,7 +346,7 @@ bool CompilationDependencies::Commit(Handle<Code> code) {
 }
 
 namespace {
-void DependOnStablePrototypeChain(const JSHeapBroker* broker,
+void DependOnStablePrototypeChain(JSHeapBroker* broker,
                                   CompilationDependencies* deps,
                                   Handle<Map> map,
                                   MaybeHandle<JSReceiver> last_prototype) {
@@ -364,7 +364,7 @@ void DependOnStablePrototypeChain(const JSHeapBroker* broker,
 }  // namespace
 
 void CompilationDependencies::DependOnStablePrototypeChains(
-    const JSHeapBroker* broker, Handle<Context> native_context,
+    JSHeapBroker* broker, Handle<Context> native_context,
     std::vector<Handle<Map>> const& receiver_maps, Handle<JSObject> holder) {
   Isolate* isolate = holder->GetIsolate();
   // Determine actual holder and perform prototype chain checks.

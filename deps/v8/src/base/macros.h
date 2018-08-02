@@ -113,6 +113,12 @@ V8_INLINE Dest bit_cast(Source const& source) {
   TypeName(const TypeName&) = delete;      \
   DISALLOW_ASSIGN(TypeName)
 
+// Explicitly declare all copy/move constructors and assignments as deleted.
+#define DISALLOW_COPY_AND_MOVE_AND_ASSIGN(TypeName) \
+  TypeName(TypeName&&) = delete;                    \
+  TypeName& operator=(TypeName&&) = delete;         \
+  DISALLOW_COPY_AND_ASSIGN(TypeName)
+
 // Explicitly declare all implicit constructors as deleted, namely the
 // default constructor, copy constructor and operator= functions.
 // This is especially useful for classes containing only static methods.
@@ -409,5 +415,31 @@ bool is_inbounds(float_t v) {
   return (kLowerBoundIsMin ? (kLowerBound <= v) : (kLowerBound < v)) &&
          (kUpperBoundIsMax ? (v <= kUpperBound) : (v < kUpperBound));
 }
+
+#ifdef V8_OS_WIN
+
+// Setup for Windows shared library export.
+#ifdef BUILDING_V8_SHARED
+#define V8_EXPORT_PRIVATE __declspec(dllexport)
+#elif USING_V8_SHARED
+#define V8_EXPORT_PRIVATE __declspec(dllimport)
+#else
+#define V8_EXPORT_PRIVATE
+#endif  // BUILDING_V8_SHARED
+
+#else  // V8_OS_WIN
+
+// Setup for Linux shared library export.
+#if V8_HAS_ATTRIBUTE_VISIBILITY
+#ifdef BUILDING_V8_SHARED
+#define V8_EXPORT_PRIVATE __attribute__((visibility("default")))
+#else
+#define V8_EXPORT_PRIVATE
+#endif
+#else
+#define V8_EXPORT_PRIVATE
+#endif
+
+#endif  // V8_OS_WIN
 
 #endif  // V8_BASE_MACROS_H_

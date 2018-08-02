@@ -4,6 +4,7 @@
 
 #include <stdlib.h>
 
+#include "src/base/iterator.h"
 #include "src/globals.h"
 #include "src/utils.h"
 #include "src/zone/zone.h"
@@ -60,9 +61,13 @@ class ZoneChunkList : public ZoneObject {
   }
 
   size_t size() const { return size_; }
+  bool is_empty() const { return size() == 0; }
 
   T& front() const;
   T& back() const;
+
+  const T& at(size_t index) const;
+  T& at(size_t index);
 
   void push_back(const T& item);
   void pop_back();
@@ -142,7 +147,8 @@ class ZoneChunkList : public ZoneObject {
 };
 
 template <typename T, bool backwards, bool modifiable>
-class ZoneChunkListIterator {
+class ZoneChunkListIterator
+    : public base::iterator<std::bidirectional_iterator_tag, T> {
  private:
   template <typename S>
   using maybe_const =
@@ -153,6 +159,7 @@ class ZoneChunkListIterator {
 
  public:
   maybe_const<T>& operator*() { return current_->items()[position_]; }
+  maybe_const<T>* operator->() { return &current_->items()[position_]; }
   bool operator==(const ZoneChunkListIterator& other) const {
     return other.current_ == current_ && other.position_ == position_;
   }
@@ -180,6 +187,30 @@ class ZoneChunkListIterator {
     ZoneChunkListIterator clone(*this);
     Move<!backwards>();
     return clone;
+  }
+
+  void Advance(int amount) {
+    // Move forwards.
+    DCHECK_GE(amount, 0);
+#if DEBUG
+    ZoneChunkListIterator clone(*this);
+    for (int i = 0; i < amount; ++i) {
+      ++clone;
+    }
+#endif
+
+    position_ += amount;
+    while (position_ > 0 && position_ >= current_->capacity_) {
+      auto overshoot = position_ - current_->capacity_;
+      current_ = current_->next_;
+      position_ = overshoot;
+
+      DCHECK(position_ == 0 || current_);
+    }
+
+#if DEBUG
+    DCHECK_EQ(clone, *this);
+#endif
   }
 
  private:
@@ -259,6 +290,18 @@ T& ZoneChunkList<T>::back() const {
   } else {
     return back_->items()[back_->position_ - 1];
   }
+}
+
+template <typename T>
+const T& ZoneChunkList<T>::at(size_t index) const {
+  DCHECK_LT(index, size());
+  return *Find(index);
+}
+
+template <typename T>
+T& ZoneChunkList<T>::at(size_t index) {
+  DCHECK_LT(index, size());
+  return *Find(index);
 }
 
 template <typename T>

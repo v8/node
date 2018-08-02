@@ -9,6 +9,7 @@
 #include <list>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "src/base/macros.h"
 #include "src/handles.h"
@@ -21,7 +22,6 @@ namespace internal {
 
 struct CodeDesc;
 class Code;
-class Histogram;
 
 namespace wasm {
 
@@ -269,6 +269,10 @@ class V8_EXPORT_PRIVATE NativeModule final {
   // threads executing the old code.
   void PublishCode(WasmCode* code);
 
+  // Creates a snapshot of the current state of the code table. This is useful
+  // to get a consistent view of the table (e.g. used by the serializer).
+  std::vector<WasmCode*> SnapshotCodeTable() const;
+
   WasmCode* code(uint32_t index) const {
     DCHECK_LT(index, num_functions());
     DCHECK_LE(module_->num_imported_functions, index);
@@ -322,9 +326,6 @@ class V8_EXPORT_PRIVATE NativeModule final {
   uint32_t num_imported_functions() const {
     return module_->num_imported_functions;
   }
-  Vector<WasmCode*> code_table() const {
-    return {code_table_.get(), module_->num_declared_functions};
-  }
   bool use_trap_handler() const { return use_trap_handler_; }
   void set_lazy_compile_frozen(bool frozen) { lazy_compile_frozen_ = frozen; }
   bool lazy_compile_frozen() const { return lazy_compile_frozen_; }
@@ -333,6 +334,7 @@ class V8_EXPORT_PRIVATE NativeModule final {
     wire_bytes_ = std::move(wire_bytes);
   }
   const WasmModule* module() const { return module_.get(); }
+  WasmCodeManager* code_manager() const { return wasm_code_manager_; }
 
   WasmCode* Lookup(Address) const;
 
@@ -368,6 +370,9 @@ class V8_EXPORT_PRIVATE NativeModule final {
   void PatchJumpTable(uint32_t func_index, Address target,
                       WasmCode::FlushICache);
 
+  Vector<WasmCode*> code_table() const {
+    return {code_table_.get(), module_->num_declared_functions};
+  }
   void set_code(uint32_t index, WasmCode* code) {
     DCHECK_LT(index, num_functions());
     DCHECK_LE(module_->num_imported_functions, index);
@@ -405,7 +410,7 @@ class V8_EXPORT_PRIVATE NativeModule final {
   std::list<VirtualMemory> owned_code_space_;
 
   WasmCodeManager* wasm_code_manager_;
-  size_t committed_code_space_ = 0;
+  std::atomic<size_t> committed_code_space_{0};
   int modification_scope_depth_ = 0;
   bool can_request_more_memory_;
   bool use_trap_handler_ = false;
@@ -433,9 +438,14 @@ class V8_EXPORT_PRIVATE WasmCodeManager final {
   WasmCode* GetCodeFromStartAddress(Address pc) const;
   size_t remaining_uncommitted_code_space() const;
 
-  void SetModuleCodeSizeHistogram(Histogram* histogram) {
-    module_code_size_mb_ = histogram;
-  }
+  // Add a sample of all module sizes.
+  void SampleModuleSizes(Isolate* isolate) const;
+
+  // TODO(v8:7424): For now we sample module sizes in a GC callback. This will
+  // bias samples towards apps with high memory pressure. We should switch to
+  // using sampling based on regular intervals independent of the GC.
+  static void InstallSamplingGCCallback(Isolate* isolate);
+
   static size_t EstimateNativeModuleSize(const WasmModule* module);
 
  private:
@@ -450,15 +460,12 @@ class V8_EXPORT_PRIVATE WasmCodeManager final {
   void FreeNativeModule(NativeModule*);
   void Free(VirtualMemory* mem);
   void AssignRanges(Address start, Address end, NativeModule*);
+  bool ShouldForceCriticalMemoryPressureNotification();
 
+  mutable base::Mutex native_modules_mutex_;
   std::map<Address, std::pair<Address, NativeModule*>> lookup_map_;
-  // Count of NativeModules not yet collected. Helps determine if it's
-  // worth requesting a GC on memory pressure.
-  size_t active_ = 0;
+  std::unordered_set<NativeModule*> native_modules_;
   std::atomic<size_t> remaining_uncommitted_code_space_;
-
-  // Histogram to update with the maximum used code space for each NativeModule.
-  Histogram* module_code_size_mb_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(WasmCodeManager);
 };

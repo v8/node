@@ -588,6 +588,14 @@ void NativeModule::PublishCode(WasmCode* code) {
                  WasmCode::kFlushICache);
 }
 
+std::vector<WasmCode*> NativeModule::SnapshotCodeTable() const {
+  base::LockGuard<base::Mutex> lock(&allocation_mutex_);
+  std::vector<WasmCode*> result;
+  result.reserve(code_table().size());
+  for (wasm::WasmCode* code : code_table()) result.push_back(code);
+  return result;
+}
+
 WasmCode* NativeModule::CreateEmptyJumpTable(uint32_t num_wasm_functions) {
   // Only call this if we really need a jump table.
   DCHECK_LT(0, num_wasm_functions);
@@ -664,7 +672,7 @@ Address NativeModule::AllocateForCode(size_t size) {
       if (!wasm_code_manager_->Commit(start, commit_size)) {
         return kNullAddress;
       }
-      committed_code_space_ += commit_size;
+      committed_code_space_.fetch_add(commit_size);
       commit_end = start;
     }
 #else
@@ -673,7 +681,7 @@ Address NativeModule::AllocateForCode(size_t size) {
     if (!wasm_code_manager_->Commit(commit_start, commit_size)) {
       return kNullAddress;
     }
-    committed_code_space_ += commit_size;
+    committed_code_space_.fetch_add(commit_size);
 #endif
   }
   DCHECK(IsAligned(mem.start, kCodeAlignment));
@@ -793,6 +801,31 @@ void WasmCodeManager::TryAllocate(size_t size, VirtualMemory* ret, void* hint) {
              reinterpret_cast<void*>(ret->end()), ret->size());
 }
 
+void WasmCodeManager::SampleModuleSizes(Isolate* isolate) const {
+  base::LockGuard<base::Mutex> lock(&native_modules_mutex_);
+  for (NativeModule* native_module : native_modules_) {
+    int code_size =
+        static_cast<int>(native_module->committed_code_space_.load() / MB);
+    isolate->counters()->wasm_module_code_size_mb()->AddSample(code_size);
+  }
+}
+
+namespace {
+
+void ModuleSamplingCallback(v8::Isolate* v8_isolate, v8::GCType type,
+                            v8::GCCallbackFlags flags, void* data) {
+  Isolate* isolate = reinterpret_cast<Isolate*>(v8_isolate);
+  isolate->wasm_engine()->code_manager()->SampleModuleSizes(isolate);
+}
+
+}  // namespace
+
+// static
+void WasmCodeManager::InstallSamplingGCCallback(Isolate* isolate) {
+  isolate->heap()->AddGCEpilogueCallback(ModuleSamplingCallback,
+                                         v8::kGCTypeMarkSweepCompact, nullptr);
+}
+
 // static
 size_t WasmCodeManager::EstimateNativeModuleSize(const WasmModule* module) {
   constexpr size_t kCodeSizeMultiplier = 4;
@@ -816,19 +849,21 @@ size_t WasmCodeManager::EstimateNativeModuleSize(const WasmModule* module) {
   return estimate;
 }
 
-std::unique_ptr<NativeModule> WasmCodeManager::NewNativeModule(
-    Isolate* isolate, size_t memory_estimate, bool can_request_more,
-    std::shared_ptr<const WasmModule> module, const ModuleEnv& env) {
+bool WasmCodeManager::ShouldForceCriticalMemoryPressureNotification() {
+  base::LockGuard<base::Mutex> lock(&native_modules_mutex_);
   // TODO(titzer): we force a critical memory pressure notification
   // when the code space is almost exhausted, but only upon the next module
   // creation. This is only for one isolate, and it should really do this for
   // all isolates, at the point of commit.
   constexpr size_t kCriticalThreshold = 32 * 1024 * 1024;
-  bool force_critical_notification =
-      (active_ > 1) &&
-      (remaining_uncommitted_code_space_.load() < kCriticalThreshold);
+  return native_modules_.size() > 1 &&
+         remaining_uncommitted_code_space_.load() < kCriticalThreshold;
+}
 
-  if (force_critical_notification) {
+std::unique_ptr<NativeModule> WasmCodeManager::NewNativeModule(
+    Isolate* isolate, size_t memory_estimate, bool can_request_more,
+    std::shared_ptr<const WasmModule> module, const ModuleEnv& env) {
+  if (ShouldForceCriticalMemoryPressureNotification()) {
     (reinterpret_cast<v8::Isolate*>(isolate))
         ->MemoryPressureNotification(MemoryPressureLevel::kCritical);
   }
@@ -845,8 +880,9 @@ std::unique_ptr<NativeModule> WasmCodeManager::NewNativeModule(
         isolate, can_request_more, &mem, this, std::move(module), env));
     TRACE_HEAP("New NativeModule %p: Mem: %" PRIuPTR ",+%zu\n", this, start,
                size);
+    base::LockGuard<base::Mutex> lock(&native_modules_mutex_);
     AssignRanges(start, end, ret.get());
-    ++active_;
+    native_modules_.emplace(ret.get());
     return ret;
   }
 
@@ -857,10 +893,10 @@ std::unique_ptr<NativeModule> WasmCodeManager::NewNativeModule(
 bool NativeModule::SetExecutable(bool executable) {
   if (is_executable_ == executable) return true;
   TRACE_HEAP("Setting module %p as executable: %d.\n", this, executable);
-  PageAllocator::Permission permission =
-      executable ? PageAllocator::kReadExecute : PageAllocator::kReadWrite;
 
   if (FLAG_wasm_write_protect_code_memory) {
+    PageAllocator::Permission permission =
+        executable ? PageAllocator::kReadExecute : PageAllocator::kReadWrite;
 #if V8_OS_WIN
     // On windows, we need to switch permissions per separate virtual memory
     // reservation. This is really just a problem when the NativeModule is
@@ -899,8 +935,9 @@ bool NativeModule::SetExecutable(bool executable) {
 }
 
 void WasmCodeManager::FreeNativeModule(NativeModule* native_module) {
-  DCHECK_GE(active_, 1);
-  --active_;
+  base::LockGuard<base::Mutex> lock(&native_modules_mutex_);
+  DCHECK_EQ(1, native_modules_.count(native_module));
+  native_modules_.erase(native_module);
   TRACE_HEAP("Freeing NativeModule %p\n", this);
   for (auto& vmem : native_module->owned_code_space_) {
     lookup_map_.erase(vmem.address());
@@ -909,13 +946,8 @@ void WasmCodeManager::FreeNativeModule(NativeModule* native_module) {
   }
   native_module->owned_code_space_.clear();
 
-  size_t code_size = native_module->committed_code_space_;
+  size_t code_size = native_module->committed_code_space_.load();
   DCHECK(IsAligned(code_size, AllocatePageSize()));
-
-  if (module_code_size_mb_) {
-    module_code_size_mb_->AddSample(static_cast<int>(code_size / MB));
-  }
-
   remaining_uncommitted_code_space_.fetch_add(code_size);
 }
 
@@ -964,17 +996,21 @@ size_t WasmCodeManager::remaining_uncommitted_code_space() const {
   return remaining_uncommitted_code_space_.load();
 }
 
+// TODO(v8:7424): Code protection scopes are not yet supported with shared code
+// enabled and need to be revisited to work with --wasm-shared-code as well.
 NativeModuleModificationScope::NativeModuleModificationScope(
     NativeModule* native_module)
     : native_module_(native_module) {
-  if (native_module_ && (native_module_->modification_scope_depth_++) == 0) {
+  if (FLAG_wasm_write_protect_code_memory && native_module_ &&
+      (native_module_->modification_scope_depth_++) == 0) {
     bool success = native_module_->SetExecutable(false);
     CHECK(success);
   }
 }
 
 NativeModuleModificationScope::~NativeModuleModificationScope() {
-  if (native_module_ && (native_module_->modification_scope_depth_--) == 1) {
+  if (FLAG_wasm_write_protect_code_memory && native_module_ &&
+      (native_module_->modification_scope_depth_--) == 1) {
     bool success = native_module_->SetExecutable(true);
     CHECK(success);
   }

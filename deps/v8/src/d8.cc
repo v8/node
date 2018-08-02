@@ -24,7 +24,7 @@
 #include "include/libplatform/libplatform.h"
 #include "include/libplatform/v8-tracing.h"
 #include "include/v8-inspector.h"
-#include "src/api.h"
+#include "src/api-inl.h"
 #include "src/base/cpu.h"
 #include "src/base/logging.h"
 #include "src/base/platform/platform.h"
@@ -428,7 +428,7 @@ class DummySourceStream : public v8::ScriptCompiler::ExternalSourceStream {
   DummySourceStream(Local<String> source, Isolate* isolate) : done_(false) {
     source_length_ = source->Utf8Length(isolate);
     source_buffer_.reset(new uint8_t[source_length_]);
-    source->WriteUtf8(reinterpret_cast<char*>(source_buffer_.get()),
+    source->WriteUtf8(isolate, reinterpret_cast<char*>(source_buffer_.get()),
                       source_length_);
   }
 
@@ -1339,20 +1339,22 @@ Local<String> Shell::ReadFromStdin(Isolate* isolate) {
       return accumulator;
     } else if (buffer[length-1] != '\n') {
       accumulator = String::Concat(
-          accumulator,
+          isolate, accumulator,
           String::NewFromUtf8(isolate, buffer, NewStringType::kNormal, length)
               .ToLocalChecked());
     } else if (length > 1 && buffer[length-2] == '\\') {
       buffer[length-2] = '\n';
-      accumulator = String::Concat(
-          accumulator,
-          String::NewFromUtf8(isolate, buffer, NewStringType::kNormal,
-                              length - 1).ToLocalChecked());
+      accumulator =
+          String::Concat(isolate, accumulator,
+                         String::NewFromUtf8(isolate, buffer,
+                                             NewStringType::kNormal, length - 1)
+                             .ToLocalChecked());
     } else {
       return String::Concat(
-          accumulator,
+          isolate, accumulator,
           String::NewFromUtf8(isolate, buffer, NewStringType::kNormal,
-                              length - 1).ToLocalChecked());
+                              length - 1)
+              .ToLocalChecked());
     }
   }
 }
@@ -2085,8 +2087,8 @@ void Shell::WriteLcovData(v8::Isolate* isolate, const char* file) {
 
 void Shell::OnExit(v8::Isolate* isolate) {
   // Dump basic block profiling data.
-  if (i::BasicBlockProfiler* profiler =
-          reinterpret_cast<i::Isolate*>(isolate)->basic_block_profiler()) {
+  if (i::FLAG_turbo_profiling) {
+    i::BasicBlockProfiler* profiler = i::BasicBlockProfiler::Get();
     i::StdoutStream{} << *profiler;
   }
   isolate->Dispose();
@@ -2403,7 +2405,7 @@ class InspectorClient : public v8_inspector::V8InspectorClient {
         InspectorClient::GetSession(context);
     int length = message->Length();
     std::unique_ptr<uint16_t[]> buffer(new uint16_t[length]);
-    message->Write(buffer.get(), 0, length);
+    message->Write(isolate, buffer.get(), 0, length);
     v8_inspector::StringView message_view(buffer.get(), length);
     session->dispatchProtocolMessage(message_view);
     args.GetReturnValue().Set(True(isolate));
@@ -3039,9 +3041,9 @@ void Shell::CompleteMessageLoop(Isolate* isolate) {
     DCHECK_GT(isolate_status_.count(isolate), 0);
     i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
     i::wasm::WasmEngine* wasm_engine = i_isolate->wasm_engine();
-    bool should_wait =
-        (options.wait_for_wasm && wasm_engine->HasRunningCompileJob()) ||
-        isolate_status_[isolate];
+    bool should_wait = (options.wait_for_wasm &&
+                        wasm_engine->HasRunningCompileJob(i_isolate)) ||
+                       isolate_status_[isolate];
     return should_wait ? platform::MessageLoopBehavior::kWaitForWork
                        : platform::MessageLoopBehavior::kDoNotWait;
   };

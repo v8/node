@@ -22,6 +22,7 @@
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/frame-array-inl.h"
 #include "src/objects/js-collection-inl.h"
+#include "src/objects/js-generator-inl.h"
 #include "src/objects/js-regexp-inl.h"
 #include "src/objects/literal-objects-inl.h"
 #include "src/objects/microtask-inl.h"
@@ -926,7 +927,7 @@ Handle<StringClass> Factory::InternalizeExternalString(Handle<String> string) {
                                       isolate());
   external_string->set_length(cast_string->length());
   external_string->set_hash_field(cast_string->hash_field());
-  external_string->set_resource(nullptr);
+  external_string->SetResource(isolate(), nullptr);
   isolate()->heap()->RegisterExternalString(*external_string);
   return external_string;
 }
@@ -1250,7 +1251,7 @@ MaybeHandle<String> Factory::NewExternalStringFromOneByte(
       ExternalOneByteString::cast(New(map, TENURED)), isolate());
   external_string->set_length(static_cast<int>(length));
   external_string->set_hash_field(String::kEmptyHashField);
-  external_string->set_resource(resource);
+  external_string->SetResource(isolate(), resource);
   isolate()->heap()->RegisterExternalString(*external_string);
 
   return external_string;
@@ -1283,7 +1284,7 @@ MaybeHandle<String> Factory::NewExternalStringFromTwoByte(
       ExternalTwoByteString::cast(New(map, TENURED)), isolate());
   external_string->set_length(static_cast<int>(length));
   external_string->set_hash_field(String::kEmptyHashField);
-  external_string->set_resource(resource);
+  external_string->SetResource(isolate(), resource);
   isolate()->heap()->RegisterExternalString(*external_string);
 
   return external_string;
@@ -1299,7 +1300,7 @@ Handle<ExternalOneByteString> Factory::NewNativeSourceString(
       ExternalOneByteString::cast(New(map, TENURED)), isolate());
   external_string->set_length(static_cast<int>(length));
   external_string->set_hash_field(String::kEmptyHashField);
-  external_string->set_resource(resource);
+  external_string->SetResource(isolate(), resource);
   isolate()->heap()->RegisterExternalString(*external_string);
 
   return external_string;
@@ -1555,8 +1556,10 @@ Handle<Script> Factory::NewScriptWithId(Handle<String> source, int script_id,
                                     SKIP_WRITE_BARRIER);
   script->set_flags(0);
   script->set_host_defined_options(*empty_fixed_array());
-  heap->set_script_list(
-      *FixedArrayOfWeakCells::Add(isolate(), script_list(), script));
+  Handle<WeakArrayList> scripts = script_list();
+  scripts = WeakArrayList::AddToEnd(isolate(), scripts,
+                                    MaybeObjectHandle::Weak(script));
+  heap->set_script_list(*scripts);
   LOG(isolate(), ScriptEvent(Logger::ScriptEventType::kCreate, script_id));
   return script;
 }
@@ -1581,8 +1584,10 @@ Handle<Script> Factory::CloneScript(Handle<Script> script) {
   new_script->set_eval_from_position(script->eval_from_position());
   new_script->set_flags(script->flags());
   new_script->set_host_defined_options(script->host_defined_options());
-  heap->set_script_list(
-      *FixedArrayOfWeakCells::Add(isolate(), script_list(), new_script));
+  Handle<WeakArrayList> scripts = script_list();
+  scripts = WeakArrayList::AddToEnd(isolate(), scripts,
+                                    MaybeObjectHandle::Weak(new_script));
+  heap->set_script_list(*scripts);
   LOG(isolate(), ScriptEvent(Logger::ScriptEventType::kCreate, script_id));
   return new_script;
 }
@@ -1680,6 +1685,7 @@ Handle<BytecodeArray> Factory::NewBytecodeArray(
 Handle<FixedTypedArrayBase> Factory::NewFixedTypedArrayWithExternalPointer(
     int length, ExternalArrayType array_type, void* external_pointer,
     PretenureFlag pretenure) {
+  // TODO(7881): Smi length check
   DCHECK(0 <= length && length <= Smi::kMaxValue);
   int size = FixedTypedArrayBase::kHeaderSize;
   HeapObject* result = AllocateRawWithImmortalMap(
@@ -1695,6 +1701,7 @@ Handle<FixedTypedArrayBase> Factory::NewFixedTypedArrayWithExternalPointer(
 Handle<FixedTypedArrayBase> Factory::NewFixedTypedArray(
     size_t length, size_t byte_length, ExternalArrayType array_type,
     bool initialize, PretenureFlag pretenure) {
+  // TODO(7881): Smi length check
   DCHECK(0 <= length && length <= Smi::kMaxValue);
   CHECK(byte_length <= kMaxInt - FixedTypedArrayBase::kDataOffset);
   size_t size =
@@ -2512,13 +2519,15 @@ Handle<PreParsedScopeData> Factory::NewPreParsedScopeData(int length) {
 }
 
 Handle<UncompiledDataWithoutPreParsedScope>
-Factory::NewUncompiledDataWithoutPreParsedScope(int32_t start_position,
+Factory::NewUncompiledDataWithoutPreParsedScope(Handle<String> inferred_name,
+                                                int32_t start_position,
                                                 int32_t end_position,
                                                 int32_t function_literal_id) {
   Handle<UncompiledDataWithoutPreParsedScope> result(
       UncompiledDataWithoutPreParsedScope::cast(
           New(uncompiled_data_without_pre_parsed_scope_map(), TENURED)),
       isolate());
+  result->set_inferred_name(*inferred_name);
   result->set_start_position(start_position);
   result->set_end_position(end_position);
   result->set_function_literal_id(function_literal_id);
@@ -2529,12 +2538,14 @@ Factory::NewUncompiledDataWithoutPreParsedScope(int32_t start_position,
 
 Handle<UncompiledDataWithPreParsedScope>
 Factory::NewUncompiledDataWithPreParsedScope(
-    int32_t start_position, int32_t end_position, int32_t function_literal_id,
+    Handle<String> inferred_name, int32_t start_position, int32_t end_position,
+    int32_t function_literal_id,
     Handle<PreParsedScopeData> pre_parsed_scope_data) {
   Handle<UncompiledDataWithPreParsedScope> result(
       UncompiledDataWithPreParsedScope::cast(
           New(uncompiled_data_with_pre_parsed_scope_map(), TENURED)),
       isolate());
+  result->set_inferred_name(*inferred_name);
   result->set_start_position(start_position);
   result->set_end_position(end_position);
   result->set_function_literal_id(function_literal_id);
@@ -3123,10 +3134,10 @@ void Factory::TypeAndSizeForElementsKind(ElementsKind kind,
                                          ExternalArrayType* array_type,
                                          size_t* element_size) {
   switch (kind) {
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) \
-  case TYPE##_ELEMENTS:                                 \
-    *array_type = kExternal##Type##Array;               \
-    *element_size = size;                               \
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) \
+  case TYPE##_ELEMENTS:                           \
+    *array_type = kExternal##Type##Array;         \
+    *element_size = sizeof(ctype);                \
     break;
     TYPED_ARRAYS(TYPED_ARRAY_CASE)
 #undef TYPED_ARRAY_CASE
@@ -3142,10 +3153,10 @@ static void ForFixedTypedArray(ExternalArrayType array_type,
                                size_t* element_size,
                                ElementsKind* element_kind) {
   switch (array_type) {
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) \
-  case kExternal##Type##Array:                          \
-    *element_size = size;                               \
-    *element_kind = TYPE##_ELEMENTS;                    \
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype) \
+  case kExternal##Type##Array:                    \
+    *element_size = sizeof(ctype);                \
+    *element_kind = TYPE##_ELEMENTS;              \
     return;
 
     TYPED_ARRAYS(TYPED_ARRAY_CASE)
@@ -3157,8 +3168,8 @@ static void ForFixedTypedArray(ExternalArrayType array_type,
 JSFunction* GetTypedArrayFun(ExternalArrayType type, Isolate* isolate) {
   Context* native_context = isolate->context()->native_context();
   switch (type) {
-#define TYPED_ARRAY_FUN(Type, type, TYPE, ctype, size) \
-  case kExternal##Type##Array:                         \
+#define TYPED_ARRAY_FUN(Type, type, TYPE, ctype) \
+  case kExternal##Type##Array:                   \
     return native_context->type##_array_fun();
 
     TYPED_ARRAYS(TYPED_ARRAY_FUN)
@@ -3170,8 +3181,8 @@ JSFunction* GetTypedArrayFun(ExternalArrayType type, Isolate* isolate) {
 JSFunction* GetTypedArrayFun(ElementsKind elements_kind, Isolate* isolate) {
   Context* native_context = isolate->context()->native_context();
   switch (elements_kind) {
-#define TYPED_ARRAY_FUN(Type, type, TYPE, ctype, size) \
-  case TYPE##_ELEMENTS:                                \
+#define TYPED_ARRAY_FUN(Type, type, TYPE, ctype) \
+  case TYPE##_ELEMENTS:                          \
     return native_context->type##_array_fun();
 
     TYPED_ARRAYS(TYPED_ARRAY_FUN)
@@ -3238,6 +3249,7 @@ Handle<JSTypedArray> Factory::NewJSTypedArray(ExternalArrayType type,
   CHECK_EQ(byte_offset % element_size, 0);
 
   CHECK(length <= (std::numeric_limits<size_t>::max() / element_size));
+  // TODO(7881): Smi length check
   CHECK(length <= static_cast<size_t>(Smi::kMaxValue));
   size_t byte_length = length * element_size;
   SetupArrayBufferView(isolate(), obj, buffer, byte_offset, byte_length,
@@ -3270,6 +3282,7 @@ Handle<JSTypedArray> Factory::NewJSTypedArray(ElementsKind elements_kind,
 
   CHECK(number_of_elements <=
         (std::numeric_limits<size_t>::max() / element_size));
+  // TODO(7881): Smi length check
   CHECK(number_of_elements <= static_cast<size_t>(Smi::kMaxValue));
   size_t byte_length = number_of_elements * element_size;
 
@@ -3508,9 +3521,7 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
       share->set_raw_outer_scope_info_or_feedback_metadata(
           *empty_feedback_metadata(), SKIP_WRITE_BARRIER);
     }
-    share->set_script(*undefined_value(), SKIP_WRITE_BARRIER);
-    share->set_function_identifier_or_debug_info(*undefined_value(),
-                                                 SKIP_WRITE_BARRIER);
+    share->set_script_or_debug_info(*undefined_value(), SKIP_WRITE_BARRIER);
 #if V8_SFI_HAS_UNIQUE_ID
     share->set_unique_id(isolate()->GetNextUniqueSharedFunctionInfoId());
 #endif
@@ -3519,6 +3530,8 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
     share->set_length(0);
     share->set_internal_formal_parameter_count(0);
     share->set_expected_nof_properties(0);
+    share->set_builtin_function_id(
+        BuiltinFunctionId::kInvalidBuiltinFunctionId);
     share->set_raw_function_token_offset(0);
     // All flags default to false or 0.
     share->set_flags(0);
@@ -3528,9 +3541,10 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
     share->clear_padding();
   }
   // Link into the list.
-  Handle<Object> new_noscript_list = FixedArrayOfWeakCells::Add(
-      isolate(), noscript_shared_function_infos(), share);
-  isolate()->heap()->set_noscript_shared_function_infos(*new_noscript_list);
+  Handle<WeakArrayList> noscript_list = noscript_shared_function_infos();
+  noscript_list = WeakArrayList::AddToEnd(isolate(), noscript_list,
+                                          MaybeObjectHandle::Weak(share));
+  isolate()->heap()->set_noscript_shared_function_infos(*noscript_list);
 
 #ifdef VERIFY_HEAP
   share->SharedFunctionInfoVerify(isolate());
@@ -3613,8 +3627,7 @@ Handle<DebugInfo> Factory::NewDebugInfo(Handle<SharedFunctionInfo> shared) {
   debug_info->set_debugger_hints(0);
   DCHECK_EQ(DebugInfo::kNoDebuggingId, debug_info->debugging_id());
   DCHECK(!shared->HasDebugInfo());
-  debug_info->set_function_identifier(
-      shared->function_identifier_or_debug_info());
+  debug_info->set_script(shared->script_or_debug_info());
   debug_info->set_original_bytecode_array(
       ReadOnlyRoots(heap).undefined_value());
   debug_info->set_break_points(ReadOnlyRoots(heap).empty_fixed_array());

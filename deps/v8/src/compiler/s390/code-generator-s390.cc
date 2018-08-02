@@ -12,6 +12,7 @@
 #include "src/compiler/osr.h"
 #include "src/optimized-compilation-info.h"
 #include "src/s390/macro-assembler-s390.h"
+#include "src/wasm/wasm-objects.h"
 
 namespace v8 {
 namespace internal {
@@ -1347,11 +1348,13 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
   ArchOpcode opcode = ArchOpcodeField::decode(instr->opcode());
 
   switch (opcode) {
-    case kArchComment: {
-      Address comment_string = i.InputExternalReference(0).address();
-      __ RecordComment(reinterpret_cast<const char*>(comment_string));
+    case kArchComment:
+#ifdef V8_TARGET_ARCH_S390X
+      __ RecordComment(reinterpret_cast<const char*>(i.InputInt64(0)));
+#else
+      __ RecordComment(reinterpret_cast<const char*>(i.InputInt32(0)));
+#endif
       break;
-    }
     case kArchCallCodeObject: {
       if (HasRegisterInput(instr, 0)) {
         Register reg = i.InputRegister(0);

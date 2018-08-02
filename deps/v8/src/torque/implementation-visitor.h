@@ -115,9 +115,6 @@ class ImplementationVisitor : public FileVisitor {
   VisitResult Visit(LogicalOrExpression* expr);
   VisitResult Visit(LogicalAndExpression* expr);
 
-  LocationReference GetLocationReference(
-      TorqueParser::LocationExpressionContext* locationExpression);
-
   VisitResult Visit(IncrementDecrementExpression* expr);
   VisitResult Visit(AssignmentExpression* expr);
   VisitResult Visit(StringLiteralExpression* expr);
@@ -156,14 +153,14 @@ class ImplementationVisitor : public FileVisitor {
         : new_lines_(new_lines), visitor_(visitor) {
       if (new_lines) visitor->GenerateIndent();
       visitor->source_out() << "{";
-      if (new_lines) visitor->source_out() << std::endl;
+      if (new_lines) visitor->source_out() << "\n";
       visitor->indent_++;
     }
     ~ScopedIndent() {
       visitor_->indent_--;
       visitor_->GenerateIndent();
       visitor_->source_out() << "}";
-      if (new_lines_) visitor_->source_out() << std::endl;
+      if (new_lines_) visitor_->source_out() << "\n";
     }
 
    private:
@@ -176,7 +173,7 @@ class ImplementationVisitor : public FileVisitor {
   bool GenerateChangedVarFromControlSplit(const Variable* v, bool first = true);
 
   void GetFlattenedStructsVars(const Variable* base,
-                               std::set<const Variable*>& vars);
+                               std::set<const Variable*>* vars);
 
   void GenerateChangedVarsFromControlSplit(AstNode* node);
 
@@ -192,8 +189,12 @@ class ImplementationVisitor : public FileVisitor {
 
   void GenerateVariableDeclaration(const Variable* var);
 
+  Variable* GeneratePredeclaredVariableDeclaration(
+      const std::string& name,
+      const base::Optional<VisitResult>& initialization);
+
   Variable* GenerateVariableDeclaration(
-      AstNode* node, const std::string& name,
+      AstNode* node, const std::string& name, bool is_const,
       const base::Optional<const Type*>& type,
       const base::Optional<VisitResult>& initialization = {});
 

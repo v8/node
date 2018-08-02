@@ -15,6 +15,7 @@
 #include "src/debug/debug.h"
 #include "src/external-reference-table.h"
 #include "src/frames-inl.h"
+#include "src/globals.h"
 #include "src/heap/heap-inl.h"
 #include "src/instruction-stream.h"
 #include "src/objects-inl.h"
@@ -185,27 +186,6 @@ Operand TurboAssembler::ExternalOperand(ExternalReference target,
   Move(scratch, target);
   return Operand(scratch, 0);
 }
-
-int TurboAssembler::LoadAddressSize(ExternalReference source) {
-  if (root_array_available_ && options().enable_root_array_delta_access) {
-    // This calculation depends on the internals of LoadAddress.
-    // It's correctness is ensured by the asserts in the Call
-    // instruction below.
-    int64_t delta = RootRegisterDelta(source);
-    if (delta != kInvalidRootRegisterDelta && is_int32(delta)) {
-      // Operand is leap(scratch, Operand(kRootRegister, delta));
-      // Opcodes : REX.W 8D ModRM Disp8/Disp32  - 4 or 7.
-      int size = 4;
-      if (!is_int8(static_cast<int32_t>(delta))) {
-        size += 3;  // Need full four-byte displacement in lea.
-      }
-      return size;
-    }
-  }
-  // Size of movp(destination, src);
-  return Assembler::kMoveAddressIntoScratchRegisterInstructionLength;
-}
-
 
 void MacroAssembler::PushAddress(ExternalReference source) {
   LoadAddress(kScratchRegister, source);
@@ -445,6 +425,16 @@ void TurboAssembler::Abort(AbortReason reason) {
   // Avoid emitting call to builtin if requested.
   if (trap_on_abort()) {
     int3();
+    return;
+  }
+
+  if (should_abort_hard()) {
+    // We don't care if we constructed a frame. Just pretend we did.
+    FrameScope assume_frame(this, StackFrame::NONE);
+    movl(arg_reg_1, Immediate(static_cast<int>(reason)));
+    PrepareCallCFunction(1);
+    LoadAddress(rax, ExternalReference::abort_with_reason());
+    call(rax);
     return;
   }
 
@@ -1521,19 +1511,9 @@ void MacroAssembler::JumpToInstructionStream(Address entry) {
   jmp(kOffHeapTrampolineRegister);
 }
 
-int TurboAssembler::CallSize(ExternalReference ext) {
-  // Opcode for call kScratchRegister is: Rex.B FF D4 (three bytes).
-  return LoadAddressSize(ext) +
-         Assembler::kCallScratchRegisterInstructionLength;
-}
-
 void TurboAssembler::Call(ExternalReference ext) {
-#ifdef DEBUG
-  int end_position = pc_offset() + CallSize(ext);
-#endif
   LoadAddress(kScratchRegister, ext);
   call(kScratchRegister);
-  DCHECK_EQ(end_position, pc_offset());
 }
 
 void TurboAssembler::Call(Operand op) {
@@ -1546,12 +1526,8 @@ void TurboAssembler::Call(Operand op) {
 }
 
 void TurboAssembler::Call(Address destination, RelocInfo::Mode rmode) {
-#ifdef DEBUG
-  int end_position = pc_offset() + CallSize(destination);
-#endif
   Move(kScratchRegister, destination, rmode);
   call(kScratchRegister);
-  DCHECK_EQ(pc_offset(), end_position);
 }
 
 void TurboAssembler::Call(Handle<Code> code_object, RelocInfo::Mode rmode) {
@@ -1581,12 +1557,8 @@ void TurboAssembler::Call(Handle<Code> code_object, RelocInfo::Mode rmode) {
       }
     }
   }
-#ifdef DEBUG
-  int end_position = pc_offset() + CallSize(code_object);
-#endif
   DCHECK(RelocInfo::IsCodeTarget(rmode));
   call(code_object, rmode);
-  DCHECK_EQ(end_position, pc_offset());
 }
 
 void TurboAssembler::RetpolineCall(Register reg) {
@@ -1610,14 +1582,8 @@ void TurboAssembler::RetpolineCall(Register reg) {
 }
 
 void TurboAssembler::RetpolineCall(Address destination, RelocInfo::Mode rmode) {
-#ifdef DEBUG
-// TODO(titzer): CallSize() is wrong for RetpolineCalls
-//  int end_position = pc_offset() + CallSize(destination);
-#endif
   Move(kScratchRegister, destination, rmode);
   RetpolineCall(kScratchRegister);
-  // TODO(titzer): CallSize() is wrong for RetpolineCalls
-  //  DCHECK_EQ(pc_offset(), end_position);
 }
 
 void TurboAssembler::RetpolineJump(Register reg) {
@@ -2630,9 +2596,9 @@ void TurboAssembler::CheckPageFlag(Register object, Register scratch, int mask,
                                    Label::Distance condition_met_distance) {
   DCHECK(cc == zero || cc == not_zero);
   if (scratch == object) {
-    andp(scratch, Immediate(~Page::kPageAlignmentMask));
+    andp(scratch, Immediate(~kPageAlignmentMask));
   } else {
-    movp(scratch, Immediate(~Page::kPageAlignmentMask));
+    movp(scratch, Immediate(~kPageAlignmentMask));
     andp(scratch, object);
   }
   if (mask < (1 << kBitsPerByte)) {

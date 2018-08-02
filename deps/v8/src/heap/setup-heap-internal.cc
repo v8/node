@@ -409,8 +409,8 @@ bool Heap::CreateInitialMaps() {
     ALLOCATE_VARSIZE_MAP(SMALL_ORDERED_HASH_MAP_TYPE, small_ordered_hash_map)
     ALLOCATE_VARSIZE_MAP(SMALL_ORDERED_HASH_SET_TYPE, small_ordered_hash_set)
 
-#define ALLOCATE_FIXED_TYPED_ARRAY_MAP(Type, type, TYPE, ctype, size) \
-    ALLOCATE_VARSIZE_MAP(FIXED_##TYPE##_ARRAY_TYPE, fixed_##type##_array)
+#define ALLOCATE_FIXED_TYPED_ARRAY_MAP(Type, type, TYPE, ctype) \
+  ALLOCATE_VARSIZE_MAP(FIXED_##TYPE##_ARRAY_TYPE, fixed_##type##_array)
 
     TYPED_ARRAYS(ALLOCATE_FIXED_TYPED_ARRAY_MAP)
 #undef ALLOCATE_FIXED_TYPED_ARRAY_MAP
@@ -556,7 +556,7 @@ bool Heap::CreateInitialMaps() {
     set_empty_property_array(PropertyArray::cast(obj));
   }
 
-#define ALLOCATE_EMPTY_FIXED_TYPED_ARRAY(Type, type, TYPE, ctype, size) \
+#define ALLOCATE_EMPTY_FIXED_TYPED_ARRAY(Type, type, TYPE, ctype)       \
   {                                                                     \
     FixedTypedArrayBase* obj;                                           \
     if (!AllocateEmptyFixedTypedArray(kExternal##Type##Array).To(&obj)) \
@@ -760,13 +760,13 @@ void Heap::CreateInitialObjects() {
     cell->clear();
   }
 
-  set_detached_contexts(roots.empty_fixed_array());
+  set_detached_contexts(roots.empty_weak_array_list());
   set_retained_maps(roots.empty_weak_array_list());
-  set_retaining_path_targets(roots.undefined_value());
+  set_retaining_path_targets(roots.empty_weak_array_list());
 
   set_feedback_vectors_for_profiling_tools(roots.undefined_value());
 
-  set_script_list(Smi::kZero);
+  set_script_list(roots.empty_weak_array_list());
 
   Handle<NumberDictionary> slow_element_dictionary = NumberDictionary::New(
       isolate(), 1, TENURED_READ_ONLY, USE_CUSTOM_MINIMUM_CAPACITY);
@@ -866,9 +866,7 @@ void Heap::CreateInitialObjects() {
   set_serialized_objects(roots.empty_fixed_array());
   set_serialized_global_proxy_sizes(roots.empty_fixed_array());
 
-  set_weak_stack_trace_list(Smi::kZero);
-
-  set_noscript_shared_function_infos(Smi::kZero);
+  set_noscript_shared_function_infos(roots.empty_weak_array_list());
 
   STATIC_ASSERT(interpreter::BytecodeOperands::kOperandScaleCount == 3);
   set_deserialize_lazy_handler(Smi::kZero);

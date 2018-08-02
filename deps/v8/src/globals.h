@@ -17,32 +17,6 @@
 #include "src/base/logging.h"
 #include "src/base/macros.h"
 
-#ifdef V8_OS_WIN
-
-// Setup for Windows shared library export.
-#ifdef BUILDING_V8_SHARED
-#define V8_EXPORT_PRIVATE __declspec(dllexport)
-#elif USING_V8_SHARED
-#define V8_EXPORT_PRIVATE __declspec(dllimport)
-#else
-#define V8_EXPORT_PRIVATE
-#endif  // BUILDING_V8_SHARED
-
-#else  // V8_OS_WIN
-
-// Setup for Linux shared library export.
-#if V8_HAS_ATTRIBUTE_VISIBILITY
-#ifdef BUILDING_V8_SHARED
-#define V8_EXPORT_PRIVATE __attribute__((visibility("default")))
-#else
-#define V8_EXPORT_PRIVATE
-#endif
-#else
-#define V8_EXPORT_PRIVATE
-#endif
-
-#endif  // V8_OS_WIN
-
 #define V8_INFINITY std::numeric_limits<double>::infinity()
 
 namespace v8 {
@@ -487,6 +461,9 @@ constexpr uint32_t kFreeListZapValue = 0xfeed1eaf;
 
 constexpr int kCodeZapValue = 0xbadc0de;
 constexpr uint32_t kPhantomReferenceZap = 0xca11bac;
+
+// Page constants.
+static const intptr_t kPageAlignmentMask = (intptr_t{1} << kPageSizeBits) - 1;
 
 // On Intel architecture, cache line size is 64 bytes.
 // On ARM it may be less (32 bytes), but as far this constant is

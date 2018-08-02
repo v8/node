@@ -138,19 +138,8 @@ var AVAILABLE_LOCALES = {
   'breakiterator': UNDEFINED,
   'pluralrules': UNDEFINED,
   'relativetimeformat': UNDEFINED,
+  'listformat': UNDEFINED,
 };
-
-/**
- * Caches default ICU locale.
- */
-var DEFAULT_ICU_LOCALE = UNDEFINED;
-
-function GetDefaultICULocaleJS() {
-  if (IS_UNDEFINED(DEFAULT_ICU_LOCALE)) {
-    DEFAULT_ICU_LOCALE = %GetDefaultICULocale();
-  }
-  return DEFAULT_ICU_LOCALE;
-}
 
 /**
  * Unicode extension regular expression.
@@ -199,43 +188,6 @@ function GetServiceRE() {
         new GlobalRegExp('^(' + %_Call(ArrayJoin, ObjectKeys(AVAILABLE_LOCALES), '|') + ')$');
   }
   return SERVICE_RE;
-}
-
-/**
- * Validates a language tag against bcp47 spec.
- * Actual value is assigned on first run.
- */
-var LANGUAGE_TAG_RE = UNDEFINED;
-
-function GetLanguageTagRE() {
-  if (IS_UNDEFINED(LANGUAGE_TAG_RE)) {
-    BuildLanguageTagREs();
-  }
-  return LANGUAGE_TAG_RE;
-}
-
-/**
- * Helps find duplicate variants in the language tag.
- */
-var LANGUAGE_VARIANT_RE = UNDEFINED;
-
-function GetLanguageVariantRE() {
-  if (IS_UNDEFINED(LANGUAGE_VARIANT_RE)) {
-    BuildLanguageTagREs();
-  }
-  return LANGUAGE_VARIANT_RE;
-}
-
-/**
- * Helps find duplicate singletons in the language tag.
- */
-var LANGUAGE_SINGLETON_RE = UNDEFINED;
-
-function GetLanguageSingletonRE() {
-  if (IS_UNDEFINED(LANGUAGE_SINGLETON_RE)) {
-    BuildLanguageTagREs();
-  }
-  return LANGUAGE_SINGLETON_RE;
 }
 
 /**
@@ -489,7 +441,7 @@ function lookupMatcher(service, requestedLocales) {
     }
   }
 
-  var defLocale = GetDefaultICULocaleJS();
+  var defLocale = %GetDefaultICULocale();
 
   // While ECMA-402 returns defLocale directly, we have to check if it is
   // supported, as such support is not guaranteed.
@@ -594,7 +546,7 @@ function setOptions(inOptions, extensionMap, keyValues, getOption, outOptions) {
     }
 
     if (!IS_UNDEFINED(property)) {
-      defineWEProperty(outOptions, property, value);
+      %DefineWEProperty(outOptions, property, value);
     }
   }
 
@@ -696,22 +648,12 @@ function getAvailableLocalesOf(service) {
 
 
 /**
- * Defines a property and sets writable and enumerable to true.
- * Configurable is false by default.
- */
-function defineWEProperty(object, property, value) {
-  %object_define_property(object, property,
-                          {value: value, writable: true, enumerable: true});
-}
-
-
-/**
  * Adds property to an object if the value is not undefined.
  * Sets configurable descriptor to false.
  */
 function addWEPropertyIfDefined(object, property, value) {
   if (!IS_UNDEFINED(value)) {
-    defineWEProperty(object, property, value);
+    %DefineWEProperty(object, property, value);
   }
 }
 
@@ -774,45 +716,6 @@ function toTitleCaseTimezoneLocation(location) {
   return result;
 }
 
-/**
- * Canonicalizes the language tag, or throws in case the tag is invalid.
- * ECMA 402 9.2.1 steps 7.c ii ~ v.
- */
-function canonicalizeLanguageTag(localeID) {
-  // null is typeof 'object' so we have to do extra check.
-  if ((!IS_STRING(localeID) && !IS_RECEIVER(localeID)) ||
-      IS_NULL(localeID)) {
-    throw %make_type_error(kLanguageID);
-  }
-
-  var localeString = TO_STRING(localeID);
-
-  // Optimize for the most common case; a 2-letter language code in the
-  // canonical form/lowercase that is not one of deprecated codes
-  // (in, iw, ji, jw). Don't check for ~70 of 3-letter deprecated language
-  // codes. Instead, let them be handled by ICU in the slow path. Besides,
-  // fast-track 'fil' (3-letter canonical code).
-  if ((!IS_NULL(%regexp_internal_match(/^[a-z]{2}$/, localeString)) &&
-      IS_NULL(%regexp_internal_match(/^(in|iw|ji|jw)$/, localeString))) ||
-      localeString === "fil") {
-    return localeString;
-  }
-
-  if (isStructuallyValidLanguageTag(localeString) === false) {
-    throw %make_range_error(kInvalidLanguageTag, localeString);
-  }
-
-  // ECMA 402 6.2.3
-  var tag = %CanonicalizeLanguageTag(localeString);
-  // TODO(jshin): This should not happen because the structural validity
-  // is already checked. If that's the case, remove this.
-  if (tag === 'invalid-tag') {
-    throw %make_range_error(kInvalidLanguageTag, localeString);
-  }
-
-  return tag;
-}
-
 
 /**
  * Returns an InternalArray where all locales are canonicalized and duplicates
@@ -825,7 +728,7 @@ function canonicalizeLocaleList(locales) {
   if (!IS_UNDEFINED(locales)) {
     // We allow single string localeID.
     if (typeof locales === 'string') {
-      %_Call(ArrayPush, seen, canonicalizeLanguageTag(locales));
+      %_Call(ArrayPush, seen, %CanonicalizeLanguageTag(locales));
       return seen;
     }
 
@@ -836,7 +739,7 @@ function canonicalizeLocaleList(locales) {
       if (k in o) {
         var value = o[k];
 
-        var tag = canonicalizeLanguageTag(value);
+        var tag = %CanonicalizeLanguageTag(value);
 
         if (%ArrayIndexOf(seen, tag, 0) === -1) {
           %_Call(ArrayPush, seen, tag);
@@ -852,108 +755,12 @@ function initializeLocaleList(locales) {
   return freezeArray(canonicalizeLocaleList(locales));
 }
 
-/**
- * Check the structural Validity of the language tag per ECMA 402 6.2.2:
- *   - Well-formed per RFC 5646 2.1
- *   - There are no duplicate variant subtags
- *   - There are no duplicate singletion (extension) subtags
- *
- * One extra-check is done (from RFC 5646 2.2.9): the tag is compared
- * against the list of grandfathered tags. However, subtags for
- * primary/extended language, script, region, variant are not checked
- * against the IANA language subtag registry.
- *
- * ICU is too permissible and lets invalid tags, like
- * hant-cmn-cn, through.
- *
- * Returns false if the language tag is invalid.
- */
-function isStructuallyValidLanguageTag(locale) {
-  // Check if it's well-formed, including grandfadered tags.
-  if (IS_NULL(%regexp_internal_match(GetLanguageTagRE(), locale))) {
-    return false;
-  }
-
-  locale = %StringToLowerCaseIntl(locale);
-
-  // Just return if it's a x- form. It's all private.
-  if (%StringIndexOf(locale, 'x-', 0) === 0) {
-    return true;
-  }
-
-  // Check if there are any duplicate variants or singletons (extensions).
-
-  // Remove private use section.
-  locale = %StringSplit(locale, '-x-', kMaxUint32)[0];
-
-  // Skip language since it can match variant regex, so we start from 1.
-  // We are matching i-klingon here, but that's ok, since i-klingon-klingon
-  // is not valid and would fail LANGUAGE_TAG_RE test.
-  var variants = new InternalArray();
-  var extensions = new InternalArray();
-  var parts = %StringSplit(locale, '-', kMaxUint32);
-  for (var i = 1; i < parts.length; i++) {
-    var value = parts[i];
-    if (!IS_NULL(%regexp_internal_match(GetLanguageVariantRE(), value)) &&
-        extensions.length === 0) {
-      if (%ArrayIndexOf(variants, value, 0) === -1) {
-        %_Call(ArrayPush, variants, value);
-      } else {
-        return false;
-      }
-    }
-
-    if (!IS_NULL(%regexp_internal_match(GetLanguageSingletonRE(), value))) {
-      if (%ArrayIndexOf(extensions, value, 0) === -1) {
-        %_Call(ArrayPush, extensions, value);
-      } else {
-        return false;
-      }
-    }
-  }
-
-  return true;
- }
-
-
-/**
- * Builds a regular expresion that validates the language tag
- * against bcp47 spec.
- * Uses http://tools.ietf.org/html/bcp47, section 2.1, ABNF.
- * Runs on load and initializes the global REs.
- */
-function BuildLanguageTagREs() {
-  var alpha = '[a-zA-Z]';
-  var digit = '[0-9]';
-  var alphanum = '(' + alpha + '|' + digit + ')';
-  var regular = '(art-lojban|cel-gaulish|no-bok|no-nyn|zh-guoyu|zh-hakka|' +
-                'zh-min|zh-min-nan|zh-xiang)';
-  var irregular = '(en-GB-oed|i-ami|i-bnn|i-default|i-enochian|i-hak|' +
-                  'i-klingon|i-lux|i-mingo|i-navajo|i-pwn|i-tao|i-tay|' +
-                  'i-tsu|sgn-BE-FR|sgn-BE-NL|sgn-CH-DE)';
-  var grandfathered = '(' + irregular + '|' + regular + ')';
-  var privateUse = '(x(-' + alphanum + '{1,8})+)';
-
-  var singleton = '(' + digit + '|[A-WY-Za-wy-z])';
-  LANGUAGE_SINGLETON_RE = new GlobalRegExp('^' + singleton + '$', 'i');
-
-  var extension = '(' + singleton + '(-' + alphanum + '{2,8})+)';
-
-  var variant = '(' + alphanum + '{5,8}|(' + digit + alphanum + '{3}))';
-  LANGUAGE_VARIANT_RE = new GlobalRegExp('^' + variant + '$', 'i');
-
-  var region = '(' + alpha + '{2}|' + digit + '{3})';
-  var script = '(' + alpha + '{4})';
-  var extLang = '(' + alpha + '{3}(-' + alpha + '{3}){0,2})';
-  var language = '(' + alpha + '{2,3}(-' + extLang + ')?|' + alpha + '{4}|' +
-                 alpha + '{5,8})';
-  var langTag = language + '(-' + script + ')?(-' + region + ')?(-' +
-                variant + ')*(-' + extension + ')*(-' + privateUse + ')?';
-
-  var languageTag =
-      '^(' + langTag + '|' + privateUse + '|' + grandfathered + ')$';
-  LANGUAGE_TAG_RE = new GlobalRegExp(languageTag, 'i');
-}
+// TODO(ftang): remove the %InstallToContext once
+// initializeLocaleList is available in C++
+// https://bugs.chromium.org/p/v8/issues/detail?id=7987
+%InstallToContext([
+  "initialize_locale_list", initializeLocaleList
+]);
 
 // ECMA 402 section 8.2.1
 DEFINE_METHOD(
@@ -976,7 +783,7 @@ function CreateCollator(locales, options) {
 
   var internalOptions = {__proto__: null};
 
-  defineWEProperty(internalOptions, 'usage', getOption(
+  %DefineWEProperty(internalOptions, 'usage', getOption(
     'usage', 'string', ['sort', 'search'], 'sort'));
 
   var sensitivity = getOption('sensitivity', 'string',
@@ -984,9 +791,9 @@ function CreateCollator(locales, options) {
   if (IS_UNDEFINED(sensitivity) && internalOptions.usage === 'sort') {
     sensitivity = 'variant';
   }
-  defineWEProperty(internalOptions, 'sensitivity', sensitivity);
+  %DefineWEProperty(internalOptions, 'sensitivity', sensitivity);
 
-  defineWEProperty(internalOptions, 'ignorePunctuation', getOption(
+  %DefineWEProperty(internalOptions, 'ignorePunctuation', getOption(
     'ignorePunctuation', 'boolean', UNDEFINED, false));
 
   var locale = resolveLocale('collator', locales, options);
@@ -1035,7 +842,7 @@ function CreateCollator(locales, options) {
   } else if (internalOptions.usage === 'search') {
     extension = '-u-co-search';
   }
-  defineWEProperty(internalOptions, 'collation', collation);
+  %DefineWEProperty(internalOptions, 'collation', collation);
 
   var requestedLocale = locale.locale + extension;
 
@@ -1150,7 +957,7 @@ function PluralRulesConstructor() {
   var locale = resolveLocale('pluralrules', locales, options);
 
   var internalOptions = {__proto__: null};
-  defineWEProperty(internalOptions, 'type', getOption(
+  %DefineWEProperty(internalOptions, 'type', getOption(
     'type', 'string', ['cardinal', 'ordinal'], 'cardinal'));
 
   SetNumberFormatDigitOptions(internalOptions, options, 0, 3);
@@ -1165,12 +972,12 @@ function PluralRulesConstructor() {
     requestedLocale: {value: requestedLocale, writable: true},
   });
   if (HAS_OWN_PROPERTY(internalOptions, 'minimumSignificantDigits')) {
-    defineWEProperty(resolved, 'minimumSignificantDigits', UNDEFINED);
+    %DefineWEProperty(resolved, 'minimumSignificantDigits', UNDEFINED);
   }
   if (HAS_OWN_PROPERTY(internalOptions, 'maximumSignificantDigits')) {
-    defineWEProperty(resolved, 'maximumSignificantDigits', UNDEFINED);
+    %DefineWEProperty(resolved, 'maximumSignificantDigits', UNDEFINED);
   }
-  defineWEProperty(resolved, 'pluralCategories', []);
+  %DefineWEProperty(resolved, 'pluralCategories', []);
   var pluralRules = %CreatePluralRules(requestedLocale, internalOptions,
                                        resolved);
 
@@ -1234,65 +1041,33 @@ DEFINE_METHOD(
   }
 );
 
-/**
- * Verifies that the input is a well-formed ISO 4217 currency code.
- * Don't uppercase to test. It could convert invalid code into a valid one.
- * For example \u00DFP (Eszett+P) becomes SSP.
- */
-function isWellFormedCurrencyCode(currency) {
-  return typeof currency === "string" && currency.length === 3 &&
-      IS_NULL(%regexp_internal_match(/[^A-Za-z]/, currency));
-}
-
-
-function defaultNumberOption(value, min, max, fallback, property) {
-  if (!IS_UNDEFINED(value)) {
-    value = TO_NUMBER(value);
-    if (NUMBER_IS_NAN(value) || value < min || value > max) {
-      throw %make_range_error(kPropertyValueOutOfRange, property);
-    }
-    return %math_floor(value);
-  }
-
-  return fallback;
-}
-
-/**
- * Returns the valid digit count for a property, or throws RangeError on
- * a value out of the range.
- */
-function getNumberOption(options, property, min, max, fallback) {
-  var value = options[property];
-  return defaultNumberOption(value, min, max, fallback, property);
-}
-
 // ECMA 402 #sec-setnfdigitoptions
 // SetNumberFormatDigitOptions ( intlObj, options, mnfdDefault, mxfdDefault )
 function SetNumberFormatDigitOptions(internalOptions, options,
                                      mnfdDefault, mxfdDefault) {
   // Digit ranges.
-  var mnid = getNumberOption(options, 'minimumIntegerDigits', 1, 21, 1);
-  defineWEProperty(internalOptions, 'minimumIntegerDigits', mnid);
+  var mnid = %GetNumberOption(options, 'minimumIntegerDigits', 1, 21, 1);
+  %DefineWEProperty(internalOptions, 'minimumIntegerDigits', mnid);
 
-  var mnfd = getNumberOption(options, 'minimumFractionDigits', 0, 20,
+  var mnfd = %GetNumberOption(options, 'minimumFractionDigits', 0, 20,
                              mnfdDefault);
-  defineWEProperty(internalOptions, 'minimumFractionDigits', mnfd);
+  %DefineWEProperty(internalOptions, 'minimumFractionDigits', mnfd);
 
   var mxfdActualDefault = MathMax(mnfd, mxfdDefault);
 
-  var mxfd = getNumberOption(options, 'maximumFractionDigits', mnfd, 20,
+  var mxfd = %GetNumberOption(options, 'maximumFractionDigits', mnfd, 20,
                              mxfdActualDefault);
 
-  defineWEProperty(internalOptions, 'maximumFractionDigits', mxfd);
+  %DefineWEProperty(internalOptions, 'maximumFractionDigits', mxfd);
 
   var mnsd = options['minimumSignificantDigits'];
   var mxsd = options['maximumSignificantDigits'];
   if (!IS_UNDEFINED(mnsd) || !IS_UNDEFINED(mxsd)) {
-    mnsd = defaultNumberOption(mnsd, 1, 21, 1, 'minimumSignificantDigits');
-    defineWEProperty(internalOptions, 'minimumSignificantDigits', mnsd);
+    mnsd = %DefaultNumberOption(mnsd, 1, 21, 1, 'minimumSignificantDigits');
+    %DefineWEProperty(internalOptions, 'minimumSignificantDigits', mnsd);
 
-    mxsd = defaultNumberOption(mxsd, mnsd, 21, 21, 'maximumSignificantDigits');
-    defineWEProperty(internalOptions, 'maximumSignificantDigits', mxsd);
+    mxsd = %DefaultNumberOption(mxsd, mnsd, 21, 21, 'maximumSignificantDigits');
+    %DefineWEProperty(internalOptions, 'maximumSignificantDigits', mxsd);
   }
 }
 
@@ -1310,11 +1085,11 @@ function CreateNumberFormat(locales, options) {
   var locale = resolveLocale('numberformat', locales, options);
 
   var internalOptions = {__proto__: null};
-  defineWEProperty(internalOptions, 'style', getOption(
+  %DefineWEProperty(internalOptions, 'style', getOption(
     'style', 'string', ['decimal', 'percent', 'currency'], 'decimal'));
 
   var currency = getOption('currency', 'string');
-  if (!IS_UNDEFINED(currency) && !isWellFormedCurrencyCode(currency)) {
+  if (!IS_UNDEFINED(currency) && !%IsWellFormedCurrencyCode(currency)) {
     throw %make_range_error(kInvalidCurrencyCode, currency);
   }
 
@@ -1327,8 +1102,8 @@ function CreateNumberFormat(locales, options) {
   var currencyDisplay = getOption(
       'currencyDisplay', 'string', ['code', 'symbol', 'name'], 'symbol');
   if (internalOptions.style === 'currency') {
-    defineWEProperty(internalOptions, 'currency', %StringToUpperCaseIntl(currency));
-    defineWEProperty(internalOptions, 'currencyDisplay', currencyDisplay);
+    %DefineWEProperty(internalOptions, 'currency', %StringToUpperCaseIntl(currency));
+    %DefineWEProperty(internalOptions, 'currencyDisplay', currencyDisplay);
 
     mnfdDefault = mxfdDefault = %CurrencyDigits(internalOptions.currency);
   } else {
@@ -1340,7 +1115,7 @@ function CreateNumberFormat(locales, options) {
                               mxfdDefault);
 
   // Grouping.
-  defineWEProperty(internalOptions, 'useGrouping', getOption(
+  %DefineWEProperty(internalOptions, 'useGrouping', getOption(
     'useGrouping', 'boolean', UNDEFINED, true));
 
   // ICU prefers options to be passed using -u- extension key/values for
@@ -1373,10 +1148,10 @@ function CreateNumberFormat(locales, options) {
     useGrouping: {writable: true}
   });
   if (HAS_OWN_PROPERTY(internalOptions, 'minimumSignificantDigits')) {
-    defineWEProperty(resolved, 'minimumSignificantDigits', UNDEFINED);
+    %DefineWEProperty(resolved, 'minimumSignificantDigits', UNDEFINED);
   }
   if (HAS_OWN_PROPERTY(internalOptions, 'maximumSignificantDigits')) {
-    defineWEProperty(resolved, 'maximumSignificantDigits', UNDEFINED);
+    %DefineWEProperty(resolved, 'maximumSignificantDigits', UNDEFINED);
   }
   var numberFormat = %CreateNumberFormat(requestedLocale, internalOptions,
                                          resolved);
@@ -1462,19 +1237,6 @@ DEFINE_METHOD(
     return supportedLocalesOf('numberformat', locales, arguments[1]);
   }
 );
-
-
-/**
- * Returns a String value representing the result of calling ToNumber(value)
- * according to the effective locale and the formatting options of this
- * NumberFormat.
- */
-function formatNumber(formatter, value) {
-  // Spec treats -0 and +0 as 0.
-  var number = TO_NUMBER(value) + 0;
-
-  return %InternalNumberFormat(formatter, number);
-}
 
 /**
  * Returns a string that matches LDML representation of the options object.
@@ -1605,13 +1367,13 @@ function fromLDMLString(ldmlString) {
 function appendToDateTimeObject(options, option, match, pairs) {
   if (IS_NULL(match)) {
     if (!HAS_OWN_PROPERTY(options, option)) {
-      defineWEProperty(options, option, UNDEFINED);
+      %DefineWEProperty(options, option, UNDEFINED);
     }
     return options;
   }
 
   var property = match[0];
-  defineWEProperty(options, option, pairs[property]);
+  %DefineWEProperty(options, option, pairs[property]);
 
   return options;
 }
@@ -1916,7 +1678,7 @@ function CreateBreakIterator(locales, options) {
 
   var internalOptions = {__proto__: null};
 
-  defineWEProperty(internalOptions, 'type', getOption(
+  %DefineWEProperty(internalOptions, 'type', getOption(
     'type', 'string', ['character', 'word', 'sentence', 'line'], 'word'));
 
   var locale = resolveLocale('breakiterator', locales, options);
@@ -2100,83 +1862,11 @@ function cachedOrNewService(service, locales, options, defaults) {
   return new savedObjects[service](locales, useOptions);
 }
 
-function LocaleConvertCase(s, locales, isToUpper) {
-  // ECMA 402 section 13.1.2 steps 1 through 12.
-  var language;
-  // Optimize for the most common two cases. initializeLocaleList() can handle
-  // them as well, but it's rather slow accounting for over 60% of
-  // toLocale{U,L}Case() and about 40% of toLocale{U,L}Case("<locale>").
-  if (IS_UNDEFINED(locales)) {
-    language = GetDefaultICULocaleJS();
-  } else if (IS_STRING(locales)) {
-    language = canonicalizeLanguageTag(locales);
-  } else {
-    var locales = initializeLocaleList(locales);
-    language = locales.length > 0 ? locales[0] : GetDefaultICULocaleJS();
-  }
-
-  // StringSplit is slower than this.
-  var pos = %StringIndexOf(language, '-', 0);
-  if (pos !== -1) {
-    language = %_Call(StringSubstring, language, 0, pos);
-  }
-
-  return %StringLocaleConvertCase(s, isToUpper, language);
-}
-
-/**
- * Compares this and that, and returns less than 0, 0 or greater than 0 value.
- * Overrides the built-in method.
- */
-DEFINE_METHOD(
-  GlobalString.prototype,
-  localeCompare(that) {
-    if (IS_NULL_OR_UNDEFINED(this)) {
-      throw %make_type_error(kMethodInvokedOnNullOrUndefined);
-    }
-
-    var locales = arguments[1];
-    var options = arguments[2];
-    var collator = cachedOrNewService('collator', locales, options);
-    return compare(collator, this, that);
-  }
-);
-
-DEFINE_METHODS_LEN(
-  GlobalString.prototype,
-  {
-    toLocaleLowerCase(locales) {
-      REQUIRE_OBJECT_COERCIBLE(this, "String.prototype.toLocaleLowerCase");
-      return LocaleConvertCase(TO_STRING(this), locales, false);
-    }
-
-    toLocaleUpperCase(locales) {
-      REQUIRE_OBJECT_COERCIBLE(this, "String.prototype.toLocaleUpperCase");
-      return LocaleConvertCase(TO_STRING(this), locales, true);
-    }
-  },
-  0  /* Set function length of both methods. */
-);
-
-
-/**
- * Formats a Number object (this) using locale and options values.
- * If locale or options are omitted, defaults are used.
- */
-DEFINE_METHOD(
-  GlobalNumber.prototype,
-  toLocaleString() {
-    if (!(this instanceof GlobalNumber) && typeof(this) !== 'number') {
-      throw %make_type_error(kMethodInvokedOnWrongType, "Number");
-    }
-
-    var locales = arguments[0];
-    var options = arguments[1];
-    var numberFormat = cachedOrNewService('numberformat', locales, options);
-    return formatNumber(numberFormat, this);
-  }
-);
-
+// TODO(ftang) remove the %InstallToContext once
+// cachedOrNewService is available in C++
+%InstallToContext([
+  "cached_or_new_service", cachedOrNewService
+]);
 
 /**
  * Returns actual formatted date or fails if date parameter is invalid.

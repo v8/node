@@ -263,6 +263,7 @@ class ErrorUtils : public AllStatic {
   T(Unsupported, "Not supported")                                              \
   T(WrongServiceType, "Internal error, wrong service type: %")                 \
   T(WrongValueType, "Internal error. Wrong value type.")                       \
+  T(IcuError, "Internal error. Icu error.")                                    \
   /* TypeError */                                                              \
   T(ApplyNonFunction,                                                          \
     "Function.prototype.apply was called on %, which is a % and not a "        \
@@ -758,7 +759,14 @@ class ErrorUtils : public AllStatic {
   T(DataCloneDeserializationError, "Unable to deserialize cloned data.")       \
   T(DataCloneDeserializationVersionError,                                      \
     "Unable to deserialize cloned data due to invalid or unsupported "         \
-    "version.")
+    "version.")                                                                \
+  /* Builtins-Trace Errors */                                                  \
+  T(TraceEventCategoryError, "Trace event category must be a string.")         \
+  T(TraceEventNameError, "Trace event name must be a string.")                 \
+  T(TraceEventNameLengthError,                                                 \
+    "Trace event name must not be an empty string.")                           \
+  T(TraceEventPhaseError, "Trace event phase must be a number.")               \
+  T(TraceEventIDError, "Trace event id must be a number.")
 
 class MessageTemplate {
  public:

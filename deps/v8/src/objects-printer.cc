@@ -14,10 +14,13 @@
 #include "src/interpreter/bytecodes.h"
 #include "src/objects-inl.h"
 #include "src/objects/arguments-inl.h"
+#include "src/objects/data-handler-inl.h"
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/hash-table-inl.h"
 #include "src/objects/js-collection-inl.h"
+#include "src/objects/js-generator-inl.h"
 #ifdef V8_INTL_SUPPORT
+#include "src/objects/js-list-format-inl.h"
 #include "src/objects/js-locale-inl.h"
 #endif  // V8_INTL_SUPPORT
 #include "src/objects/js-regexp-inl.h"
@@ -159,12 +162,12 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
       FreeSpace::cast(this)->FreeSpacePrint(os);
       break;
 
-#define PRINT_FIXED_TYPED_ARRAY(Type, type, TYPE, ctype, size) \
-  case Fixed##Type##Array::kInstanceType:                      \
-    Fixed##Type##Array::cast(this)->FixedTypedArrayPrint(os);  \
+#define PRINT_FIXED_TYPED_ARRAY(Type, type, TYPE, ctype)      \
+  case Fixed##Type##Array::kInstanceType:                     \
+    Fixed##Type##Array::cast(this)->FixedTypedArrayPrint(os); \
     break;
 
-    TYPED_ARRAYS(PRINT_FIXED_TYPED_ARRAY)
+      TYPED_ARRAYS(PRINT_FIXED_TYPED_ARRAY)
 #undef PRINT_FIXED_TYPED_ARRAY
 
     case FILLER_TYPE:
@@ -301,6 +304,9 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
       JSDataView::cast(this)->JSDataViewPrint(os);
       break;
 #ifdef V8_INTL_SUPPORT
+    case JS_INTL_LIST_FORMAT_TYPE:
+      JSListFormat::cast(this)->JSListFormatPrint(os);
+      break;
     case JS_INTL_LOCALE_TYPE:
       JSLocale::cast(this)->JSLocalePrint(os);
       break;
@@ -574,10 +580,10 @@ void JSObject::PrintElements(std::ostream& os) {  // NOLINT
       break;
     }
 
-#define PRINT_ELEMENTS(Type, type, TYPE, elementType, size) \
-  case TYPE##_ELEMENTS: {                                   \
-    DoPrintElements<Fixed##Type##Array>(os, elements());    \
-    break;                                                  \
+#define PRINT_ELEMENTS(Type, type, TYPE, elementType)    \
+  case TYPE##_ELEMENTS: {                                \
+    DoPrintElements<Fixed##Type##Array>(os, elements()); \
+    break;                                               \
   }
       TYPED_ARRAYS(PRINT_ELEMENTS)
 #undef PRINT_ELEMENTS
@@ -802,12 +808,12 @@ void Map::MapPrint(std::ostream& os) {  // NOLINT
     layout_descriptor()->ShortPrint(os);
   }
 
-  MemoryChunk* chunk = MemoryChunk::FromHeapObject(this);
+  Isolate* isolate;
   // Read-only maps can't have transitions, which is fortunate because we need
   // the isolate to iterate over the transitions.
-  if (chunk->owner()->identity() != RO_SPACE) {
+  if (Isolate::FromWritableHeapObject(this, &isolate)) {
     DisallowHeapAllocation no_gc;
-    TransitionsAccessor transitions(chunk->heap()->isolate(), this, &no_gc);
+    TransitionsAccessor transitions(isolate, this, &no_gc);
     int nof_transitions = transitions.NumberOfTransitions();
     if (nof_transitions > 0) {
       os << "\n - transitions #" << nof_transitions << ": ";
@@ -1095,7 +1101,8 @@ void FeedbackNexus::Print(std::ostream& os) {  // NOLINT
     case FeedbackSlotKind::kInstanceOf:
     case FeedbackSlotKind::kStoreDataPropertyInLiteral:
     case FeedbackSlotKind::kStoreKeyedStrict:
-    case FeedbackSlotKind::kStoreInArrayLiteral: {
+    case FeedbackSlotKind::kStoreInArrayLiteral:
+    case FeedbackSlotKind::kCloneObject: {
       os << ICState2String(StateFromFeedback());
       break;
     }
@@ -1783,10 +1790,10 @@ void LoadHandler::LoadHandlerPrint(std::ostream& os) {  // NOLINT
     os << "\n - data1: " << MaybeObjectBrief(data1());
   }
   if (data_count >= 2) {
-    os << "\n - data2: " << Brief(data2());
+    os << "\n - data2: " << MaybeObjectBrief(data2());
   }
   if (data_count >= 3) {
-    os << "\n - data3: " << Brief(data3());
+    os << "\n - data3: " << MaybeObjectBrief(data3());
   }
   os << "\n";
 }
@@ -1801,10 +1808,10 @@ void StoreHandler::StoreHandlerPrint(std::ostream& os) {  // NOLINT
     os << "\n - data1: " << MaybeObjectBrief(data1());
   }
   if (data_count >= 2) {
-    os << "\n - data2: " << Brief(data2());
+    os << "\n - data2: " << MaybeObjectBrief(data2());
   }
   if (data_count >= 3) {
-    os << "\n - data3: " << Brief(data3());
+    os << "\n - data3: " << MaybeObjectBrief(data3());
   }
   os << "\n";
 }
@@ -1944,6 +1951,15 @@ void Script::ScriptPrint(std::ostream& os) {  // NOLINT
 }
 
 #ifdef V8_INTL_SUPPORT
+void JSListFormat::JSListFormatPrint(std::ostream& os) {  // NOLINT
+  JSObjectPrintHeader(os, this, "JSListFormat");
+  os << "\n - locale: " << Brief(locale());
+  os << "\n - style: " << StyleAsString();
+  os << "\n - type: " << TypeAsString();
+  os << "\n - formatter: " << Brief(formatter());
+  os << "\n";
+}
+
 void JSLocale::JSLocalePrint(std::ostream& os) {  // NOLINT
   HeapObject::PrintHeader(os, "JSLocale");
   os << "\n - language: " << Brief(language());
@@ -2046,7 +2062,7 @@ void DebugInfo::DebugInfoPrint(std::ostream& os) {  // NOLINT
   os << "\n - flags: " << flags();
   os << "\n - debugger_hints: " << debugger_hints();
   os << "\n - shared: " << Brief(shared());
-  os << "\n - function_identifier: " << Brief(function_identifier());
+  os << "\n - script: " << Brief(script());
   os << "\n - original bytecode array: " << Brief(original_bytecode_array());
   os << "\n - break_points: ";
   break_points()->FixedArrayPrint(os);

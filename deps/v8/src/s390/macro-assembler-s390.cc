@@ -20,6 +20,7 @@
 #include "src/register-configuration.h"
 #include "src/runtime/runtime.h"
 #include "src/snapshot/snapshot.h"
+#include "src/wasm/wasm-code-manager.h"
 
 #include "src/s390/macro-assembler-s390.h"
 
@@ -204,33 +205,14 @@ void TurboAssembler::Jump(Handle<Code> code, RelocInfo::Mode rmode,
   jump(code, rmode, cond);
 }
 
-int TurboAssembler::CallSize(Register target) { return 2; }  // BASR
-
 void TurboAssembler::Call(Register target) {
-  Label start;
-  bind(&start);
-
   // Branch to target via indirect branch
   basr(r14, target);
-
-  DCHECK_EQ(CallSize(target), SizeOfCodeGeneratedSince(&start));
 }
 
 void MacroAssembler::CallJSEntry(Register target) {
   DCHECK(target == r4);
   Call(target);
-}
-
-int TurboAssembler::CallSize(Address target, RelocInfo::Mode rmode,
-                             Condition cond) {
-  // S390 Assembler::move sequence is IILF / IIHF
-  int size;
-#if V8_TARGET_ARCH_S390X
-  size = 14;  // IILF + IIHF + BASR
-#else
-  size = 8;  // IILF + BASR
-#endif
-  return size;
 }
 
 int MacroAssembler::CallSizeNotPredictableCodeSize(Address target,
@@ -250,23 +232,8 @@ void TurboAssembler::Call(Address target, RelocInfo::Mode rmode,
                           Condition cond) {
   DCHECK(cond == al);
 
-#ifdef DEBUG
-  // Check the expected size before generating code to ensure we assume the same
-  // constant pool availability (e.g., whether constant pool is full or not).
-  int expected_size = CallSize(target, rmode, cond);
-  Label start;
-  bind(&start);
-#endif
-
   mov(ip, Operand(target, rmode));
   basr(r14, ip);
-
-  DCHECK_EQ(expected_size, SizeOfCodeGeneratedSince(&start));
-}
-
-int TurboAssembler::CallSize(Handle<Code> code, RelocInfo::Mode rmode,
-                             Condition cond) {
-  return 6;  // BRASL
 }
 
 void TurboAssembler::Call(Handle<Code> code, RelocInfo::Mode rmode,
@@ -986,7 +953,7 @@ void TurboAssembler::ShiftRightPair(Register dst_low, Register dst_high,
                                     uint32_t shift) {
   LoadRR(r0, src_high);
   LoadRR(r1, src_low);
-  srdl(r0, r0, Operand(shift));
+  srdl(r0, Operand(shift));
   LoadRR(dst_high, r0);
   LoadRR(dst_low, r1);
 }
@@ -1722,7 +1689,9 @@ void TurboAssembler::Abort(AbortReason reason) {
 #endif
 
   // Avoid emitting call to builtin if requested.
-  if (trap_on_abort()) {
+  if (trap_on_abort() || should_abort_hard()) {
+    // TODO(s390): Call {ExternalReference::abort_with_reason} if
+    // {should_abort_hard} is set.
     stop(msg);
     return;
   }
@@ -2267,7 +2236,7 @@ void TurboAssembler::Div32(Register dst, Register src1, Register src2) {
 #define Generate_DivU32(instr) \
   {                            \
     lr(r0, src1);              \
-    srdl(r0, r0, Operand(32)); \
+    srdl(r0, Operand(32)); \
     instr(r0, src2);           \
     LoadlW(dst, r1);           \
   }
@@ -2341,7 +2310,7 @@ void TurboAssembler::Mod32(Register dst, Register src1, Register src2) {
 #define Generate_ModU32(instr) \
   {                            \
     lr(r0, src1);              \
-    srdl(r0, r0, Operand(32)); \
+    srdl(r0, Operand(32)); \
     instr(r0, src2);           \
     LoadlW(dst, r0);           \
   }

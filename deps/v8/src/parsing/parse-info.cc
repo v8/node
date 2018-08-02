@@ -4,7 +4,6 @@
 
 #include "src/parsing/parse-info.h"
 
-#include "src/api.h"
 #include "src/ast/ast-source-ranges.h"
 #include "src/ast/ast-value-factory.h"
 #include "src/ast/ast.h"
@@ -199,7 +198,7 @@ void ParseInfo::AllocateSourceRangeMap() {
 void ParseInfo::ResetCharacterStream() { character_stream_.reset(); }
 
 void ParseInfo::set_character_stream(
-    std::unique_ptr<Utf16CharacterStream> character_stream) {
+    std::unique_ptr<ScannerStream> character_stream) {
   DCHECK_NULL(character_stream_);
   character_stream_.swap(character_stream);
 }

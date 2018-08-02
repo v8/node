@@ -15,6 +15,7 @@
 #include "src/messages.h"
 #include "src/objects/arguments-inl.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/js-array-inl.h"
 #include "src/prototype.h"
 
 namespace v8 {
@@ -61,20 +62,14 @@ Object* RemoveArrayHolesGeneric(Isolate* isolate, Handle<JSReceiver> receiver,
   // For proxies, we do not collect the keys, instead we use all indices in
   // the full range of [0, limit).
   Handle<FixedArray> keys;
-  if (receiver->IsJSProxy()) {
-    CHECK(Smi::IsValid(limit));
-    keys = isolate->factory()->NewFixedArray(limit);
-    for (uint32_t i = 0; i < limit; ++i) {
-      keys->set(i, Smi::FromInt(i));
-    }
-  } else {
+  if (!receiver->IsJSProxy()) {
     keys = JSReceiver::GetOwnElementIndices(isolate, receiver,
                                             Handle<JSObject>::cast(receiver));
   }
 
   uint32_t num_undefined = 0;
   uint32_t current_pos = 0;
-  int num_indices = keys->length();
+  int num_indices = keys.is_null() ? limit : keys->length();
 
   // Compact keys with undefined values and moves non-undefined
   // values to the front.
@@ -86,7 +81,7 @@ Object* RemoveArrayHolesGeneric(Isolate* isolate, Handle<JSReceiver> receiver,
   //       Holes and 'undefined' are considered free spots.
   //       A hole is when HasElement(receiver, key) is false.
   for (int i = 0; i < num_indices; ++i) {
-    uint32_t key = NumberToUint32(keys->get(i));
+    uint32_t key = keys.is_null() ? i : NumberToUint32(keys->get(i));
 
     // We only care about array indices that are smaller than the limit.
     // The keys are sorted, so we can break as soon as we encounter the first.
@@ -143,7 +138,7 @@ Object* RemoveArrayHolesGeneric(Isolate* isolate, Handle<JSReceiver> receiver,
 
   // Deleting everything after the undefineds up unto the limit.
   for (int i = num_indices - 1; i >= 0; --i) {
-    uint32_t key = NumberToUint32(keys->get(i));
+    uint32_t key = keys.is_null() ? i : NumberToUint32(keys->get(i));
     if (key < current_pos) break;
     if (key >= limit) continue;
 

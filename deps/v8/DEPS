@@ -8,21 +8,22 @@ vars = {
   'download_gcmole': False,
   'download_jsfunfuzz': False,
   'download_mips_toolchain': False,
+  'check_v8_header_includes': False,
 }
 
 deps = {
   'v8/build':
-    Var('chromium_url') + '/chromium/src/build.git' + '@' + 'e4fb293b7b93dffec18a4f0197b287dec7134a8e',
+    Var('chromium_url') + '/chromium/src/build.git' + '@' + 'e9eade234d00c3a93033d815cda1cc78cac826e0',
   'v8/tools/gyp':
     Var('chromium_url') + '/external/gyp.git' + '@' + 'd61a9397e668fa9843c4aa7da9e79460fe590bfb',
   'v8/third_party/depot_tools':
-    Var('chromium_url') + '/chromium/tools/depot_tools.git' + '@' + '302bb847d356a011f685542fc469f4c3e58b25fc',
+    Var('chromium_url') + '/chromium/tools/depot_tools.git' + '@' + '6f812e132d25df1b561f7182b04903004a3055e4',
   'v8/third_party/icu':
-    Var('chromium_url') + '/chromium/deps/icu.git' + '@' + 'a9a2bd3ee4f1d313651c5272252aaf2a3e7ed529',
+    Var('chromium_url') + '/chromium/deps/icu.git' + '@' + '297a4dd02b9d36c92ab9b4f121e433c9c3bc14f8',
   'v8/third_party/instrumented_libraries':
     Var('chromium_url') + '/chromium/src/third_party/instrumented_libraries.git' + '@' + '323cf32193caecbf074d1a0cb5b02b905f163e0f',
   'v8/buildtools':
-    Var('chromium_url') + '/chromium/buildtools.git' + '@' + '0dd5c6f980d22be96b728155249df2da355989d9',
+    Var('chromium_url') + '/chromium/buildtools.git' + '@' + '9a90d9aaadeb5e04327ed05775f45132e4b3523f',
   'v8/base/trace_event/common':
     Var('chromium_url') + '/chromium/src/base/trace_event/common.git' + '@' + '211b3ed9d0481b4caddbee1322321b86a483ca1f',
   'v8/third_party/android_ndk': {
@@ -34,7 +35,7 @@ deps = {
     'condition': 'checkout_android',
   },
   'v8/third_party/catapult': {
-    'url': Var('chromium_url') + '/catapult.git' + '@' + 'f5342c4cf3d3e85e43be84c22bdfd8ebff23ec70',
+    'url': Var('chromium_url') + '/catapult.git' + '@' + '5c2d9e757a6f8966612c6be9bb21f6344be00bd8',
     'condition': 'checkout_android',
   },
   'v8/third_party/colorama/src': {
@@ -42,7 +43,7 @@ deps = {
     'condition': 'checkout_android',
   },
   'v8/third_party/fuchsia-sdk': {
-    'url': Var('chromium_url') + '/chromium/src/third_party/fuchsia-sdk.git' + '@' + '976ce5e581e5e3d72174aff09d74417ea5d4df34',
+    'url': Var('chromium_url') + '/chromium/src/third_party/fuchsia-sdk.git' + '@' + 'e4f38ff1fa13e91934ea03493bfb4c3bed822703',
     'condition': 'checkout_fuchsia',
   },
   'v8/third_party/googletest/src':
@@ -52,9 +53,9 @@ deps = {
   'v8/third_party/markupsafe':
     Var('chromium_url') + '/chromium/src/third_party/markupsafe.git' + '@' + '8f45f5cfa0009d2a70589bcda0349b8cb2b72783',
   'v8/third_party/proguard':
-    Var('chromium_url') + '/chromium/src/third_party/proguard.git' + '@' + 'eba7a98d98735b2cc65c54d36baa5c9b46fe4f8e',
+    Var('chromium_url') + '/chromium/src/third_party/proguard.git' + '@' + '63f6c0bd0f86b9b90ec41c4cc93de7a06b5c4102',
   'v8/tools/swarming_client':
-    Var('chromium_url') + '/infra/luci/client-py.git' + '@' + '9a518d097dca20b7b00ce3bdfc5d418ccc79893a',
+    Var('chromium_url') + '/infra/luci/client-py.git' + '@' + '486c9b53c4d54dd4b95bb6ce0e31160e600dfc11',
   'v8/test/benchmarks/data':
     Var('chromium_url') + '/v8/deps/third_party/benchmarks.git' + '@' + '05d7188267b4560491ff9155c5ee13e207ecd65f',
   'v8/test/mozilla/data':
@@ -64,11 +65,11 @@ deps = {
   'v8/test/test262/harness':
     Var('chromium_url') + '/external/github.com/test262-utils/test262-harness-py.git' + '@' + '0f2acdd882c84cff43b9d60df7574a1901e2cdcd',
   'v8/tools/clang':
-    Var('chromium_url') + '/chromium/src/tools/clang.git' + '@' + '5d1ce93fd599836f6317aaccad784b13a64f6e90',
+    Var('chromium_url') + '/chromium/src/tools/clang.git' + '@' + 'af36d66948fac3c80f1786c9c7d56897c33a3839',
   'v8/tools/luci-go':
-    Var('chromium_url') + '/chromium/src/tools/luci-go.git' + '@' + 'abcd908f74fdb155cc8870f5cae48dff1ece7c3c',
+    Var('chromium_url') + '/chromium/src/tools/luci-go.git' + '@' + '445d7c4b6a4f10e188edb395b132e3996b127691',
   'v8/test/wasm-js':
-    Var('chromium_url') + '/external/github.com/WebAssembly/spec.git' + '@' + '2113ea7e106f8a964e0445ba38f289d2aa845edd',
+    Var('chromium_url') + '/external/github.com/WebAssembly/spec.git' + '@' + 'b9cddea4dddd103324e45f96e642aebc2b43b7fd',
 }
 
 recursedeps = [
@@ -383,6 +384,15 @@ hooks = [
     'action': [ 'vpython',
                 '-vpython-spec', 'v8/.vpython',
                 '-vpython-tool', 'install',
+    ],
+  },
+  {
+    'name': 'check_v8_header_includes',
+    'pattern': '.',
+    'condition': 'check_v8_header_includes',
+    'action': [
+      'python',
+      'v8/tools/generate-header-include-checks.py',
     ],
   },
 ]

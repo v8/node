@@ -40,8 +40,7 @@ class DateFormat {
       Handle<JSObject> resolved);
 
   // Unpacks date format object from corresponding JavaScript object.
-  static icu::SimpleDateFormat* UnpackDateFormat(Isolate* isolate,
-                                                 Handle<JSObject> obj);
+  static icu::SimpleDateFormat* UnpackDateFormat(Handle<JSObject> obj);
 
   // Release memory we allocated for the DateFormat once the JS object that
   // holds the pointer gets garbage collected.
@@ -65,8 +64,7 @@ class NumberFormat {
                                                     Handle<JSObject> resolved);
 
   // Unpacks number format object from corresponding JavaScript object.
-  static icu::DecimalFormat* UnpackNumberFormat(Isolate* isolate,
-                                                Handle<JSObject> obj);
+  static icu::DecimalFormat* UnpackNumberFormat(Handle<JSObject> obj);
 
   // Release memory we allocated for the NumberFormat once the JS object that
   // holds the pointer gets garbage collected.
@@ -83,7 +81,7 @@ class NumberFormat {
                                       const char* method_name);
 
   // ecm402/#sec-formatnumber
-  static MaybeHandle<Object> FormatNumber(Isolate* isolate,
+  static MaybeHandle<String> FormatNumber(Isolate* isolate,
                                           Handle<JSObject> number_format_holder,
                                           double value);
 
@@ -122,14 +120,13 @@ class Collator {
  public:
   // Create a collator for the specificied locale and options. Stores the
   // collator in the provided collator_holder.
-  static bool InitializeCollator(Isolate* isolate,
-                                 Handle<JSObject> collator_holder,
-                                 Handle<String> locale,
-                                 Handle<JSObject> options,
-                                 Handle<JSObject> resolved);
+  static icu::Collator* InitializeCollator(Isolate* isolate,
+                                           Handle<String> locale,
+                                           Handle<JSObject> options,
+                                           Handle<JSObject> resolved);
 
   // Unpacks collator object from corresponding JavaScript object.
-  static icu::Collator* UnpackCollator(Isolate* isolate, Handle<JSObject> obj);
+  static icu::Collator* UnpackCollator(Handle<JSObject> obj);
 
   // Layout description.
   static const int kCollator = JSObject::kHeaderSize;
@@ -143,20 +140,18 @@ class PluralRules {
  public:
   // Create a PluralRules and DecimalFormat for the specificied locale and
   // options. Returns false on an ICU failure.
-  static bool InitializePluralRules(Isolate* isolate, Handle<String> locale,
+  static void InitializePluralRules(Isolate* isolate, Handle<String> locale,
                                     Handle<JSObject> options,
                                     Handle<JSObject> resolved,
                                     icu::PluralRules** plural_rules,
                                     icu::DecimalFormat** decimal_format);
 
   // Unpacks PluralRules object from corresponding JavaScript object.
-  static icu::PluralRules* UnpackPluralRules(Isolate* isolate,
-                                             Handle<JSObject> obj);
+  static icu::PluralRules* UnpackPluralRules(Handle<JSObject> obj);
 
   // Unpacks NumberFormat object from corresponding JavaScript PluralRUles
   // object.
-  static icu::DecimalFormat* UnpackNumberFormat(Isolate* isolate,
-                                                Handle<JSObject> obj);
+  static icu::DecimalFormat* UnpackNumberFormat(Handle<JSObject> obj);
 
   // Release memory we allocated for the Collator once the JS object that holds
   // the pointer gets garbage collected.
@@ -186,8 +181,7 @@ class V8BreakIterator {
                                                      Handle<JSObject> resolved);
 
   // Unpacks break iterator object from corresponding JavaScript object.
-  static icu::BreakIterator* UnpackBreakIterator(Isolate* isolate,
-                                                 Handle<JSObject> obj);
+  static icu::BreakIterator* UnpackBreakIterator(Handle<JSObject> obj);
 
   // Release memory we allocated for the BreakIterator once the JS object that
   // holds the pointer gets garbage collected.
@@ -231,6 +225,14 @@ class Intl {
   // pa_Guru_IN (language=Panjabi, script=Gurmukhi, country-India) would include
   // pa_IN.
   static std::set<std::string> GetAvailableLocales(const IcuService& service);
+
+  static V8_WARN_UNUSED_RESULT MaybeHandle<JSObject> AvailableLocalesOf(
+      Isolate* isolate, Handle<String> service);
+
+  static V8_WARN_UNUSED_RESULT Handle<String> DefaultLocale(Isolate* isolate);
+
+  static void DefineWEProperty(Isolate* isolate, Handle<JSObject> target,
+                               Handle<Name> key, Handle<Object> value);
 
   // If locale has a script tag then return true and the locale without the
   // script else return false and an empty string
@@ -299,6 +301,50 @@ class Intl {
   V8_WARN_UNUSED_RESULT static Maybe<bool> GetBoolOption(
       Isolate* isolate, Handle<JSReceiver> options, const char* property,
       const char* service, bool* result);
+
+  // Canonicalize the localeID.
+  static MaybeHandle<String> CanonicalizeLanguageTag(Isolate* isolate,
+                                                     Handle<Object> localeID);
+
+  // ecma-402/#sec-currencydigits
+  // The currency is expected to an all upper case string value.
+  static Handle<Smi> CurrencyDigits(Isolate* isolate, Handle<String> currency);
+
+  V8_WARN_UNUSED_RESULT static MaybeHandle<JSObject> CreateNumberFormat(
+      Isolate* isolate, Handle<String> locale, Handle<JSObject> options,
+      Handle<JSObject> resolved);
+
+  // ecma402/#sec-iswellformedcurrencycode
+  static bool IsWellFormedCurrencyCode(Isolate* isolate,
+                                       Handle<String> currency);
+
+  // For locale sensitive functions
+  V8_WARN_UNUSED_RESULT static MaybeHandle<String> StringLocaleConvertCase(
+      Isolate* isolate, Handle<String> s, bool is_upper,
+      Handle<Object> locales);
+
+  V8_WARN_UNUSED_RESULT static MaybeHandle<Object> StringLocaleCompare(
+      Isolate* isolate, Handle<String> s1, Handle<String> s2,
+      Handle<Object> locales, Handle<Object> options);
+
+  V8_WARN_UNUSED_RESULT static Handle<Object> InternalCompare(
+      Isolate* isolate, Handle<JSObject> collator, Handle<String> s1,
+      Handle<String> s2);
+
+  // ecma402/#sup-properties-of-the-number-prototype-object
+  V8_WARN_UNUSED_RESULT static MaybeHandle<String> NumberToLocaleString(
+      Isolate* isolate, Handle<Object> num, Handle<Object> locales,
+      Handle<Object> options);
+
+  // ecma402/#sec-defaultnumberoption
+  V8_WARN_UNUSED_RESULT static MaybeHandle<Smi> DefaultNumberOption(
+      Isolate* isolate, Handle<Object> value, int min, int max, int fallback,
+      Handle<String> property);
+
+  // ecma402/#sec-getnumberoption
+  V8_WARN_UNUSED_RESULT static MaybeHandle<Smi> GetNumberOption(
+      Isolate* isolate, Handle<JSReceiver> options, Handle<String> property,
+      int min, int max, int fallback);
 };
 
 }  // namespace internal

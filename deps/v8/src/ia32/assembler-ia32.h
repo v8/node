@@ -321,7 +321,7 @@ enum ScaleFactor {
   times_twice_pointer_size = times_8
 };
 
-class Operand {
+class V8_EXPORT_PRIVATE Operand {
  public:
   // reg
   V8_INLINE explicit Operand(Register reg) { set_modrm(3, reg); }
@@ -472,8 +472,7 @@ class Displacement BASE_EMBEDDED {
   void init(Label* L, Type type);
 };
 
-
-class Assembler : public AssemblerBase {
+class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
  private:
   // We check before assembling an instruction that there is sufficient
   // space to write an instruction and its relocation information.
@@ -667,6 +666,7 @@ class Assembler : public AssemblerBase {
   void cmpxchg(Operand dst, Register src);
   void cmpxchg_b(Operand dst, Register src);
   void cmpxchg_w(Operand dst, Register src);
+  void cmpxchg8b(Operand dst);
 
   // Memory Fence
   void lfence();
@@ -850,10 +850,8 @@ class Assembler : public AssemblerBase {
   // Calls
   void call(Label* L);
   void call(Address entry, RelocInfo::Mode rmode);
-  int CallSize(Operand adr);
   void call(Register reg) { call(Operand(reg)); }
   void call(Operand adr);
-  int CallSize(Handle<Code> code, RelocInfo::Mode mode);
   void call(Handle<Code> code, RelocInfo::Mode rmode);
   void call(CodeStub* stub);
   void wasm_call(Address address, RelocInfo::Mode rmode);

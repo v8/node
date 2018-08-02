@@ -8,17 +8,20 @@
 #include <cmath>
 
 // Clients of this interface shouldn't depend on lots of heap internals.
-// Do not include anything from src/heap other than src/heap/heap.h here!
+// Do not include anything from src/heap other than src/heap/heap.h and its
+// write barrier here!
+#include "src/heap/heap-write-barrier.h"
 #include "src/heap/heap.h"
 
 #include "src/base/platform/platform.h"
 #include "src/counters-inl.h"
 #include "src/feedback-vector.h"
+
 // TODO(mstarzinger): There are 3 more includes to remove in order to no longer
 // leak heap internals to users of this interface!
 #include "src/heap/incremental-marking-inl.h"
 #include "src/heap/spaces-inl.h"
-#include "src/heap/store-buffer.h"
+#include "src/heap/store-buffer-inl.h"
 #include "src/isolate.h"
 #include "src/log.h"
 #include "src/msan.h"
@@ -31,6 +34,12 @@
 #include "src/profiler/heap-profiler.h"
 #include "src/string-hasher.h"
 #include "src/zone/zone-list-inl.h"
+
+// The following header includes the write barrier essentials that can also be
+// used stand-alone without including heap-inl.h.
+// TODO(mlippautz): Remove once users of object-macros.h include this file on
+// their own.
+#include "src/heap/heap-write-barrier-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -279,12 +288,33 @@ void Heap::UpdateAllocationsHash(uint32_t value) {
 
 
 void Heap::RegisterExternalString(String* string) {
+  DCHECK(string->IsExternalString());
+  DCHECK(!string->IsThinString());
   external_string_table_.AddString(string);
 }
 
+void Heap::UpdateExternalString(String* string, size_t old_payload,
+                                size_t new_payload) {
+  DCHECK(string->IsExternalString());
+  Page* page = Page::FromHeapObject(string);
+
+  if (old_payload > new_payload)
+    page->DecrementExternalBackingStoreBytes(
+        ExternalBackingStoreType::kExternalString, old_payload - new_payload);
+  else
+    page->IncrementExternalBackingStoreBytes(
+        ExternalBackingStoreType::kExternalString, new_payload - old_payload);
+}
 
 void Heap::FinalizeExternalString(String* string) {
   DCHECK(string->IsExternalString());
+  Page* page = Page::FromHeapObject(string);
+  ExternalString* ext_string = ExternalString::cast(string);
+
+  page->DecrementExternalBackingStoreBytes(
+      ExternalBackingStoreType::kExternalString,
+      ext_string->ExternalPayloadSize());
+
   v8::String::ExternalStringResourceBase** resource_addr =
       reinterpret_cast<v8::String::ExternalStringResourceBase**>(
           reinterpret_cast<byte*>(string) + ExternalString::kResourceOffset -
@@ -397,21 +427,6 @@ bool Heap::ShouldBePromoted(Address old_address) {
   Address age_mark = new_space_->age_mark();
   return page->IsFlagSet(MemoryChunk::NEW_SPACE_BELOW_AGE_MARK) &&
          (!page->ContainsLimit(age_mark) || old_address < age_mark);
-}
-
-void Heap::RecordWrite(Object* object, Object** slot, Object* value) {
-  DCHECK(!HasWeakHeapObjectTag(*slot));
-  DCHECK(!HasWeakHeapObjectTag(value));
-  DCHECK(object->IsHeapObject());  // Can't write to slots of a Smi.
-  if (!InNewSpace(value) || InNewSpace(HeapObject::cast(object))) return;
-  store_buffer()->InsertEntry(reinterpret_cast<Address>(slot));
-}
-
-void Heap::RecordWrite(Object* object, MaybeObject** slot, MaybeObject* value) {
-  if (!InNewSpace(value) || !object->IsHeapObject() || InNewSpace(object)) {
-    return;
-  }
-  store_buffer()->InsertEntry(reinterpret_cast<Address>(slot));
 }
 
 void Heap::RecordWriteIntoCode(Code* host, RelocInfo* rinfo, Object* value) {
@@ -530,6 +545,8 @@ Isolate* Heap::isolate() {
 
 void Heap::ExternalStringTable::AddString(String* string) {
   DCHECK(string->IsExternalString());
+  DCHECK(!Contains(string));
+
   if (InNewSpace(string)) {
     new_space_strings_.push_back(string);
   } else {

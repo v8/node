@@ -213,18 +213,20 @@ namespace internal {
   F(CreateCollator, 3, 1)                    \
   F(CreateDateTimeFormat, 3, 1)              \
   F(CreateNumberFormat, 3, 1)                \
+  F(DefineWEProperty, 3, 1)                  \
   F(CreatePluralRules, 3, 1)                 \
   F(CurrencyDigits, 1, 1)                    \
   F(DateCacheVersion, 0, 1)                  \
+  F(DefaultNumberOption, 5, 1)               \
   F(GetDefaultICULocale, 0, 1)               \
+  F(GetNumberOption, 5, 1)                   \
   F(InternalCompare, 3, 1)                   \
   F(InternalDateFormat, 2, 1)                \
-  F(InternalNumberFormat, 2, 1)              \
   F(IntlUnwrapReceiver, 5, 1)                \
   F(IsInitializedIntlObjectOfType, 2, 1)     \
+  F(IsWellFormedCurrencyCode, 1, 1)          \
   F(MarkAsInitializedIntlObjectOfType, 2, 1) \
   F(PluralRulesSelect, 2, 1)                 \
-  F(StringLocaleConvertCase, 3, 1)           \
   F(StringToLowerCaseIntl, 1, 1)             \
   F(StringToUpperCaseIntl, 1, 1)
 #else
@@ -588,7 +590,9 @@ namespace internal {
   F(StoreGlobalIC_Slow, 5, 1)                \
   F(StoreIC_Miss, 5, 1)                      \
   F(StoreInArrayLiteralIC_Slow, 5, 1)        \
-  F(StorePropertyWithInterceptor, 5, 1)
+  F(StorePropertyWithInterceptor, 5, 1)      \
+  F(CloneObjectIC_Miss, 4, 1)                \
+  F(CloneObjectIC_Slow, 2, 1)
 
 #define FOR_EACH_INTRINSIC_RETURN_OBJECT(F) \
   FOR_EACH_INTRINSIC_ARRAY(F)               \

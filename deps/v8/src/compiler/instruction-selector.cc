@@ -1705,11 +1705,11 @@ void InstructionSelector::VisitNode(Node* node) {
       return VisitWord32AtomicStore(node);
     case IrOpcode::kWord64AtomicStore:
       return VisitWord64AtomicStore(node);
-#define ATOMIC_CASE(name, rep)                               \
-  case IrOpcode::k##rep##Atomic##name: {                     \
-    MachineType type = AtomicOpRepresentationOf(node->op()); \
-    MarkAsRepresentation(type.representation(), node);       \
-    return Visit##rep##Atomic##name(node);                   \
+#define ATOMIC_CASE(name, rep)                         \
+  case IrOpcode::k##rep##Atomic##name: {               \
+    MachineType type = AtomicOpType(node->op());       \
+    MarkAsRepresentation(type.representation(), node); \
+    return Visit##rep##Atomic##name(node);             \
   }
       ATOMIC_CASE(Add, Word32)
       ATOMIC_CASE(Add, Word64)
@@ -1725,6 +1725,35 @@ void InstructionSelector::VisitNode(Node* node) {
       ATOMIC_CASE(Exchange, Word64)
       ATOMIC_CASE(CompareExchange, Word32)
       ATOMIC_CASE(CompareExchange, Word64)
+#undef ATOMIC_CASE
+#define ATOMIC_CASE(name)                     \
+  case IrOpcode::kWord32AtomicPair##name: {   \
+    MarkAsWord32(node);                       \
+    MarkPairProjectionsAsWord32(node);        \
+    return VisitWord32AtomicPair##name(node); \
+  }
+      ATOMIC_CASE(Add)
+      ATOMIC_CASE(Sub)
+      ATOMIC_CASE(And)
+      ATOMIC_CASE(Or)
+      ATOMIC_CASE(Xor)
+      ATOMIC_CASE(Exchange)
+      ATOMIC_CASE(CompareExchange)
+#undef ATOMIC_CASE
+#define ATOMIC_CASE(name)                              \
+  case IrOpcode::kWord64AtomicNarrow##name: {          \
+    MachineType type = AtomicOpType(node->op());       \
+    MarkAsRepresentation(type.representation(), node); \
+    MarkPairProjectionsAsWord32(node);                 \
+    return VisitWord64AtomicNarrow##name(node);        \
+  }
+      ATOMIC_CASE(Add)
+      ATOMIC_CASE(Sub)
+      ATOMIC_CASE(And)
+      ATOMIC_CASE(Or)
+      ATOMIC_CASE(Xor)
+      ATOMIC_CASE(Exchange)
+      ATOMIC_CASE(CompareExchange)
 #undef ATOMIC_CASE
     case IrOpcode::kSpeculationFence:
       return VisitSpeculationFence(node);
@@ -2352,6 +2381,64 @@ void InstructionSelector::VisitWord32PairShr(Node* node) { UNIMPLEMENTED(); }
 
 void InstructionSelector::VisitWord32PairSar(Node* node) { UNIMPLEMENTED(); }
 #endif  // V8_TARGET_ARCH_64_BIT
+
+#if !V8_TARGET_ARCH_IA32
+void InstructionSelector::VisitWord32AtomicPairAdd(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitWord32AtomicPairSub(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitWord32AtomicPairAnd(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitWord32AtomicPairOr(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitWord32AtomicPairXor(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitWord32AtomicPairExchange(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitWord32AtomicPairCompareExchange(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitWord64AtomicNarrowAdd(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitWord64AtomicNarrowSub(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitWord64AtomicNarrowAnd(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitWord64AtomicNarrowOr(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitWord64AtomicNarrowXor(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitWord64AtomicNarrowExchange(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitWord64AtomicNarrowCompareExchange(Node* node) {
+  UNIMPLEMENTED();
+}
+#endif  // !V8_TARGET_ARCH_IA32
 
 #if !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS && \
     !V8_TARGET_ARCH_MIPS64 && !V8_TARGET_ARCH_IA32

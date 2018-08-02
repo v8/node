@@ -83,20 +83,9 @@ class SharedEngineIsolate {
     return instance.ToHandleChecked();
   }
 
-  // TODO(mstarzinger): Switch over to a public API for sharing modules via the
-  // {v8::WasmCompiledModule::TransferrableModule} class once it is ready.
   Handle<WasmInstanceObject> ImportInstance(SharedModule shared_module) {
-    Vector<const byte> wire_bytes = shared_module->wire_bytes();
-    Handle<Script> script = CreateWasmScript(isolate(), wire_bytes);
     Handle<WasmModuleObject> module_object =
-        WasmModuleObject::New(isolate(), shared_module, script);
-
-    // TODO(6792): Wrappers below might be cloned using {Factory::CopyCode}.
-    // This requires unlocking the code space here. This should eventually be
-    // moved into the allocator.
-    CodeSpaceMemoryModificationScope modification_scope(isolate()->heap());
-    CompileJsToWasmWrappers(isolate(), module_object);
-
+        isolate()->wasm_engine()->ImportNativeModule(isolate(), shared_module);
     ErrorThrower thrower(isolate(), "ImportInstance");
     MaybeHandle<WasmInstanceObject> instance =
         isolate()->wasm_engine()->SyncInstantiate(isolate(), &thrower,
@@ -117,6 +106,26 @@ class SharedEngineIsolate {
   std::unique_ptr<Zone> zone_;
 };
 
+// Helper class representing a Thread running its own instance of an Isolate
+// with a shared WebAssembly engine available at construction time.
+class SharedEngineThread : public v8::base::Thread {
+ public:
+  SharedEngineThread(SharedEngine* engine,
+                     std::function<void(SharedEngineIsolate&)> callback)
+      : Thread(Options("SharedEngineThread")),
+        engine_(engine),
+        callback_(callback) {}
+
+  virtual void Run() {
+    SharedEngineIsolate isolate(engine_);
+    callback_(isolate);
+  }
+
+ private:
+  SharedEngine* engine_;
+  std::function<void(SharedEngineIsolate&)> callback_;
+};
+
 namespace {
 
 ZoneBuffer* BuildReturnConstantModule(Zone* zone, int constant) {
@@ -130,6 +139,61 @@ ZoneBuffer* BuildReturnConstantModule(Zone* zone, int constant) {
   f->Emit(kExprEnd);
   builder->WriteTo(*buffer);
   return buffer;
+}
+
+class MockInstantiationResolver : public InstantiationResultResolver {
+ public:
+  explicit MockInstantiationResolver(Handle<Object>* out_instance)
+      : out_instance_(out_instance) {}
+  virtual void OnInstantiationSucceeded(Handle<WasmInstanceObject> result) {
+    *out_instance_->location() = *result;
+  }
+  virtual void OnInstantiationFailed(Handle<Object> error_reason) {
+    UNREACHABLE();
+  }
+
+ private:
+  Handle<Object>* out_instance_;
+};
+
+class MockCompilationResolver : public CompilationResultResolver {
+ public:
+  MockCompilationResolver(SharedEngineIsolate& isolate,
+                          Handle<Object>* out_instance)
+      : isolate_(isolate), out_instance_(out_instance) {}
+  virtual void OnCompilationSucceeded(Handle<WasmModuleObject> result) {
+    isolate_.isolate()->wasm_engine()->AsyncInstantiate(
+        isolate_.isolate(),
+        base::make_unique<MockInstantiationResolver>(out_instance_), result,
+        {});
+  }
+  virtual void OnCompilationFailed(Handle<Object> error_reason) {
+    UNREACHABLE();
+  }
+
+ private:
+  SharedEngineIsolate& isolate_;
+  Handle<Object>* out_instance_;
+};
+
+void PumpMessageLoop(SharedEngineIsolate& isolate) {
+  v8::platform::PumpMessageLoop(i::V8::GetCurrentPlatform(),
+                                isolate.v8_isolate(),
+                                platform::MessageLoopBehavior::kWaitForWork);
+  isolate.isolate()->RunMicrotasks();
+}
+
+Handle<WasmInstanceObject> CompileAndInstantiateAsync(
+    SharedEngineIsolate& isolate, ZoneBuffer* buffer) {
+  Handle<Object> maybe_instance = handle(Smi::kZero, isolate.isolate());
+  isolate.isolate()->wasm_engine()->AsyncCompile(
+      isolate.isolate(),
+      base::make_unique<MockCompilationResolver>(isolate, &maybe_instance),
+      ModuleWireBytes(buffer->begin(), buffer->end()), true);
+  while (!maybe_instance->IsWasmInstanceObject()) PumpMessageLoop(isolate);
+  Handle<WasmInstanceObject> instance =
+      Handle<WasmInstanceObject>::cast(maybe_instance);
+  return instance;
 }
 
 }  // namespace
@@ -190,6 +254,74 @@ TEST(SharedEngineRunImported) {
     CHECK_EQ(2, module.use_count());
   }
   CHECK_EQ(1, module.use_count());
+}
+
+TEST(SharedEngineRunThreadedBuildingSync) {
+  SharedEngine engine;
+  SharedEngineThread thread1(&engine, [](SharedEngineIsolate& isolate) {
+    HandleScope scope(isolate.isolate());
+    ZoneBuffer* buffer = BuildReturnConstantModule(isolate.zone(), 23);
+    Handle<WasmInstanceObject> instance = isolate.CompileAndInstantiate(buffer);
+    CHECK_EQ(23, isolate.Run(instance));
+  });
+  SharedEngineThread thread2(&engine, [](SharedEngineIsolate& isolate) {
+    HandleScope scope(isolate.isolate());
+    ZoneBuffer* buffer = BuildReturnConstantModule(isolate.zone(), 42);
+    Handle<WasmInstanceObject> instance = isolate.CompileAndInstantiate(buffer);
+    CHECK_EQ(42, isolate.Run(instance));
+  });
+  thread1.Start();
+  thread2.Start();
+  thread1.Join();
+  thread2.Join();
+}
+
+TEST(SharedEngineRunThreadedBuildingAsync) {
+  SharedEngine engine;
+  SharedEngineThread thread1(&engine, [](SharedEngineIsolate& isolate) {
+    HandleScope scope(isolate.isolate());
+    ZoneBuffer* buffer = BuildReturnConstantModule(isolate.zone(), 23);
+    Handle<WasmInstanceObject> instance =
+        CompileAndInstantiateAsync(isolate, buffer);
+    CHECK_EQ(23, isolate.Run(instance));
+  });
+  SharedEngineThread thread2(&engine, [](SharedEngineIsolate& isolate) {
+    HandleScope scope(isolate.isolate());
+    ZoneBuffer* buffer = BuildReturnConstantModule(isolate.zone(), 42);
+    Handle<WasmInstanceObject> instance =
+        CompileAndInstantiateAsync(isolate, buffer);
+    CHECK_EQ(42, isolate.Run(instance));
+  });
+  thread1.Start();
+  thread2.Start();
+  thread1.Join();
+  thread2.Join();
+}
+
+TEST(SharedEngineRunThreadedExecution) {
+  SharedEngine engine;
+  SharedModule module;
+  {
+    SharedEngineIsolate isolate(&engine);
+    HandleScope scope(isolate.isolate());
+    ZoneBuffer* buffer = BuildReturnConstantModule(isolate.zone(), 23);
+    Handle<WasmInstanceObject> instance = isolate.CompileAndInstantiate(buffer);
+    module = isolate.ExportInstance(instance);
+  }
+  SharedEngineThread thread1(&engine, [module](SharedEngineIsolate& isolate) {
+    HandleScope scope(isolate.isolate());
+    Handle<WasmInstanceObject> instance = isolate.ImportInstance(module);
+    CHECK_EQ(23, isolate.Run(instance));
+  });
+  SharedEngineThread thread2(&engine, [module](SharedEngineIsolate& isolate) {
+    HandleScope scope(isolate.isolate());
+    Handle<WasmInstanceObject> instance = isolate.ImportInstance(module);
+    CHECK_EQ(23, isolate.Run(instance));
+  });
+  thread1.Start();
+  thread2.Start();
+  thread1.Join();
+  thread2.Join();
 }
 
 }  // namespace test_wasm_shared_engine
