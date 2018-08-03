@@ -297,7 +297,8 @@ NODE_EXTERN struct uv_loop_s* GetCurrentEventLoop(v8::Isolate* isolate);
 /* Converts a unixtime to V8 Date */
 #define NODE_UNIXTIME_V8(t) v8::Date::New(v8::Isolate::GetCurrent(),          \
     1000 * static_cast<double>(t))
-#define NODE_V8_UNIXTIME(v) (static_cast<double>((v)->NumberValue())/1000.0);
+#define NODE_V8_UNIXTIME(v) \
+  ((v)->IsNumber() ? (v).As<Number>()->Value() / 1000.0 : 0);
 
 #define NODE_DEFINE_CONSTANT(target, constant)                                \
   do {                                                                        \
