@@ -1263,9 +1263,9 @@ int SecureContext::TicketKeyCallback(SSL* ssl,
                                         {0, 0}).ToLocalChecked();
   Local<Array> arr = ret.As<Array>();
 
-  int r;
-  if (!arr->Get(kTicketKeyReturnIndex)->Int32Value(env->context()).To(&r) ||
-      r < 0)
+  int r =
+      arr->Get(kTicketKeyReturnIndex)->Int32Value(env->context()).FromMaybe(0);
+  if (r < 0)
     return r;
 
   Local<Value> hmac = arr->Get(kTicketKeyHMACIndex);
