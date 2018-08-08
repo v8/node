@@ -151,7 +151,7 @@ void SetWasmCalleeTag(RelocInfo* rinfo, uint32_t tag) {
   } else {
     DCHECK(instr->IsBranchAndLink() || instr->IsUnconditionalBranch());
     instr->SetBranchImmTarget(
-        reinterpret_cast<Instruction*>(rinfo->pc() + tag * kInstructionSize));
+        reinterpret_cast<Instruction*>(rinfo->pc() + tag * kInstrSize));
   }
 #else
   Address addr = static_cast<Address>(tag);
@@ -175,7 +175,7 @@ uint32_t GetWasmCalleeTag(RelocInfo* rinfo) {
         Memory::Address_at(rinfo->constant_pool_entry_address()));
   } else {
     DCHECK(instr->IsBranchAndLink() || instr->IsUnconditionalBranch());
-    return static_cast<uint32_t>(instr->ImmPCOffset() / kInstructionSize);
+    return static_cast<uint32_t>(instr->ImmPCOffset() / kInstrSize);
   }
 #else
   Address addr;
@@ -557,8 +557,8 @@ MaybeHandle<WasmModuleObject> DeserializeNativeModule(
   // handler was used or not when serializing.
   UseTrapHandler use_trap_handler =
       trap_handler::IsTrapHandlerEnabled() ? kUseTrapHandler : kNoTrapHandler;
-  wasm::ModuleEnv env(module, use_trap_handler,
-                      wasm::RuntimeExceptionSupport::kRuntimeExceptionSupport);
+  ModuleEnv env(module, use_trap_handler,
+                RuntimeExceptionSupport::kRuntimeExceptionSupport);
 
   OwnedVector<uint8_t> wire_bytes_copy = OwnedVector<uint8_t>::Of(wire_bytes);
 

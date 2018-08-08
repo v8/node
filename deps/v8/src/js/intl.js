@@ -194,6 +194,7 @@ function GetServiceRE() {
  * Matches valid IANA time zone names.
  */
 var TIMEZONE_NAME_CHECK_RE = UNDEFINED;
+var GMT_OFFSET_TIMEZONE_NAME_CHECK_RE = UNDEFINED;
 
 function GetTimezoneNameCheckRE() {
   if (IS_UNDEFINED(TIMEZONE_NAME_CHECK_RE)) {
@@ -201,6 +202,14 @@ function GetTimezoneNameCheckRE() {
         '^([A-Za-z]+)/([A-Za-z_-]+)((?:\/[A-Za-z_-]+)+)*$');
   }
   return TIMEZONE_NAME_CHECK_RE;
+}
+
+function GetGMTOffsetTimezoneNameCheckRE() {
+  if (IS_UNDEFINED(GMT_OFFSET_TIMEZONE_NAME_CHECK_RE)) {
+     GMT_OFFSET_TIMEZONE_NAME_CHECK_RE = new GlobalRegExp(
+         '^(?:ETC/GMT)(?<offset>0|[+-](?:[0-9]|1[0-4]))$');
+  }
+  return GMT_OFFSET_TIMEZONE_NAME_CHECK_RE;
 }
 
 /**
@@ -417,7 +426,12 @@ function attemptSingleLookup(availableLocales, requestedLocale) {
     var extensionMatch = %regexp_internal_match(
         GetUnicodeExtensionRE(), requestedLocale);
     var extension = IS_NULL(extensionMatch) ? '' : extensionMatch[0];
-    return {__proto__: null, locale: availableLocale, extension: extension};
+    return {
+      __proto__: null,
+      locale: availableLocale,
+      extension: extension,
+      localeWithExtension: availableLocale + extension,
+    };
   }
   return UNDEFINED;
 }
@@ -454,7 +468,8 @@ function lookupMatcher(service, requestedLocales) {
   return {
     __proto__: null,
     locale: 'und',
-    extension: ''
+    extension: '',
+    localeWithExtension: 'und',
   };
 }
 
@@ -751,16 +766,17 @@ function canonicalizeLocaleList(locales) {
   return seen;
 }
 
-function initializeLocaleList(locales) {
-  return freezeArray(canonicalizeLocaleList(locales));
-}
-
 // TODO(ftang): remove the %InstallToContext once
 // initializeLocaleList is available in C++
 // https://bugs.chromium.org/p/v8/issues/detail?id=7987
 %InstallToContext([
-  "initialize_locale_list", initializeLocaleList
+  "canonicalize_locale_list", canonicalizeLocaleList
 ]);
+
+
+function initializeLocaleList(locales) {
+  return freezeArray(canonicalizeLocaleList(locales));
+}
 
 // ECMA 402 section 8.2.1
 DEFINE_METHOD(
@@ -771,140 +787,12 @@ DEFINE_METHOD(
 );
 
 /**
- * Initializes the given object so it's a valid Collator instance.
- * Useful for subclassing.
- */
-function CreateCollator(locales, options) {
-  if (IS_UNDEFINED(options)) {
-    options = {__proto__: null};
-  }
-
-  var getOption = getGetOption(options, 'collator');
-
-  var internalOptions = {__proto__: null};
-
-  %DefineWEProperty(internalOptions, 'usage', getOption(
-    'usage', 'string', ['sort', 'search'], 'sort'));
-
-  var sensitivity = getOption('sensitivity', 'string',
-                              ['base', 'accent', 'case', 'variant']);
-  if (IS_UNDEFINED(sensitivity) && internalOptions.usage === 'sort') {
-    sensitivity = 'variant';
-  }
-  %DefineWEProperty(internalOptions, 'sensitivity', sensitivity);
-
-  %DefineWEProperty(internalOptions, 'ignorePunctuation', getOption(
-    'ignorePunctuation', 'boolean', UNDEFINED, false));
-
-  var locale = resolveLocale('collator', locales, options);
-
-  // TODO(jshin): ICU now can take kb, kc, etc. Switch over to using ICU
-  // directly. See Collator::InitializeCollator and
-  // Collator::CreateICUCollator in src/objects/intl-objects.cc
-  // ICU can't take kb, kc... parameters through localeID, so we need to pass
-  // them as options.
-  // One exception is -co- which has to be part of the extension, but only for
-  // usage: sort, and its value can't be 'standard' or 'search'.
-  var extensionMap = parseExtension(locale.extension);
-
-  /**
-   * Map of Unicode extensions to option properties, and their values and types,
-   * for a collator.
-   */
-  var COLLATOR_KEY_MAP = {
-    __proto__: null,
-    'kn': { __proto__: null, 'property': 'numeric', 'type': 'boolean'},
-    'kf': { __proto__: null, 'property': 'caseFirst', 'type': 'string',
-           'values': ['false', 'lower', 'upper']}
-  };
-
-  setOptions(
-      options, extensionMap, COLLATOR_KEY_MAP, getOption, internalOptions);
-
-  var collation = 'default';
-  var extension = '';
-  if (HAS_OWN_PROPERTY(extensionMap, 'co') && internalOptions.usage === 'sort') {
-
-    /**
-     * Allowed -u-co- values. List taken from:
-     * http://unicode.org/repos/cldr/trunk/common/bcp47/collation.xml
-     */
-    var ALLOWED_CO_VALUES = [
-      'big5han', 'dict', 'direct', 'ducet', 'gb2312', 'phonebk', 'phonetic',
-      'pinyin', 'reformed', 'searchjl', 'stroke', 'trad', 'unihan', 'zhuyin'
-    ];
-
-    if (%ArrayIndexOf(ALLOWED_CO_VALUES, extensionMap.co, 0) !== -1) {
-      extension = '-u-co-' + extensionMap.co;
-      // ICU can't tell us what the collation is, so save user's input.
-      collation = extensionMap.co;
-    }
-  } else if (internalOptions.usage === 'search') {
-    extension = '-u-co-search';
-  }
-  %DefineWEProperty(internalOptions, 'collation', collation);
-
-  var requestedLocale = locale.locale + extension;
-
-  // We define all properties C++ code may produce, to prevent security
-  // problems. If malicious user decides to redefine Object.prototype.locale
-  // we can't just use plain x.locale = 'us' or in C++ Set("locale", "us").
-  // %object_define_properties will either succeed defining or throw an error.
-  var resolved = %object_define_properties({__proto__: null}, {
-    caseFirst: {writable: true},
-    collation: {value: internalOptions.collation, writable: true},
-    ignorePunctuation: {writable: true},
-    locale: {writable: true},
-    numeric: {writable: true},
-    requestedLocale: {value: requestedLocale, writable: true},
-    sensitivity: {writable: true},
-    strength: {writable: true},
-    usage: {value: internalOptions.usage, writable: true}
-  });
-
-  var collator = %CreateCollator(requestedLocale, internalOptions, resolved);
-
-  %MarkAsInitializedIntlObjectOfType(collator, COLLATOR_TYPE);
-  collator[resolvedSymbol] = resolved;
-
-  return collator;
-}
-
-
-/**
- * Constructs Intl.Collator object given optional locales and options
- * parameters.
- *
- * @constructor
- */
-function CollatorConstructor() {
-  return IntlConstruct(this, GlobalIntlCollator, CreateCollator, new.target,
-                       arguments);
-}
-%SetCode(GlobalIntlCollator, CollatorConstructor);
-
-
-/**
  * Collator resolvedOptions method.
  */
 DEFINE_METHOD(
   GlobalIntlCollator.prototype,
   resolvedOptions() {
-    var methodName = 'resolvedOptions';
-    if(!IS_RECEIVER(this)) {
-      throw %make_type_error(kIncompatibleMethodReceiver, methodName, this);
-    }
-    var coll = %IntlUnwrapReceiver(this, COLLATOR_TYPE, GlobalIntlCollator,
-                                   methodName, false);
-    return {
-      locale: coll[resolvedSymbol].locale,
-      usage: coll[resolvedSymbol].usage,
-      sensitivity: coll[resolvedSymbol].sensitivity,
-      ignorePunctuation: coll[resolvedSymbol].ignorePunctuation,
-      numeric: coll[resolvedSymbol].numeric,
-      caseFirst: coll[resolvedSymbol].caseFirst,
-      collation: coll[resolvedSymbol].collation
-    };
+    return %CollatorResolvedOptions(this);
   }
 );
 
@@ -940,84 +828,10 @@ function compare(collator, x, y) {
 
 AddBoundMethod(GlobalIntlCollator, 'compare', compare, 2, COLLATOR_TYPE, false);
 
-function PluralRulesConstructor() {
-  if (IS_UNDEFINED(new.target)) {
-    throw %make_type_error(kConstructorNotFunction, "PluralRules");
-  }
-
-  var locales = arguments[0];
-  var options = arguments[1];
-
-  if (IS_UNDEFINED(options)) {
-    options = {__proto__: null};
-  }
-
-  var getOption = getGetOption(options, 'pluralrules');
-
-  var locale = resolveLocale('pluralrules', locales, options);
-
-  var internalOptions = {__proto__: null};
-  %DefineWEProperty(internalOptions, 'type', getOption(
-    'type', 'string', ['cardinal', 'ordinal'], 'cardinal'));
-
-  SetNumberFormatDigitOptions(internalOptions, options, 0, 3);
-
-  var requestedLocale = locale.locale;
-  var resolved = %object_define_properties({__proto__: null}, {
-    type: {value: internalOptions.type, writable: true},
-    locale: {writable: true},
-    maximumFractionDigits: {writable: true},
-    minimumFractionDigits: {writable: true},
-    minimumIntegerDigits: {writable: true},
-    requestedLocale: {value: requestedLocale, writable: true},
-  });
-  if (HAS_OWN_PROPERTY(internalOptions, 'minimumSignificantDigits')) {
-    %DefineWEProperty(resolved, 'minimumSignificantDigits', UNDEFINED);
-  }
-  if (HAS_OWN_PROPERTY(internalOptions, 'maximumSignificantDigits')) {
-    %DefineWEProperty(resolved, 'maximumSignificantDigits', UNDEFINED);
-  }
-  %DefineWEProperty(resolved, 'pluralCategories', []);
-  var pluralRules = %CreatePluralRules(requestedLocale, internalOptions,
-                                       resolved);
-
-  %MarkAsInitializedIntlObjectOfType(pluralRules, PLURAL_RULES_TYPE);
-  pluralRules[resolvedSymbol] = resolved;
-
-  return pluralRules;
-}
-%SetCode(GlobalIntlPluralRules, PluralRulesConstructor);
-
 DEFINE_METHOD(
   GlobalIntlPluralRules.prototype,
   resolvedOptions() {
-    if (!%IsInitializedIntlObjectOfType(this, PLURAL_RULES_TYPE)) {
-      throw %make_type_error(kIncompatibleMethodReceiver,
-                             'Intl.PluralRules.prototype.resolvedOptions',
-                             this);
-    }
-
-    var result = {
-      locale: this[resolvedSymbol].locale,
-      type: this[resolvedSymbol].type,
-      minimumIntegerDigits: this[resolvedSymbol].minimumIntegerDigits,
-      minimumFractionDigits: this[resolvedSymbol].minimumFractionDigits,
-      maximumFractionDigits: this[resolvedSymbol].maximumFractionDigits,
-    };
-
-    if (HAS_OWN_PROPERTY(this[resolvedSymbol], 'minimumSignificantDigits')) {
-      defineWECProperty(result, 'minimumSignificantDigits',
-                        this[resolvedSymbol].minimumSignificantDigits);
-    }
-
-    if (HAS_OWN_PROPERTY(this[resolvedSymbol], 'maximumSignificantDigits')) {
-      defineWECProperty(result, 'maximumSignificantDigits',
-                        this[resolvedSymbol].maximumSignificantDigits);
-    }
-
-    defineWECProperty(result, 'pluralCategories',
-        %_Call(ArraySlice, this[resolvedSymbol].pluralCategories));
-    return result;
+    return %PluralRulesResolvedOptions(this);
   }
 );
 
@@ -1031,12 +845,6 @@ DEFINE_METHOD(
 DEFINE_METHOD(
   GlobalIntlPluralRules.prototype,
   select(value) {
-    if (!%IsInitializedIntlObjectOfType(this, PLURAL_RULES_TYPE)) {
-      throw %make_type_error(kIncompatibleMethodReceiver,
-                            'Intl.PluralRules.prototype.select',
-                            this);
-    }
-
     return %PluralRulesSelect(this, TO_NUMBER(value) + 0);
   }
 );
@@ -1510,7 +1318,7 @@ function CreateDateTimeFormat(locales, options) {
     {__proto__: null, skeleton: ldmlString, timeZone: tz}, resolved);
 
   if (resolved.timeZone === "Etc/Unknown") {
-    throw %make_range_error(kUnsupportedTimeZone, tz);
+    throw %make_range_error(kInvalidTimeZone, tz);
   }
 
   %MarkAsInitializedIntlObjectOfType(dateFormat, DATE_TIME_FORMAT_TYPE);
@@ -1644,18 +1452,28 @@ function canonicalizeTimeZoneID(tzID) {
     return 'UTC';
   }
 
-  // TODO(jshin): Add support for Etc/GMT[+-]([1-9]|1[0-2])
-
   // We expect only _, '-' and / beside ASCII letters.
-  // All inputs should conform to Area/Location(/Location)* from now on.
-  var match = %regexp_internal_match(GetTimezoneNameCheckRE(), tzID);
-  if (IS_NULL(match)) throw %make_range_error(kExpectedTimezoneID, tzID);
+  // All inputs should conform to Area/Location(/Location)*, or Etc/GMT* .
+  // TODO(jshin): 1. Support 'GB-Eire", 'EST5EDT", "ROK', 'US/*', 'NZ' and many
+  // other aliases/linked names when moving timezone validation code to C++.
+  // See crbug.com/364374 and crbug.com/v8/8007 .
+  // 2. Resolve the difference betwee CLDR/ICU and IANA time zone db.
+  // See http://unicode.org/cldr/trac/ticket/9892 and crbug.com/645807 .
+  let match = %regexp_internal_match(GetTimezoneNameCheckRE(), tzID);
+  if (IS_NULL(match)) {
+    let match =
+      %regexp_internal_match(GetGMTOffsetTimezoneNameCheckRE(), upperID);
+     if (!IS_NULL(match) && match.length == 2)
+       return "Etc/GMT" + match.groups.offset;
+     else
+       throw %make_range_error(kInvalidTimeZone, tzID);
+  }
 
-  var result = toTitleCaseTimezoneLocation(match[1]) + '/' +
+  let result = toTitleCaseTimezoneLocation(match[1]) + '/' +
                toTitleCaseTimezoneLocation(match[2]);
 
   if (!IS_UNDEFINED(match[3]) && 3 < match.length) {
-    var locations = %StringSplit(match[3], '/', kMaxUint32);
+    let locations = %StringSplit(match[3], '/', kMaxUint32);
     // The 1st element is empty. Starts with i=1.
     for (var i = 1; i < locations.length; i++) {
       result = result + '/' + toTitleCaseTimezoneLocation(locations[i]);

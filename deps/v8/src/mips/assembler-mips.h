@@ -305,6 +305,7 @@ DOUBLE_REGISTERS(DECLARE_DOUBLE_REGISTER)
 #undef DECLARE_DOUBLE_REGISTER
 
 constexpr DoubleRegister no_freg = DoubleRegister::no_reg();
+constexpr DoubleRegister no_dreg = DoubleRegister::no_reg();
 
 // SIMD registers.
 typedef MSARegister Simd128Register;
@@ -556,6 +557,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
     return branch_offset26(L) >> 2;
   }
   uint32_t jump_address(Label* L);
+  uint32_t branch_long_offset(Label* L);
 
   // Puts a labels target address at the given position.
   // The high 8 bits are set to zero.
@@ -605,16 +607,19 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
       Address pc, Address target,
       RelocInfo::Mode mode = RelocInfo::INTERNAL_REFERENCE);
 
-  // Size of an instruction.
-  static constexpr int kInstrSize = sizeof(Instr);
-
   // Difference between address of current opcode and target address offset.
-  static constexpr int kBranchPCOffset = 4;
+  static constexpr int kBranchPCOffset = kInstrSize;
 
   // Difference between address of current opcode and target address offset,
   // when we are generatinga sequence of instructions for long relative PC
   // branches
-  static constexpr int kLongBranchPCOffset = 12;
+  static constexpr int kLongBranchPCOffset = 3 * kInstrSize;
+
+  // Adjust ra register in branch delay slot of bal instruction so to skip
+  // instructions not needed after optimization of PIC in
+  // TurboAssembler::BranchAndLink method.
+
+  static constexpr int kOptimizedBranchAndLinkLongReturnOffset = 4 * kInstrSize;
 
   // Here we are patching the address in the LUI/ORI instruction pair.
   // These values are used in the serialization process and must be zero for
@@ -622,6 +627,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   // are split across two consecutive instructions and don't exist separately
   // in the code, so the serializer should not step forwards in memory after
   // a target is resolved and written.
+
   static constexpr int kSpecialTargetSize = 0;
 
   // Number of consecutive instructions used to store 32bit constant. This
@@ -649,7 +655,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   static constexpr int kMaxCompactBranchOffset = (1 << (28 - 1)) - 1;
 
   static constexpr int kTrampolineSlotsSize =
-      IsMipsArchVariant(kMips32r6) ? 2 * kInstrSize : 8 * kInstrSize;
+      IsMipsArchVariant(kMips32r6) ? 2 * kInstrSize : 7 * kInstrSize;
 
   RegList* GetScratchRegisterList() { return &scratch_register_list_; }
 
@@ -1758,6 +1764,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   static bool IsBranch(Instr instr);
   static bool IsMsaBranch(Instr instr);
   static bool IsBc(Instr instr);
+  static bool IsBal(Instr instr);
   static bool IsBzc(Instr instr);
   static bool IsBeq(Instr instr);
   static bool IsBne(Instr instr);

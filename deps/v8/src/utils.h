@@ -1562,14 +1562,11 @@ bool DoubleToBoolean(double d);
 template <typename Stream>
 bool StringToArrayIndex(Stream* stream, uint32_t* index);
 
-// Returns current value of top of the stack. Works correctly with ASAN.
-DISABLE_ASAN
-inline uintptr_t GetCurrentStackPosition() {
-  // Takes the address of the limit variable in order to find out where
-  // the top of stack is right now.
-  uintptr_t limit = reinterpret_cast<uintptr_t>(&limit);
-  return limit;
-}
+// Returns the current stack top. Works correctly with ASAN and SafeStack.
+// GetCurrentStackPosition() should not be inlined, because it works on stack
+// frames if it were inlined into a function with a huge stack frame it would
+// return an address significantly above the actual current stack position.
+V8_NOINLINE uintptr_t GetCurrentStackPosition();
 
 template <typename V>
 static inline V ByteReverse(V value) {
@@ -1718,6 +1715,15 @@ class ThreadedList final {
 
 V8_EXPORT_PRIVATE bool PassesFilter(Vector<const char> name,
                                     Vector<const char> filter);
+
+// Zap the specified area with a specific byte pattern. This currently defaults
+// to int3 on x64 and ia32. On other architectures this will produce unspecified
+// instruction sequences.
+// TODO(jgruber): Better support for other architectures.
+V8_INLINE void ZapCode(Address addr, size_t size_in_bytes) {
+  static constexpr int kZapByte = 0xCC;
+  std::memset(reinterpret_cast<void*>(addr), kZapByte, size_in_bytes);
+}
 
 }  // namespace internal
 }  // namespace v8

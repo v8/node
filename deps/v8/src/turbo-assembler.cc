@@ -7,6 +7,7 @@
 #include "src/builtins/builtins.h"
 #include "src/builtins/constants-table-builder.h"
 #include "src/heap/heap-inl.h"
+#include "src/lsan.h"
 #include "src/snapshot/serializer-common.h"
 
 namespace v8 {
@@ -25,7 +26,6 @@ TurboAssemblerBase::TurboAssemblerBase(Isolate* isolate,
 
 void TurboAssemblerBase::IndirectLoadConstant(Register destination,
                                               Handle<HeapObject> object) {
-  CHECK(isolate()->ShouldLoadConstantsFromRootList());
   CHECK(root_array_available_);
 
   // Before falling back to the (fairly slow) lookup from the constants table,
@@ -47,6 +47,7 @@ void TurboAssemblerBase::IndirectLoadConstant(Register destination,
     LoadRootRelative(destination,
                      RootRegisterOffsetForBuiltinIndex(maybe_builtin_index_));
   } else {
+    CHECK(isolate()->ShouldLoadConstantsFromRootList());
     // Ensure the given object is in the builtins constants table and fetch its
     // index.
     BuiltinsConstantsTableBuilder* builder =
@@ -60,7 +61,6 @@ void TurboAssemblerBase::IndirectLoadConstant(Register destination,
 
 void TurboAssemblerBase::IndirectLoadExternalReference(
     Register destination, ExternalReference reference) {
-  CHECK(isolate()->ShouldLoadConstantsFromRootList());
   CHECK(root_array_available_);
 
   if (IsAddressableThroughRootRegister(isolate(), reference)) {
@@ -117,6 +117,71 @@ int32_t TurboAssemblerBase::RootRegisterOffsetForBuiltinIndex(
   return Heap::roots_to_builtins_offset() - kRootRegisterBias +
          builtin_index * kPointerSize;
 }
+
+void TurboAssemblerBase::RecordCommentForOffHeapTrampoline(int builtin_index) {
+  if (!FLAG_code_comments) return;
+  size_t len = strlen("-- Inlined Trampoline to  --") +
+               strlen(Builtins::name(builtin_index)) + 1;
+  Vector<char> buffer = Vector<char>::New(static_cast<int>(len));
+  char* buffer_start = buffer.start();
+  LSAN_IGNORE_OBJECT(buffer_start);
+  SNPrintF(buffer, "-- Inlined Trampoline to %s --",
+           Builtins::name(builtin_index));
+  RecordComment(buffer_start);
+}
+
+#ifdef DEBUG
+
+bool AreAliased(Register reg1, Register reg2, Register reg3, Register reg4,
+                Register reg5, Register reg6, Register reg7, Register reg8,
+                Register reg9, Register reg10) {
+  int n_of_valid_regs = reg1.is_valid() + reg2.is_valid() + reg3.is_valid() +
+                        reg4.is_valid() + reg5.is_valid() + reg6.is_valid() +
+                        reg7.is_valid() + reg8.is_valid() + reg9.is_valid() +
+                        reg10.is_valid();
+
+  RegList regs = 0;
+  if (reg1.is_valid()) regs |= reg1.bit();
+  if (reg2.is_valid()) regs |= reg2.bit();
+  if (reg3.is_valid()) regs |= reg3.bit();
+  if (reg4.is_valid()) regs |= reg4.bit();
+  if (reg5.is_valid()) regs |= reg5.bit();
+  if (reg6.is_valid()) regs |= reg6.bit();
+  if (reg7.is_valid()) regs |= reg7.bit();
+  if (reg8.is_valid()) regs |= reg8.bit();
+  if (reg9.is_valid()) regs |= reg9.bit();
+  if (reg10.is_valid()) regs |= reg10.bit();
+  int n_of_non_aliasing_regs = NumRegs(regs);
+
+  return n_of_valid_regs != n_of_non_aliasing_regs;
+}
+
+bool AreAliased(DoubleRegister reg1, DoubleRegister reg2, DoubleRegister reg3,
+                DoubleRegister reg4, DoubleRegister reg5, DoubleRegister reg6,
+                DoubleRegister reg7, DoubleRegister reg8, DoubleRegister reg9,
+                DoubleRegister reg10) {
+  int n_of_valid_regs = reg1.is_valid() + reg2.is_valid() + reg3.is_valid() +
+                        reg4.is_valid() + reg5.is_valid() + reg6.is_valid() +
+                        reg7.is_valid() + reg8.is_valid() + reg9.is_valid() +
+                        reg10.is_valid();
+
+  RegList regs = 0;
+  if (reg1.is_valid()) regs |= reg1.bit();
+  if (reg2.is_valid()) regs |= reg2.bit();
+  if (reg3.is_valid()) regs |= reg3.bit();
+  if (reg4.is_valid()) regs |= reg4.bit();
+  if (reg5.is_valid()) regs |= reg5.bit();
+  if (reg6.is_valid()) regs |= reg6.bit();
+  if (reg7.is_valid()) regs |= reg7.bit();
+  if (reg8.is_valid()) regs |= reg8.bit();
+  if (reg9.is_valid()) regs |= reg9.bit();
+  if (reg10.is_valid()) regs |= reg10.bit();
+  int n_of_non_aliasing_regs = NumRegs(regs);
+
+  return n_of_valid_regs != n_of_non_aliasing_regs;
+}
+
+#endif  // DEBUG
 
 }  // namespace internal
 }  // namespace v8

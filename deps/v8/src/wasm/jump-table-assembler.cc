@@ -36,6 +36,8 @@ void JumpTableAssembler::EmitLazyCompileJumpSlot(uint32_t func_index,
   pushq(Immediate(func_index));                           // max 5 bytes
   movq(kScratchRegister, uint64_t{lazy_compile_target});  // max 10 bytes
   jmp(kScratchRegister);                                  // 3 bytes
+
+  PatchConstPool();  // force patching entries for partial const pool
 }
 
 void JumpTableAssembler::EmitJumpSlot(Address target) {
@@ -80,18 +82,9 @@ void JumpTableAssembler::EmitLazyCompileJumpSlot(uint32_t func_index,
 }
 
 void JumpTableAssembler::EmitJumpSlot(Address target) {
-  int offset =
-      target - reinterpret_cast<Address>(pc_) - Instruction::kPcLoadDelta;
-  DCHECK_EQ(0, offset % kInstrSize);
-  // If the offset is within 64 MB, emit a direct jump. Otherwise jump
-  // indirectly.
-  if (is_int26(offset)) {
-    b(offset);  // 1 instr
-  } else {
-    // {Move32BitImmediate} emits either [movw, movt, mov] or [ldr, constant].
-    Move32BitImmediate(pc, Operand(target));
-  }
-
+  // Note that {Move32BitImmediate} emits [ldr, constant] for the relocation
+  // mode used below, we need this to allow concurrent patching of this slot.
+  Move32BitImmediate(pc, Operand(target, RelocInfo::WASM_CALL));
   CheckConstPool(true, false);  // force emit of const pool
 }
 
@@ -116,8 +109,8 @@ void JumpTableAssembler::EmitJumpSlot(Address target) {
 
 void JumpTableAssembler::NopBytes(int bytes) {
   DCHECK_LE(0, bytes);
-  DCHECK_EQ(0, bytes % kInstructionSize);
-  for (; bytes > 0; bytes -= kInstructionSize) {
+  DCHECK_EQ(0, bytes % kInstrSize);
+  for (; bytes > 0; bytes -= kInstrSize) {
     nop();
   }
 }

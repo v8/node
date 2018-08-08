@@ -217,8 +217,10 @@ namespace internal {
 #ifdef V8_INTL_SUPPORT
 #define INSTANCE_TYPE_LIST(V)          \
   INSTANCE_TYPE_LIST_BEFORE_INTL(V)    \
+  V(JS_INTL_COLLATOR_TYPE)             \
   V(JS_INTL_LIST_FORMAT_TYPE)          \
   V(JS_INTL_LOCALE_TYPE)               \
+  V(JS_INTL_PLURAL_RULES_TYPE)         \
   V(JS_INTL_RELATIVE_TIME_FORMAT_TYPE) \
   INSTANCE_TYPE_LIST_AFTER_INTL(V)
 #else

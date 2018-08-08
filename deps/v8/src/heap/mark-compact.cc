@@ -1784,6 +1784,18 @@ void MarkCompactCollector::MarkLiveObjects() {
 
     DCHECK(marking_worklist()->IsEmpty());
 
+    // Mark objects reachable through the embedder heap. This phase is
+    // opportunistic as it may not discover graphs that are only reachable
+    // through ephemerons.
+    {
+      TRACE_GC(heap()->tracer(), GCTracer::Scope::MC_MARK_WRAPPERS);
+      while (!heap_->local_embedder_heap_tracer()->IsRemoteTracingDone()) {
+        PerformWrapperTracing();
+        ProcessMarkingWorklist();
+      }
+      DCHECK(marking_worklist()->IsEmpty());
+    }
+
     // The objects reachable from the roots are marked, yet unreachable objects
     // are unmarked. Mark objects reachable due to embedder heap tracing or
     // harmony weak maps.
@@ -3903,7 +3915,7 @@ void MinorMarkCompactCollector::MakeIterable(
           p->AddressToMarkbitIndex(free_start),
           p->AddressToMarkbitIndex(free_end));
       if (free_space_mode == ZAP_FREE_SPACE) {
-        memset(reinterpret_cast<void*>(free_start), 0xCC, size);
+        ZapCode(free_start, size);
       }
       p->heap()->CreateFillerObjectAt(free_start, static_cast<int>(size),
                                       ClearRecordedSlots::kNo);
@@ -3920,7 +3932,7 @@ void MinorMarkCompactCollector::MakeIterable(
         p->AddressToMarkbitIndex(free_start),
         p->AddressToMarkbitIndex(p->area_end()));
     if (free_space_mode == ZAP_FREE_SPACE) {
-      memset(reinterpret_cast<void*>(free_start), 0xCC, size);
+      ZapCode(free_start, size);
     }
     p->heap()->CreateFillerObjectAt(free_start, static_cast<int>(size),
                                     ClearRecordedSlots::kNo);

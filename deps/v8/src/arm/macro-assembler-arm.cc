@@ -173,7 +173,6 @@ void TurboAssembler::Jump(Register target, Condition cond) { bx(target, cond); }
 
 void TurboAssembler::Jump(intptr_t target, RelocInfo::Mode rmode,
                           Condition cond) {
-  DCHECK(RelocInfo::IsCodeTarget(rmode));
   mov(pc, Operand(target, rmode), LeaveCC, cond);
 }
 
@@ -194,8 +193,7 @@ void TurboAssembler::Jump(Handle<Code> code, RelocInfo::Mode rmode,
     if (target_is_isolate_independent_builtin &&
         options().use_pc_relative_calls_and_jumps) {
       int32_t code_target_index = AddCodeTarget(code);
-      b(code_target_index * Instruction::kInstrSize, cond,
-        RelocInfo::RELATIVE_CODE_TARGET);
+      b(code_target_index * kInstrSize, cond, RelocInfo::RELATIVE_CODE_TARGET);
       return;
     } else if (root_array_available_ && options().isolate_independent_code) {
       UseScratchRegisterScope temps(this);
@@ -207,6 +205,7 @@ void TurboAssembler::Jump(Handle<Code> code, RelocInfo::Mode rmode,
     } else if (target_is_isolate_independent_builtin &&
                options().inline_offheap_trampolines) {
       // Inline the trampoline.
+      RecordCommentForOffHeapTrampoline(builtin_index);
       EmbeddedData d = EmbeddedData::FromBlob();
       Address entry = d.InstructionStartOfBuiltin(builtin_index);
       // Use ip directly instead of using UseScratchRegisterScope, as we do not
@@ -273,8 +272,7 @@ void TurboAssembler::Call(Handle<Code> code, RelocInfo::Mode rmode,
     if (target_is_isolate_independent_builtin &&
         options().use_pc_relative_calls_and_jumps) {
       int32_t code_target_index = AddCodeTarget(code);
-      bl(code_target_index * Instruction::kInstrSize, cond,
-         RelocInfo::RELATIVE_CODE_TARGET);
+      bl(code_target_index * kInstrSize, cond, RelocInfo::RELATIVE_CODE_TARGET);
       return;
     } else if (root_array_available_ && options().isolate_independent_code) {
       // Use ip directly instead of using UseScratchRegisterScope, as we do not
@@ -286,7 +284,7 @@ void TurboAssembler::Call(Handle<Code> code, RelocInfo::Mode rmode,
     } else if (target_is_isolate_independent_builtin &&
                options().inline_offheap_trampolines) {
       // Inline the trampoline.
-      DCHECK(Builtins::IsBuiltinId(builtin_index));
+      RecordCommentForOffHeapTrampoline(builtin_index);
       EmbeddedData d = EmbeddedData::FromBlob();
       Address entry = d.InstructionStartOfBuiltin(builtin_index);
       // Use ip directly instead of using UseScratchRegisterScope, as we do not
@@ -2398,34 +2396,6 @@ Register GetRegisterThatIsNotOneOf(Register reg1,
   }
   UNREACHABLE();
 }
-
-#ifdef DEBUG
-bool AreAliased(Register reg1,
-                Register reg2,
-                Register reg3,
-                Register reg4,
-                Register reg5,
-                Register reg6,
-                Register reg7,
-                Register reg8) {
-  int n_of_valid_regs = reg1.is_valid() + reg2.is_valid() +
-      reg3.is_valid() + reg4.is_valid() + reg5.is_valid() + reg6.is_valid() +
-      reg7.is_valid() + reg8.is_valid();
-
-  RegList regs = 0;
-  if (reg1.is_valid()) regs |= reg1.bit();
-  if (reg2.is_valid()) regs |= reg2.bit();
-  if (reg3.is_valid()) regs |= reg3.bit();
-  if (reg4.is_valid()) regs |= reg4.bit();
-  if (reg5.is_valid()) regs |= reg5.bit();
-  if (reg6.is_valid()) regs |= reg6.bit();
-  if (reg7.is_valid()) regs |= reg7.bit();
-  if (reg8.is_valid()) regs |= reg8.bit();
-  int n_of_non_aliasing_regs = NumRegs(regs);
-
-  return n_of_valid_regs != n_of_non_aliasing_regs;
-}
-#endif
 
 void TurboAssembler::ComputeCodeStartAddress(Register dst) {
   // We can use the register pc - 8 for the address of the current instruction.

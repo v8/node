@@ -30,19 +30,10 @@ AUTO_EXCLUDE = [
   'src/flag-definitions.h',
   # blacklist of headers we need to fix (https://crbug.com/v8/7965).
   'src/allocation-site-scopes.h',
-  'src/arguments.h',
-  'src/builtins/builtins-constructor.h',
-  'src/builtins/builtins-utils.h',
   'src/compiler/allocation-builder.h',
-  'src/compiler/graph-visualizer.h',
   'src/compiler/js-context-specialization.h',
   'src/compiler/raw-machine-assembler.h',
   'src/dateparser-inl.h',
-  'src/debug/debug-frames.h',
-  'src/debug/debug-scope-iterator.h',
-  'src/debug/debug-scopes.h',
-  'src/debug/debug-stack-trace-iterator.h',
-  'src/deoptimizer.h',
   'src/heap/incremental-marking.h',
   'src/ic/ic.h',
   'src/lookup.h',
@@ -50,7 +41,6 @@ AUTO_EXCLUDE = [
   'src/parsing/preparser.h',
   'src/regexp/jsregexp.h',
   'src/snapshot/object-deserializer.h',
-  'src/third_party/utf8-decoder/utf8-decoder.h',
   'src/transitions.h',
 ]
 AUTO_EXCLUDE_PATTERNS = [
@@ -121,12 +111,19 @@ def get_cc_file_name(header):
 
 
 def create_including_cc_files(header_files):
+  comment = 'check including this header in isolation'
   for header in header_files:
     cc_file_name = get_cc_file_name(header)
-    printv('Creating file {}'.format(os.path.relpath(cc_file_name, V8_DIR)))
+    rel_cc_file_name = os.path.relpath(cc_file_name, V8_DIR)
+    content = '#include "{}"  // {}\n'.format(header, comment)
+    if os.path.exists(cc_file_name):
+      with open(cc_file_name) as cc_file:
+        if cc_file.read() == content:
+          printv('File {} is up to date'.format(rel_cc_file_name))
+          continue
+    printv('Creating file {}'.format(rel_cc_file_name))
     with open(cc_file_name, 'w') as cc_file:
-      cc_file.write('#include "{}"  // check including this header in '
-                    'isolation\n'.format(header))
+      cc_file.write(content)
 
 
 def generate_gni(header_files):

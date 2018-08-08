@@ -203,7 +203,7 @@ struct SmiTagging<4> {
   V8_INLINE static internal::Object* IntToSmi(int value) {
     return internal::IntToSmi<kSmiShiftSize>(value);
   }
-  V8_INLINE static bool IsValidSmi(intptr_t value) {
+  V8_INLINE static constexpr bool IsValidSmi(intptr_t value) {
     // To be representable as an tagged small integer, the two
     // most-significant bits of 'value' must be either 00 or 11 due to
     // sign-extension. To check this we add 01 to the two
@@ -233,7 +233,7 @@ struct SmiTagging<8> {
   V8_INLINE static internal::Object* IntToSmi(int value) {
     return internal::IntToSmi<kSmiShiftSize>(value);
   }
-  V8_INLINE static bool IsValidSmi(intptr_t value) {
+  V8_INLINE static constexpr bool IsValidSmi(intptr_t value) {
     // To be representable as a long smi, the value must be a 32-bit integer.
     return (value == static_cast<int32_t>(value));
   }
@@ -6839,6 +6839,7 @@ class V8_EXPORT HeapStatistics {
   size_t used_heap_size() { return used_heap_size_; }
   size_t heap_size_limit() { return heap_size_limit_; }
   size_t malloced_memory() { return malloced_memory_; }
+  size_t external_memory() { return external_memory_; }
   size_t peak_malloced_memory() { return peak_malloced_memory_; }
   size_t number_of_native_contexts() { return number_of_native_contexts_; }
   size_t number_of_detached_contexts() { return number_of_detached_contexts_; }
@@ -6857,6 +6858,7 @@ class V8_EXPORT HeapStatistics {
   size_t used_heap_size_;
   size_t heap_size_limit_;
   size_t malloced_memory_;
+  size_t external_memory_;
   size_t peak_malloced_memory_;
   bool does_zap_garbage_;
   size_t number_of_native_contexts_;
@@ -7103,6 +7105,8 @@ class V8_EXPORT EmbedderHeapTracer {
     ForceCompletionAction force_completion;
   };
 
+  virtual ~EmbedderHeapTracer() = default;
+
   /**
    * Called by v8 to register internal fields of found wrappers.
    *
@@ -7194,8 +7198,6 @@ class V8_EXPORT EmbedderHeapTracer {
   };
 
  protected:
-  virtual ~EmbedderHeapTracer() = default;
-
   v8::Isolate* isolate_ = nullptr;
 
   friend class internal::LocalEmbedderHeapTracer;
@@ -9528,7 +9530,7 @@ class Internals {
     return PlatformSmiTagging::IntToSmi(value);
   }
 
-  V8_INLINE static bool IsValidSmi(intptr_t value) {
+  V8_INLINE static constexpr bool IsValidSmi(intptr_t value) {
     return PlatformSmiTagging::IsValidSmi(value);
   }
 

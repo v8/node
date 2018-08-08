@@ -614,7 +614,7 @@ DEFINE_BOOL(wasm_no_bounds_checks, false,
 DEFINE_BOOL(wasm_no_stack_checks, false,
             "disable stack checks (performance testing only)")
 
-DEFINE_BOOL(wasm_shared_engine, false,
+DEFINE_BOOL(wasm_shared_engine, true,
             "shares one wasm engine between all isolates within a process")
 DEFINE_IMPLICATION(future, wasm_shared_engine)
 DEFINE_BOOL(wasm_shared_code, false,
@@ -836,6 +836,8 @@ DEFINE_BOOL(enable_vldr_imm, false,
 DEFINE_BOOL(force_long_branches, false,
             "force all emitted branches to be in long mode (MIPS/PPC only)")
 DEFINE_STRING(mcpu, "auto", "enable optimization for specific cpu")
+DEFINE_BOOL(partial_constant_pool, true,
+            "enable use of partial constant pools (X64 only)")
 
 // Deprecated ARM flags (replaced by arm_arch).
 DEFINE_MAYBE_BOOL(enable_armv7, "deprecated (use --arm_arch instead)")
@@ -868,8 +870,6 @@ DEFINE_BOOL(expose_trigger_failure, false, "expose trigger-failure extension")
 DEFINE_INT(stack_trace_limit, 10, "number of stack frames to capture")
 DEFINE_BOOL(builtins_in_stack_traces, false,
             "show built-in functions in stack traces")
-DEFINE_BOOL(enable_experimental_builtins, false,
-            "enable new csa-based experimental builtins")
 DEFINE_BOOL(disallow_code_generation_from_strings, false,
             "disallow eval and friends")
 DEFINE_BOOL(expose_async_hooks, false, "expose async_hooks object")

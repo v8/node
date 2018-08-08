@@ -3290,8 +3290,13 @@ void Heap::RegisterDeserializedObjectsForBlackAllocation(
 
 void Heap::NotifyObjectLayoutChange(HeapObject* object, int size,
                                     const DisallowHeapAllocation&) {
+  // In large object space, we only allow changing from non-pointers to
+  // pointers, so that there are no slots in the invalidated slots buffer.
+  // TODO(ulan) Make the IsString assertion stricter, we only want to allow
+  // strings that cannot have slots in them (seq-strings and such).
   DCHECK(InOldSpace(object) || InNewSpace(object) ||
-         (lo_space()->Contains(object) && object->IsString()));
+         (lo_space()->Contains(object) &&
+          (object->IsString() || object->IsByteArray())));
   if (FLAG_incremental_marking && incremental_marking()->IsMarking()) {
     incremental_marking()->MarkBlackAndPush(object);
     if (InOldSpace(object) && incremental_marking()->IsCompacting()) {
@@ -5828,11 +5833,27 @@ void Heap::GenerationalBarrierSlow(HeapObject* object, Address slot,
   heap->store_buffer()->InsertEntry(slot);
 }
 
+void Heap::GenerationalBarrierForElementsSlow(Heap* heap, FixedArray* array,
+                                              int offset, int length) {
+  for (int i = 0; i < length; i++) {
+    if (!InNewSpace(array->get(offset + i))) continue;
+    heap->store_buffer()->InsertEntry(
+        reinterpret_cast<Address>(array->RawFieldOfElementAt(offset + i)));
+  }
+}
+
 void Heap::MarkingBarrierSlow(HeapObject* object, Address slot,
                               HeapObject* value) {
   Heap* heap = Heap::FromWritableHeapObject(object);
   heap->incremental_marking()->RecordWriteSlow(
       object, reinterpret_cast<HeapObjectReference**>(slot), value);
+}
+
+void Heap::MarkingBarrierForElementsSlow(Heap* heap, HeapObject* object) {
+  if (FLAG_concurrent_marking ||
+      heap->incremental_marking()->marking_state()->IsBlack(object)) {
+    heap->incremental_marking()->RevisitObject(object);
+  }
 }
 
 bool Heap::PageFlagsAreConsistent(HeapObject* object) {

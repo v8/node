@@ -15,6 +15,9 @@
 #include "src/objects-inl.h"
 #include "src/objects/arguments-inl.h"
 #include "src/objects/bigint.h"
+#ifdef V8_INTL_SUPPORT
+#include "src/objects/js-collator-inl.h"
+#endif  // V8_INTL_SUPPORT
 #include "src/objects/data-handler-inl.h"
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/hash-table-inl.h"
@@ -28,6 +31,7 @@
 #include "src/objects/js-regexp-inl.h"
 #include "src/objects/js-regexp-string-iterator-inl.h"
 #ifdef V8_INTL_SUPPORT
+#include "src/objects/js-plural-rules-inl.h"
 #include "src/objects/js-relative-time-format-inl.h"
 #endif  // V8_INTL_SUPPORT
 #include "src/objects/maybe-object.h"
@@ -352,11 +356,17 @@ void HeapObject::HeapObjectVerify(Isolate* isolate) {
       CodeDataContainer::cast(this)->CodeDataContainerVerify(isolate);
       break;
 #ifdef V8_INTL_SUPPORT
+    case JS_INTL_COLLATOR_TYPE:
+      JSCollator::cast(this)->JSCollatorVerify(isolate);
+      break;
     case JS_INTL_LIST_FORMAT_TYPE:
       JSListFormat::cast(this)->JSListFormatVerify(isolate);
       break;
     case JS_INTL_LOCALE_TYPE:
       JSLocale::cast(this)->JSLocaleVerify(isolate);
+      break;
+    case JS_INTL_PLURAL_RULES_TYPE:
+      JSPluralRules::cast(this)->JSPluralRulesVerify(isolate);
       break;
     case JS_INTL_RELATIVE_TIME_FORMAT_TYPE:
       JSRelativeTimeFormat::cast(this)->JSRelativeTimeFormatVerify(isolate);
@@ -441,8 +451,7 @@ void FixedTypedArray<Traits>::FixedTypedArrayVerify(Isolate* isolate) {
   }
 }
 
-
-bool JSObject::ElementsAreSafeToExamine() {
+bool JSObject::ElementsAreSafeToExamine() const {
   // If a GC was caused while constructing this object, the elements
   // pointer may point to a one pointer filler map.
   return reinterpret_cast<Map*>(elements()) !=
@@ -1426,6 +1435,7 @@ void JSRegExpStringIterator::JSRegExpStringIteratorVerify(Isolate* isolate) {
 
 void JSProxy::JSProxyVerify(Isolate* isolate) {
   CHECK(IsJSProxy());
+  CHECK(map()->GetConstructor()->IsJSFunction());
   VerifyPointer(isolate, target());
   VerifyPointer(isolate, handler());
   if (!IsRevoked()) {
@@ -1660,6 +1670,7 @@ void WasmExportedFunctionData::WasmExportedFunctionDataVerify(
   CHECK(wrapper_code()->kind() == Code::JS_TO_WASM_FUNCTION ||
         wrapper_code()->kind() == Code::C_WASM_ENTRY);
   VerifyObjectField(isolate, kInstanceOffset);
+  VerifySmiField(kJumpTableOffsetOffset);
   VerifySmiField(kFunctionIndexOffset);
 }
 
@@ -1863,13 +1874,22 @@ void InterpreterData::InterpreterDataVerify(Isolate* isolate) {
 }
 
 #ifdef V8_INTL_SUPPORT
+void JSCollator::JSCollatorVerify(Isolate* isolate) {
+  CHECK(IsJSCollator());
+  JSObjectVerify(isolate);
+  VerifyObjectField(isolate, kICUCollatorOffset);
+  VerifyObjectField(isolate, kFlagsOffset);
+}
+
 void JSListFormat::JSListFormatVerify(Isolate* isolate) {
+  JSObjectVerify(isolate);
   VerifyObjectField(isolate, kLocaleOffset);
   VerifyObjectField(isolate, kFormatterOffset);
   VerifyObjectField(isolate, kFlagsOffset);
 }
 
 void JSLocale::JSLocaleVerify(Isolate* isolate) {
+  JSObjectVerify(isolate);
   VerifyObjectField(isolate, kLanguageOffset);
   VerifyObjectField(isolate, kScriptOffset);
   VerifyObjectField(isolate, kRegionOffset);
@@ -1884,7 +1904,17 @@ void JSLocale::JSLocaleVerify(Isolate* isolate) {
   VerifyObjectField(isolate, kNumberingSystemOffset);
 }
 
+void JSPluralRules::JSPluralRulesVerify(Isolate* isolate) {
+  CHECK(IsJSPluralRules());
+  JSObjectVerify(isolate);
+  VerifyObjectField(isolate, kLocaleOffset);
+  VerifyObjectField(isolate, kTypeOffset);
+  VerifyObjectField(isolate, kICUPluralRulesOffset);
+  VerifyObjectField(isolate, kICUDecimalFormatOffset);
+}
+
 void JSRelativeTimeFormat::JSRelativeTimeFormatVerify(Isolate* isolate) {
+  JSObjectVerify(isolate);
   VerifyObjectField(isolate, kLocaleOffset);
   VerifyObjectField(isolate, kFormatterOffset);
   VerifyObjectField(isolate, kFlagsOffset);

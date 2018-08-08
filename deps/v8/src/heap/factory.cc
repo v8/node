@@ -1357,8 +1357,6 @@ Handle<Context> Factory::NewNativeContext() {
   context->set_native_context(*context);
   context->set_errors_thrown(Smi::kZero);
   context->set_math_random_index(Smi::kZero);
-  Handle<WeakCell> weak_cell = NewWeakCell(context);
-  context->set_self_weak_cell(*weak_cell);
   context->set_serialized_objects(*empty_fixed_array());
   DCHECK(context->IsNativeContext());
   return context;
@@ -1768,7 +1766,7 @@ Handle<PropertyCell> Factory::NewPropertyCell(Handle<Name> name,
   HeapObject* result = AllocateRawWithImmortalMap(
       PropertyCell::kSize, pretenure, *global_property_cell_map());
   Handle<PropertyCell> cell(PropertyCell::cast(result), isolate());
-  cell->set_dependent_code(DependentCode::cast(*empty_fixed_array()),
+  cell->set_dependent_code(DependentCode::cast(*empty_weak_fixed_array()),
                            SKIP_WRITE_BARRIER);
   cell->set_property_details(PropertyDetails(Smi::kZero));
   cell->set_name(*name);
@@ -1857,7 +1855,7 @@ Map* Factory::InitializeMap(Map* map, InstanceType type, int instance_size,
     map->set_inobject_properties_start_or_constructor_function_index(0);
     map->set_prototype_validity_cell(Smi::FromInt(Map::kPrototypeChainValid));
   }
-  map->set_dependent_code(DependentCode::cast(*empty_fixed_array()),
+  map->set_dependent_code(DependentCode::cast(*empty_weak_fixed_array()),
                           SKIP_WRITE_BARRIER);
   map->set_raw_transitions(MaybeObject::FromSmi(Smi::kZero));
   map->SetInObjectUnusedPropertyFields(inobject_properties);

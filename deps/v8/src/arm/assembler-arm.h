@@ -480,6 +480,7 @@ class Operand BASE_EMBEDDED {
   Register rs() const { return rs_; }
   ShiftOp shift_op() const { return shift_op_; }
 
+  bool IsOffHeapTarget() const { return RelocInfo::IsOffHeapTarget(rmode_); }
 
  private:
   Register rm_ = no_reg;
@@ -692,9 +693,6 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   // instruction.  The address in the constant pool is the same size as a
   // pointer.
   static constexpr int kSpecialTargetSize = kPointerSize;
-
-  // Size of an instruction.
-  static constexpr int kInstrSize = sizeof(Instr);
 
   RegList* GetScratchRegisterList() { return &scratch_register_list_; }
   VfpRegList* GetScratchVfpRegisterList() {
@@ -1619,9 +1617,6 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   // The buffers of pending constant pool entries.
   std::vector<ConstantPoolEntry> pending_32_bit_constants_;
   std::vector<ConstantPoolEntry> pending_64_bit_constants_;
-
-  // Map of address of handle to index in pending_32_bit_constants_.
-  std::map<Address, int> handle_to_index_map_;
 
   // Scratch registers available for use by the Assembler.
   RegList scratch_register_list_;

@@ -88,7 +88,7 @@ enum class CompilationState {
   kFailed,
 };
 
-class TestResolver : public i::wasm::CompilationResultResolver {
+class TestResolver : public CompilationResultResolver {
  public:
   explicit TestResolver(CompilationState* state) : state_(state) {}
 
@@ -114,7 +114,7 @@ class StreamTester {
 
     stream_ = i_isolate->wasm_engine()->StartStreamingCompilation(
         i_isolate, v8::Utils::OpenHandle(*context),
-        std::make_shared<TestResolver>(&state_));
+        base::make_unique<TestResolver>(&state_));
   }
 
   std::shared_ptr<StreamingDecoder> stream() { return stream_; }

@@ -306,9 +306,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     return UncheckedCast<HeapObject>(value);
   }
 
-  TNode<JSArray> TaggedToJSArray(TNode<Object> value, Label* fail) {
-    GotoIf(TaggedIsSmi(value), fail);
-    TNode<HeapObject> heap_object = CAST(value);
+  TNode<JSArray> HeapObjectToJSArray(TNode<HeapObject> heap_object,
+                                     Label* fail) {
     GotoIfNot(IsJSArray(heap_object), fail);
     return UncheckedCast<JSArray>(heap_object);
   }
@@ -321,18 +320,16 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     return UncheckedCast<JSArray>(heap_object);
   }
 
-  TNode<JSDataView> TaggedToJSDataView(TNode<Object> value, Label* fail) {
-    GotoIf(TaggedIsSmi(value), fail);
-    TNode<HeapObject> heap_object = CAST(value);
+  TNode<JSDataView> HeapObjectToJSDataView(TNode<HeapObject> heap_object,
+                                           Label* fail) {
     GotoIfNot(IsJSDataView(heap_object), fail);
-    return UncheckedCast<JSDataView>(heap_object);
+    return CAST(heap_object);
   }
 
-  TNode<JSReceiver> TaggedToCallable(TNode<Object> value, Label* fail) {
-    GotoIf(TaggedIsSmi(value), fail);
-    TNode<HeapObject> result = UncheckedCast<HeapObject>(value);
-    GotoIfNot(IsCallable(result), fail);
-    return CAST(result);
+  TNode<JSReceiver> HeapObjectToCallable(TNode<HeapObject> heap_object,
+                                         Label* fail) {
+    GotoIfNot(IsCallable(heap_object), fail);
+    return CAST(heap_object);
   }
 
   TNode<HeapNumber> UnsafeCastNumberToHeapNumber(TNode<Number> p_n) {
@@ -917,10 +914,6 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* PointerToSeqStringData(Node* seq_string);
   // Load value field of a JSValue object.
   Node* LoadJSValueValue(Node* object);
-  // Load value field of a WeakCell object.
-  TNode<Object> LoadWeakCellValueUnchecked(SloppyTNode<HeapObject> weak_cell);
-  TNode<Object> LoadWeakCellValue(SloppyTNode<WeakCell> weak_cell,
-                                  Label* if_cleared = nullptr);
 
   // Figures out whether the value of maybe_object is:
   // - a SMI (jump to "if_smi", "extracted" will be the SMI value)
@@ -970,11 +963,11 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   // Load an array element from a FixedArray.
   TNode<Object> LoadFixedArrayElement(
-      SloppyTNode<HeapObject> object, Node* index, int additional_offset = 0,
+      TNode<FixedArray> object, Node* index, int additional_offset = 0,
       ParameterMode parameter_mode = INTPTR_PARAMETERS,
       LoadSensitivity needs_poisoning = LoadSensitivity::kSafe);
 
-  TNode<Object> LoadFixedArrayElement(SloppyTNode<HeapObject> object,
+  TNode<Object> LoadFixedArrayElement(TNode<FixedArray> object,
                                       TNode<IntPtrT> index,
                                       LoadSensitivity needs_poisoning) {
     return LoadFixedArrayElement(object, index, 0, INTPTR_PARAMETERS,
@@ -982,21 +975,20 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   }
 
   TNode<Object> LoadFixedArrayElement(
-      SloppyTNode<HeapObject> object, TNode<IntPtrT> index,
-      int additional_offset = 0,
+      TNode<FixedArray> object, TNode<IntPtrT> index, int additional_offset = 0,
       LoadSensitivity needs_poisoning = LoadSensitivity::kSafe) {
     return LoadFixedArrayElement(object, index, additional_offset,
                                  INTPTR_PARAMETERS, needs_poisoning);
   }
 
   TNode<Object> LoadFixedArrayElement(
-      SloppyTNode<HeapObject> object, int index, int additional_offset = 0,
+      TNode<FixedArray> object, int index, int additional_offset = 0,
       LoadSensitivity needs_poisoning = LoadSensitivity::kSafe) {
     return LoadFixedArrayElement(object, IntPtrConstant(index),
                                  additional_offset, INTPTR_PARAMETERS,
                                  needs_poisoning);
   }
-  TNode<Object> LoadFixedArrayElement(TNode<HeapObject> object,
+  TNode<Object> LoadFixedArrayElement(TNode<FixedArray> object,
                                       TNode<Smi> index) {
     return LoadFixedArrayElement(object, index, 0, SMI_PARAMETERS);
   }
@@ -1142,8 +1134,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* StoreObjectFieldRoot(Node* object, int offset,
                              Heap::RootListIndex root);
   // Store an array element to a FixedArray.
-  Node* StoreFixedArrayElement(
-      Node* object, int index, Node* value,
+  void StoreFixedArrayElement(
+      TNode<FixedArray> object, int index, SloppyTNode<Object> value,
       WriteBarrierMode barrier_mode = UPDATE_WRITE_BARRIER) {
     return StoreFixedArrayElement(object, IntPtrConstant(index), value,
                                   barrier_mode);
@@ -1152,22 +1144,53 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* StoreJSArrayLength(TNode<JSArray> array, TNode<Smi> length);
   Node* StoreElements(TNode<Object> object, TNode<FixedArrayBase> elements);
 
-  Node* StoreFixedArrayElement(
-      Node* object, Node* index, Node* value,
+  void StoreFixedArrayOrPropertyArrayElement(
+      Node* array, Node* index, Node* value,
       WriteBarrierMode barrier_mode = UPDATE_WRITE_BARRIER,
       int additional_offset = 0,
       ParameterMode parameter_mode = INTPTR_PARAMETERS);
 
-  Node* StoreFixedArrayElementSmi(
-      TNode<FixedArray> object, TNode<Smi> index, TNode<Object> value,
+  void StoreFixedArrayElement(
+      TNode<FixedArray> array, Node* index, SloppyTNode<Object> value,
+      WriteBarrierMode barrier_mode = UPDATE_WRITE_BARRIER,
+      int additional_offset = 0,
+      ParameterMode parameter_mode = INTPTR_PARAMETERS) {
+    StoreFixedArrayOrPropertyArrayElement(array, index, value, barrier_mode,
+                                          additional_offset, parameter_mode);
+  }
+
+  void StorePropertyArrayElement(
+      TNode<PropertyArray> array, Node* index, SloppyTNode<Object> value,
+      WriteBarrierMode barrier_mode = UPDATE_WRITE_BARRIER,
+      int additional_offset = 0,
+      ParameterMode parameter_mode = INTPTR_PARAMETERS) {
+    StoreFixedArrayOrPropertyArrayElement(array, index, value, barrier_mode,
+                                          additional_offset, parameter_mode);
+  }
+
+  void StoreFixedArrayElementSmi(
+      TNode<FixedArray> array, TNode<Smi> index, TNode<Object> value,
       WriteBarrierMode barrier_mode = UPDATE_WRITE_BARRIER) {
-    return StoreFixedArrayElement(object, index, value, barrier_mode, 0,
-                                  SMI_PARAMETERS);
+    StoreFixedArrayElement(array, index, value, barrier_mode, 0,
+                           SMI_PARAMETERS);
   }
 
   Node* StoreFixedDoubleArrayElement(
       Node* object, Node* index, Node* value,
       ParameterMode parameter_mode = INTPTR_PARAMETERS);
+
+  Node* StoreFixedDoubleArrayElementSmi(TNode<FixedDoubleArray> object,
+                                        TNode<Smi> index,
+                                        TNode<Float64T> value) {
+    return StoreFixedDoubleArrayElement(object, index, value, SMI_PARAMETERS);
+  }
+
+  void StoreFixedDoubleArrayHole(TNode<FixedDoubleArray> array, Node* index,
+                                 ParameterMode mode = INTPTR_PARAMETERS);
+  void StoreFixedDoubleArrayHoleSmi(TNode<FixedDoubleArray> array,
+                                    TNode<Smi> index) {
+    StoreFixedDoubleArrayHole(array, index, SMI_PARAMETERS);
+  }
 
   Node* StoreFeedbackVectorSlot(
       Node* object, Node* index, Node* value,
@@ -1387,6 +1410,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   Node* ArraySpeciesCreate(TNode<Context> context, TNode<Object> originalArray,
                            TNode<Number> len);
+  Node* InternalArrayCreate(TNode<Context> context, TNode<Number> len);
 
   void FillFixedArrayWithValue(ElementsKind kind, Node* array, Node* from_index,
                                Node* to_index,
@@ -1445,15 +1469,19 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                            SMI_PARAMETERS);
   }
 
-  TNode<FixedArray> ConvertFixedArrayBaseToFixedArray(
-      TNode<FixedArrayBase> base, Label* cast_fail);
+  TNode<FixedArray> HeapObjectToFixedArray(TNode<HeapObject> base,
+                                           Label* cast_fail);
 
-  TNode<FixedDoubleArray> ConvertFixedArrayBaseToFixedDoubleArray(
-      TNode<FixedArrayBase> base, Label* cast_fail) {
+  TNode<FixedDoubleArray> HeapObjectToFixedDoubleArray(TNode<HeapObject> base,
+                                                       Label* cast_fail) {
     GotoIf(WordNotEqual(LoadMap(base),
                         LoadRoot(Heap::kFixedDoubleArrayMapRootIndex)),
            cast_fail);
     return UncheckedCast<FixedDoubleArray>(base);
+  }
+
+  TNode<Int32T> ConvertElementsKindToInt(TNode<Int32T> elements_kind) {
+    return UncheckedCast<Int32T>(elements_kind);
   }
 
   enum class ExtractFixedArrayFlag {
@@ -1489,20 +1517,27 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // passed as the |source| parameter.
   // * |parameter_mode| determines the parameter mode of |first|, |count| and
   // |capacity|.
-  TNode<FixedArray> ExtractFixedArray(
+  TNode<FixedArrayBase> ExtractFixedArray(
       Node* source, Node* first, Node* count = nullptr,
       Node* capacity = nullptr,
       ExtractFixedArrayFlags extract_flags =
           ExtractFixedArrayFlag::kAllFixedArrays,
       ParameterMode parameter_mode = INTPTR_PARAMETERS);
 
-  TNode<FixedArray> ExtractFixedArray(
-      TNode<FixedArray> source, TNode<Smi> first, TNode<Smi> count,
-      TNode<Smi> capacity,
-      ExtractFixedArrayFlags extract_flags =
-          ExtractFixedArrayFlag::kAllFixedArrays) {
-    return ExtractFixedArray(source, first, count, capacity, extract_flags,
-                             SMI_PARAMETERS);
+  TNode<FixedArray> ExtractFixedArray(TNode<FixedArray> source,
+                                      TNode<Smi> first, TNode<Smi> count,
+                                      TNode<Smi> capacity) {
+    return CAST(ExtractFixedArray(source, first, count, capacity,
+                                  ExtractFixedArrayFlag::kFixedArrays,
+                                  SMI_PARAMETERS));
+  }
+
+  TNode<FixedDoubleArray> ExtractFixedArray(TNode<FixedDoubleArray> source,
+                                            TNode<Smi> first, TNode<Smi> count,
+                                            TNode<Smi> capacity) {
+    return CAST(ExtractFixedArray(source, first, count, capacity,
+                                  ExtractFixedArrayFlag::kFixedDoubleArrays,
+                                  SMI_PARAMETERS));
   }
 
   // Copy the entire contents of a FixedArray or FixedDoubleArray to a new
@@ -2083,8 +2118,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     const int kKeyToDetailsOffset =
         (ContainerType::kEntryDetailsIndex - ContainerType::kEntryKeyIndex) *
         kPointerSize;
-    return Unsigned(LoadAndUntagToWord32FixedArrayElement(container, key_index,
-                                                          kKeyToDetailsOffset));
+    return Unsigned(LoadAndUntagToWord32FixedArrayElement(
+        CAST(container), key_index, kKeyToDetailsOffset));
   }
 
   // Loads the value for the entry with the given key_index.
@@ -2096,8 +2131,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     const int kKeyToValueOffset =
         (ContainerType::kEntryValueIndex - ContainerType::kEntryKeyIndex) *
         kPointerSize;
-    return UncheckedCast<Object>(
-        LoadFixedArrayElement(container, key_index, kKeyToValueOffset));
+    return LoadFixedArrayElement(CAST(container), key_index, kKeyToValueOffset);
   }
 
   TNode<Uint32T> LoadDetailsByKeyIndex(TNode<DescriptorArray> container,
@@ -2110,7 +2144,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // Stores the details for the entry with the given key_index.
   // |details| must be a Smi.
   template <class ContainerType>
-  void StoreDetailsByKeyIndex(Node* container, Node* key_index, Node* details) {
+  void StoreDetailsByKeyIndex(TNode<ContainerType> container,
+                              TNode<IntPtrT> key_index, TNode<Smi> details) {
     const int kKeyToDetailsOffset =
         (ContainerType::kEntryDetailsIndex - ContainerType::kEntryKeyIndex) *
         kPointerSize;
@@ -2121,7 +2156,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // Stores the value for the entry with the given key_index.
   template <class ContainerType>
   void StoreValueByKeyIndex(
-      Node* container, Node* key_index, Node* value,
+      TNode<ContainerType> container, TNode<IntPtrT> key_index,
+      TNode<Object> value,
       WriteBarrierMode write_barrier = UPDATE_WRITE_BARRIER) {
     const int kKeyToValueOffset =
         (ContainerType::kEntryValueIndex - ContainerType::kEntryKeyIndex) *
@@ -2255,8 +2291,13 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   TNode<Object> GetProperty(SloppyTNode<Context> context,
                             SloppyTNode<Object> receiver,
                             SloppyTNode<Object> name) {
-    return CallStub(Builtins::CallableFor(isolate(), Builtins::kGetProperty),
-                    context, receiver, name);
+    return CallBuiltin(Builtins::kGetProperty, context, receiver, name);
+  }
+
+  TNode<Object> SetPropertyStrict(TNode<Context> context,
+                                  TNode<Object> receiver, TNode<Object> key,
+                                  TNode<Object> value) {
+    return CallBuiltin(Builtins::kSetProperty, context, receiver, key, value);
   }
 
   Node* GetMethod(Node* context, Node* object, Handle<Name> name,
@@ -2460,6 +2501,12 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                               ElementsKind to_kind, bool is_jsarray,
                               Label* bailout);
 
+  void TransitionElementsKind(TNode<JSReceiver> object, TNode<Map> map,
+                              ElementsKind from_kind, ElementsKind to_kind,
+                              Label* bailout) {
+    TransitionElementsKind(object, map, from_kind, to_kind, true, bailout);
+  }
+
   void TrapAllocationMemento(Node* object, Label* memento_found);
 
   TNode<IntPtrT> PageFromAddress(TNode<IntPtrT> address);
@@ -2551,26 +2598,32 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   void BranchIfNumberRelationalComparison(Operation op, Node* left, Node* right,
                                           Label* if_true, Label* if_false);
 
-  void BranchIfNumberLessThan(Node* left, Node* right, Label* if_true,
-                              Label* if_false) {
+  void BranchIfNumberEqual(TNode<Number> left, TNode<Number> right,
+                           Label* if_true, Label* if_false) {
+    BranchIfNumberRelationalComparison(Operation::kEqual, left, right, if_true,
+                                       if_false);
+  }
+
+  void BranchIfNumberLessThan(TNode<Number> left, TNode<Number> right,
+                              Label* if_true, Label* if_false) {
     BranchIfNumberRelationalComparison(Operation::kLessThan, left, right,
                                        if_true, if_false);
   }
 
-  void BranchIfNumberLessThanOrEqual(Node* left, Node* right, Label* if_true,
-                                     Label* if_false) {
+  void BranchIfNumberLessThanOrEqual(TNode<Number> left, TNode<Number> right,
+                                     Label* if_true, Label* if_false) {
     BranchIfNumberRelationalComparison(Operation::kLessThanOrEqual, left, right,
                                        if_true, if_false);
   }
 
-  void BranchIfNumberGreaterThan(Node* left, Node* right, Label* if_true,
-                                 Label* if_false) {
+  void BranchIfNumberGreaterThan(TNode<Number> left, TNode<Number> right,
+                                 Label* if_true, Label* if_false) {
     BranchIfNumberRelationalComparison(Operation::kGreaterThan, left, right,
                                        if_true, if_false);
   }
 
-  void BranchIfNumberGreaterThanOrEqual(Node* left, Node* right, Label* if_true,
-                                        Label* if_false) {
+  void BranchIfNumberGreaterThanOrEqual(TNode<Number> left, TNode<Number> right,
+                                        Label* if_true, Label* if_false) {
     BranchIfNumberRelationalComparison(Operation::kGreaterThanOrEqual, left,
                                        right, if_true, if_false);
   }

@@ -98,10 +98,11 @@ module test {
   }
 
   macro LabelTestHelper4(flag: constexpr bool): never labels Label4, Label5 {
-    if
-      constexpr(flag) goto Label4;
-    else
+    if constexpr(flag) {
+      goto Label4;
+    } else {
       goto Label5;
+    }
   }
 
   macro CallLabelTestHelper4(flag: constexpr bool): bool {
@@ -120,10 +121,11 @@ module test {
     let r1: bool = CallLabelTestHelper4(true);
     let r2: bool = CallLabelTestHelper4(false);
 
-    if (r1 && !r2)
+    if (r1 && !r2) {
       return True;
-    else
+    } else {
       return False;
+    }
   }
 
   macro GenericMacroTest<T : type>(param: T): Object {
@@ -383,5 +385,66 @@ module test {
       j++;
     }
     check(sum == 7);
+  }
+
+  macro TestSubtyping(x : Smi) {
+    const foo : Object = x;
+  }
+
+  macro IncrementIfSmi<A : type>(x : A) : A {
+    typeswitch (x) {
+      case (x : Smi) {
+        return x + 1;
+      } case (o : A) {
+        return o;
+      }
+    }
+  }
+
+  macro TypeswitchExample(x : Number | FixedArray) : int32 {
+    let result : int32 = 0;
+    typeswitch (IncrementIfSmi<(Number|FixedArray)>(x)) {
+      case (x : FixedArray) {
+        result = result + 1;
+      } case (Number) {
+        result = result + 2;
+      }
+    }
+
+    result = result * 10;
+
+    typeswitch (IncrementIfSmi<(Number|FixedArray)>(x)) {
+      case (x : Smi) {
+        result = result + convert<int32>(x);
+      } case (a : FixedArray) {
+        result = result + convert<int32>(a.length);
+      } case (x : HeapNumber) {
+        result = result + 7;
+      }
+    }
+
+    return result;
+  }
+
+  macro TestTypeswitch() {
+    check(TypeswitchExample(from_constexpr<Smi>(5)) == 26);
+    const a : FixedArray = AllocateFixedArray(PACKED_ELEMENTS, 3);
+    a[0] = a[1] = a[2] = from_constexpr<Smi>(0);
+    check(TypeswitchExample(a) == 13);
+    check(TypeswitchExample(from_constexpr<Number>(0.5)) == 27);
+  }
+
+  macro ExampleGenericOverload<A: type>(o : Object) : A {
+    return o;
+  }
+  macro ExampleGenericOverload<A: type>(o : Smi) : A {
+    return o + 1;
+  }
+
+  macro TestGenericOverload() {
+    const x_smi : Smi = 5;
+    const x_object : Object = x_smi;
+    check(ExampleGenericOverload<Smi>(x_smi) == 6);
+    check(unsafe_cast<Smi>(ExampleGenericOverload<Object>(x_object)) == 5);
   }
 }

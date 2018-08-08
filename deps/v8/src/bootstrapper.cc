@@ -24,6 +24,7 @@
 #include "src/objects/hash-table-inl.h"
 #ifdef V8_INTL_SUPPORT
 #include "src/objects/intl-objects.h"
+#include "src/objects/js-collator.h"
 #include "src/objects/js-list-format.h"
 #include "src/objects/js-locale.h"
 #endif  // V8_INTL_SUPPORT
@@ -31,6 +32,7 @@
 #include "src/objects/js-regexp-string-iterator.h"
 #include "src/objects/js-regexp.h"
 #ifdef V8_INTL_SUPPORT
+#include "src/objects/js-plural-rules.h"
 #include "src/objects/js-relative-time-format.h"
 #endif  // V8_INTL_SUPPORT
 #include "src/objects/templates.h"
@@ -1736,13 +1738,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                           1, false);
     SimpleInstallFunction(isolate_, proto, "slice",
                           Builtins::kArrayPrototypeSlice, 2, false);
-    if (FLAG_enable_experimental_builtins) {
-      SimpleInstallFunction(isolate_, proto, "splice",
-                            Builtins::kArraySpliceTorque, 2, false);
-    } else {
-      SimpleInstallFunction(isolate_, proto, "splice", Builtins::kArraySplice,
-                            2, false);
-    }
+    SimpleInstallFunction(isolate_, proto, "splice", Builtins::kArraySplice, 2,
+                          false);
     SimpleInstallFunction(isolate_, proto, "includes", Builtins::kArrayIncludes,
                           1, false);
     SimpleInstallFunction(isolate_, proto, "indexOf", Builtins::kArrayIndexOf,
@@ -2934,9 +2931,11 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 
     {
       Handle<JSFunction> collator_constructor = InstallFunction(
-          isolate_, intl, "Collator", JS_OBJECT_TYPE, Collator::kSize, 0,
-          factory->the_hole_value(), Builtins::kIllegal);
-      native_context()->set_intl_collator_function(*collator_constructor);
+          isolate_, intl, "Collator", JS_INTL_COLLATOR_TYPE, JSCollator::kSize,
+          0, factory->the_hole_value(), Builtins::kCollatorConstructor);
+      collator_constructor->shared()->DontAdaptArguments();
+      InstallWithIntrinsicDefaultProto(isolate_, collator_constructor,
+                                       Context::INTL_COLLATOR_FUNCTION_INDEX);
 
       Handle<JSObject> prototype(
           JSObject::cast(collator_constructor->prototype()), isolate_);
@@ -2968,10 +2967,13 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 
     {
       Handle<JSFunction> plural_rules_constructor = InstallFunction(
-          isolate_, intl, "PluralRules", JS_OBJECT_TYPE, PluralRules::kSize, 0,
-          factory->the_hole_value(), Builtins::kIllegal);
-      native_context()->set_intl_plural_rules_function(
-          *plural_rules_constructor);
+          isolate_, intl, "PluralRules", JS_INTL_PLURAL_RULES_TYPE,
+          JSPluralRules::kSize, 0, factory->the_hole_value(),
+          Builtins::kPluralRulesConstructor);
+      plural_rules_constructor->shared()->DontAdaptArguments();
+      InstallWithIntrinsicDefaultProto(
+          isolate_, plural_rules_constructor,
+          Context::INTL_PLURAL_RULES_FUNCTION_INDEX);
 
       Handle<JSObject> prototype(
           JSObject::cast(plural_rules_constructor->prototype()), isolate_);
@@ -3447,6 +3449,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     NewFunctionArgs args = NewFunctionArgs::ForBuiltin(
         name, proxy_function_map, Builtins::kProxyConstructor);
     Handle<JSFunction> proxy_function = factory->NewFunction(args);
+
+    isolate_->proxy_map()->SetConstructor(*proxy_function);
 
     proxy_function->shared()->set_internal_formal_parameter_count(2);
     proxy_function->shared()->set_length(2);

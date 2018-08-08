@@ -192,6 +192,7 @@ void TurboAssembler::Jump(Handle<Code> code, RelocInfo::Mode rmode,
       if (isolate()->builtins()->IsBuiltinHandle(code, &builtin_index) &&
           Builtins::IsIsolateIndependent(builtin_index)) {
         // Inline the trampoline.
+        RecordCommentForOffHeapTrampoline(builtin_index);
         EmbeddedData d = EmbeddedData::FromBlob();
         Address entry = d.InstructionStartOfBuiltin(builtin_index);
         // Use ip directly instead of using UseScratchRegisterScope, as we do
@@ -253,6 +254,7 @@ void TurboAssembler::Call(Handle<Code> code, RelocInfo::Mode rmode,
       if (isolate()->builtins()->IsBuiltinHandle(code, &builtin_index) &&
           Builtins::IsIsolateIndependent(builtin_index)) {
         // Inline the trampoline.
+        RecordCommentForOffHeapTrampoline(builtin_index);
         DCHECK(Builtins::IsBuiltinId(builtin_index));
         EmbeddedData d = EmbeddedData::FromBlob();
         Address entry = d.InstructionStartOfBuiltin(builtin_index);
@@ -1689,10 +1691,20 @@ void TurboAssembler::Abort(AbortReason reason) {
 #endif
 
   // Avoid emitting call to builtin if requested.
-  if (trap_on_abort() || should_abort_hard()) {
-    // TODO(s390): Call {ExternalReference::abort_with_reason} if
-    // {should_abort_hard} is set.
+  if (trap_on_abort()) {
     stop(msg);
+    return;
+  }
+
+  if (should_abort_hard()) {
+    // We don't care if we constructed a frame. Just pretend we did.
+    FrameScope assume_frame(this, StackFrame::NONE);
+    lgfi(r2, Operand(static_cast<int>(reason)));
+    PrepareCallCFunction(1, 0, r3);
+    Move(r3, ExternalReference::abort_with_reason());
+    // Use Call directly to avoid any unneeded overhead. The function won't
+    // return anyway.
+    Call(r3);
     return;
   }
 
@@ -1858,7 +1870,7 @@ void TurboAssembler::PrepareCallCFunction(int num_reg_arguments,
   } else {
     stack_space += stack_passed_arguments;
   }
-  lay(sp, MemOperand(sp, -(stack_space)*kPointerSize));
+  lay(sp, MemOperand(sp, (-stack_space) * kPointerSize));
 }
 
 void TurboAssembler::PrepareCallCFunction(int num_reg_arguments,
@@ -4360,56 +4372,6 @@ void TurboAssembler::SwapDouble(MemOperand src, MemOperand dst,
   StoreDouble(scratch_0, dst);
   StoreDouble(scratch_1, src);
 }
-
-#ifdef DEBUG
-bool AreAliased(Register reg1, Register reg2, Register reg3, Register reg4,
-                Register reg5, Register reg6, Register reg7, Register reg8,
-                Register reg9, Register reg10) {
-  int n_of_valid_regs = reg1.is_valid() + reg2.is_valid() + reg3.is_valid() +
-                        reg4.is_valid() + reg5.is_valid() + reg6.is_valid() +
-                        reg7.is_valid() + reg8.is_valid() + reg9.is_valid() +
-                        reg10.is_valid();
-
-  RegList regs = 0;
-  if (reg1.is_valid()) regs |= reg1.bit();
-  if (reg2.is_valid()) regs |= reg2.bit();
-  if (reg3.is_valid()) regs |= reg3.bit();
-  if (reg4.is_valid()) regs |= reg4.bit();
-  if (reg5.is_valid()) regs |= reg5.bit();
-  if (reg6.is_valid()) regs |= reg6.bit();
-  if (reg7.is_valid()) regs |= reg7.bit();
-  if (reg8.is_valid()) regs |= reg8.bit();
-  if (reg9.is_valid()) regs |= reg9.bit();
-  if (reg10.is_valid()) regs |= reg10.bit();
-  int n_of_non_aliasing_regs = NumRegs(regs);
-
-  return n_of_valid_regs != n_of_non_aliasing_regs;
-}
-bool AreAliased(DoubleRegister reg1, DoubleRegister reg2, DoubleRegister reg3,
-                DoubleRegister reg4, DoubleRegister reg5, DoubleRegister reg6,
-                DoubleRegister reg7, DoubleRegister reg8, DoubleRegister reg9,
-                DoubleRegister reg10) {
-  int n_of_valid_regs = reg1.is_valid() + reg2.is_valid() + reg3.is_valid() +
-                        reg4.is_valid() + reg5.is_valid() + reg6.is_valid() +
-                        reg7.is_valid() + reg8.is_valid() + reg9.is_valid() +
-                        reg10.is_valid();
-
-  RegList regs = 0;
-  if (reg1.is_valid()) regs |= reg1.bit();
-  if (reg2.is_valid()) regs |= reg2.bit();
-  if (reg3.is_valid()) regs |= reg3.bit();
-  if (reg4.is_valid()) regs |= reg4.bit();
-  if (reg5.is_valid()) regs |= reg5.bit();
-  if (reg6.is_valid()) regs |= reg6.bit();
-  if (reg7.is_valid()) regs |= reg7.bit();
-  if (reg8.is_valid()) regs |= reg8.bit();
-  if (reg9.is_valid()) regs |= reg9.bit();
-  if (reg10.is_valid()) regs |= reg10.bit();
-  int n_of_non_aliasing_regs = NumRegs(regs);
-
-  return n_of_valid_regs != n_of_non_aliasing_regs;
-}
-#endif
 
 void TurboAssembler::ResetSpeculationPoisonRegister() {
   mov(kSpeculationPoisonRegister, Operand(-1));

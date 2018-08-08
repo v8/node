@@ -19,8 +19,8 @@ namespace internal {
 namespace torque {
 
 struct LocationReference {
-  LocationReference(Value* v, VisitResult b, VisitResult i)
-      : value(v), base(b), index(i) {}
+  LocationReference(Value* value, VisitResult base, VisitResult index)
+      : value(value), base(base), index(index) {}
   Value* value;
   VisitResult base;
   VisitResult index;
@@ -119,6 +119,7 @@ class ImplementationVisitor : public FileVisitor {
   VisitResult Visit(AssignmentExpression* expr);
   VisitResult Visit(StringLiteralExpression* expr);
   VisitResult Visit(NumberLiteralExpression* expr);
+  VisitResult Visit(AssumeTypeImpossibleExpression* expr);
 
   const Type* Visit(TryLabelStatement* stmt);
   const Type* Visit(ReturnStatement* stmt);
@@ -168,7 +169,8 @@ class ImplementationVisitor : public FileVisitor {
     ImplementationVisitor* visitor_;
   };
 
-  Callable* LookupCall(const std::string& name, const Arguments& arguments);
+  Callable* LookupCall(const std::string& name, const Arguments& arguments,
+                       const TypeVector& specialization_types);
 
   bool GenerateChangedVarFromControlSplit(const Variable* v, bool first = true);
 
@@ -203,7 +205,9 @@ class ImplementationVisitor : public FileVisitor {
   void GenerateParameterList(const NameVector& list, size_t first = 0);
 
   VisitResult GenerateCall(const std::string& callable_name,
-                           Arguments parameters, bool tail_call = false);
+                           Arguments parameters,
+                           const TypeVector& specialization_types = {},
+                           bool tail_call = false);
   VisitResult GeneratePointerCall(Expression* callee,
                                   const Arguments& parameters, bool tail_call);
 

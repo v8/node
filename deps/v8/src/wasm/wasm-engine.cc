@@ -76,7 +76,7 @@ MaybeHandle<WasmInstanceObject> WasmEngine::SyncInstantiate(
 void WasmEngine::AsyncInstantiate(
     Isolate* isolate, std::unique_ptr<InstantiationResultResolver> resolver,
     Handle<WasmModuleObject> module_object, MaybeHandle<JSReceiver> imports) {
-  ErrorThrower thrower(isolate, nullptr);
+  ErrorThrower thrower(isolate, "WebAssembly Instantiation");
   // Instantiate a TryCatch so that caught exceptions won't progagate out.
   // They will still be set as pending exceptions on the isolate.
   // TODO(clemensh): Avoid TryCatch, use Execution::TryCall internally to invoke
@@ -93,24 +93,23 @@ void WasmEngine::AsyncInstantiate(
     return;
   }
 
-  // We either have a pending exception (if the start function threw), or an
-  // exception in the ErrorThrower.
-  DCHECK_EQ(1, isolate->has_pending_exception() + thrower.error());
-  if (thrower.error()) {
-    resolver->OnInstantiationFailed(thrower.Reify());
-  } else {
-    // The start function has thrown an exception. We have to move the
-    // exception to the promise chain.
+  if (isolate->has_pending_exception()) {
+    // The JS code executed during instantiation has thrown an exception.
+    // We have to move the exception to the promise chain.
     Handle<Object> exception(isolate->pending_exception(), isolate);
     isolate->clear_pending_exception();
     DCHECK(*isolate->external_caught_exception_address());
     *isolate->external_caught_exception_address() = false;
     resolver->OnInstantiationFailed(exception);
+    thrower.Reset();
+  } else {
+    DCHECK(thrower.error());
+    resolver->OnInstantiationFailed(thrower.Reify());
   }
 }
 
 void WasmEngine::AsyncCompile(
-    Isolate* isolate, std::shared_ptr<CompilationResultResolver> resolver,
+    Isolate* isolate, std::unique_ptr<CompilationResultResolver> resolver,
     const ModuleWireBytes& bytes, bool is_shared) {
   if (!FLAG_wasm_async_compilation) {
     // Asynchronous compilation disabled; fall back on synchronous compilation.
@@ -120,8 +119,7 @@ void WasmEngine::AsyncCompile(
       // Make a copy of the wire bytes to avoid concurrent modification.
       std::unique_ptr<uint8_t[]> copy(new uint8_t[bytes.length()]);
       memcpy(copy.get(), bytes.start(), bytes.length());
-      i::wasm::ModuleWireBytes bytes_copy(copy.get(),
-                                          copy.get() + bytes.length());
+      ModuleWireBytes bytes_copy(copy.get(), copy.get() + bytes.length());
       module_object = SyncCompile(isolate, &thrower, bytes_copy);
     } else {
       // The wire bytes are not shared, OK to use them directly.
@@ -157,7 +155,7 @@ void WasmEngine::AsyncCompile(
 
 std::shared_ptr<StreamingDecoder> WasmEngine::StartStreamingCompilation(
     Isolate* isolate, Handle<Context> context,
-    std::shared_ptr<CompilationResultResolver> resolver) {
+    std::unique_ptr<CompilationResultResolver> resolver) {
   AsyncCompileJob* job =
       CreateAsyncCompileJob(isolate, std::unique_ptr<byte[]>(nullptr), 0,
                             context, std::move(resolver));
@@ -211,7 +209,7 @@ CodeTracer* WasmEngine::GetCodeTracer() {
 AsyncCompileJob* WasmEngine::CreateAsyncCompileJob(
     Isolate* isolate, std::unique_ptr<byte[]> bytes_copy, size_t length,
     Handle<Context> context,
-    std::shared_ptr<CompilationResultResolver> resolver) {
+    std::unique_ptr<CompilationResultResolver> resolver) {
   AsyncCompileJob* job = new AsyncCompileJob(
       isolate, std::move(bytes_copy), length, context, std::move(resolver));
   // Pass ownership to the unique_ptr in {jobs_}.

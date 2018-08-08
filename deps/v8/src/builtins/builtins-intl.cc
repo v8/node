@@ -9,14 +9,16 @@
 #include <cmath>
 
 #include "src/builtins/builtins-intl.h"
-#include "src/builtins/builtins-utils.h"
+#include "src/builtins/builtins-utils-inl.h"
 #include "src/builtins/builtins.h"
 #include "src/date.h"
 #include "src/intl.h"
 #include "src/objects-inl.h"
 #include "src/objects/intl-objects.h"
+#include "src/objects/js-collator-inl.h"
 #include "src/objects/js-list-format-inl.h"
 #include "src/objects/js-locale-inl.h"
+#include "src/objects/js-plural-rules-inl.h"
 #include "src/objects/js-relative-time-format-inl.h"
 
 #include "unicode/datefmt.h"
@@ -40,7 +42,7 @@ BUILTIN(StringPrototypeToUpperCaseIntl) {
   HandleScope scope(isolate);
   TO_THIS_STRING(string, "String.prototype.toUpperCase");
   string = String::Flatten(isolate, string);
-  return ConvertCase(string, true, isolate);
+  RETURN_RESULT_OR_FAILURE(isolate, ConvertCase(string, true, isolate));
 }
 
 BUILTIN(StringPrototypeNormalizeIntl) {
@@ -677,7 +679,7 @@ MaybeHandle<JSLocale> CreateLocale(Isolate* isolate,
                              JSObject::New(constructor, new_target), JSLocale);
 
   // First parameter is a locale, as a string/object. Can't be empty.
-  if (!tag->IsName() && !tag->IsJSReceiver()) {
+  if (!tag->IsString() && !tag->IsJSReceiver()) {
     THROW_NEW_ERROR(isolate, NewTypeError(MessageTemplate::kLocaleNotEmpty),
                     JSLocale);
   }
@@ -1093,6 +1095,71 @@ BUILTIN(StringPrototypeToLocaleUpperCase) {
   RETURN_RESULT_OR_FAILURE(
       isolate, Intl::StringLocaleConvertCase(isolate, string, true,
                                              args.atOrUndefined(isolate, 1)));
+}
+
+BUILTIN(PluralRulesConstructor) {
+  HandleScope scope(isolate);
+
+  // 1. If NewTarget is undefined, throw a TypeError exception.
+  if (args.new_target()->IsUndefined(isolate)) {  // [[Call]]
+    THROW_NEW_ERROR_RETURN_FAILURE(
+        isolate, NewTypeError(MessageTemplate::kConstructorNotFunction,
+                              isolate->factory()->NewStringFromStaticChars(
+                                  "Intl.PluralRules")));
+  }
+
+  // [[Construct]]
+  Handle<JSFunction> target = args.target();
+  Handle<JSReceiver> new_target = Handle<JSReceiver>::cast(args.new_target());
+
+  Handle<Object> locales = args.atOrUndefined(isolate, 1);
+  Handle<Object> options = args.atOrUndefined(isolate, 2);
+
+  // 2. Let pluralRules be ? OrdinaryCreateFromConstructor(newTarget,
+  // "%PluralRulesPrototype%", « [[InitializedPluralRules]],
+  // [[Locale]], [[Type]], [[MinimumIntegerDigits]],
+  // [[MinimumFractionDigits]], [[MaximumFractionDigits]],
+  // [[MinimumSignificantDigits]], [[MaximumSignificantDigits]] »).
+  Handle<JSObject> plural_rules_obj;
+  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, plural_rules_obj,
+                                     JSObject::New(target, new_target));
+  Handle<JSPluralRules> plural_rules =
+      Handle<JSPluralRules>::cast(plural_rules_obj);
+
+  // 3. Return ? InitializePluralRules(pluralRules, locales, options).
+  RETURN_RESULT_OR_FAILURE(
+      isolate, JSPluralRules::InitializePluralRules(isolate, plural_rules,
+                                                    locales, options));
+}
+
+BUILTIN(CollatorConstructor) {
+  HandleScope scope(isolate);
+  Handle<JSReceiver> new_target;
+  // 1. If NewTarget is undefined, let newTarget be the active
+  // function object, else let newTarget be NewTarget.
+  if (args.new_target()->IsUndefined(isolate)) {
+    new_target = args.target();
+  } else {
+    new_target = Handle<JSReceiver>::cast(args.new_target());
+  }
+
+  // [[Construct]]
+  Handle<JSFunction> target = args.target();
+
+  Handle<Object> locales = args.atOrUndefined(isolate, 1);
+  Handle<Object> options = args.atOrUndefined(isolate, 2);
+
+  // 5. Let collator be ? OrdinaryCreateFromConstructor(newTarget,
+  // "%CollatorPrototype%", internalSlotsList).
+  Handle<JSObject> collator_obj;
+  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, collator_obj,
+                                     JSObject::New(target, new_target));
+  Handle<JSCollator> collator = Handle<JSCollator>::cast(collator_obj);
+  collator->set_flags(0);
+
+  // 6. Return ? InitializeCollator(collator, locales, options).
+  RETURN_RESULT_OR_FAILURE(isolate, JSCollator::InitializeCollator(
+                                        isolate, collator, locales, options));
 }
 
 }  // namespace internal

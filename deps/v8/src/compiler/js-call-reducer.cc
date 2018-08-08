@@ -219,11 +219,11 @@ Reduction JSCallReducer::ReduceArrayConstructor(Node* node) {
 
   // Turn the {node} into a {JSCreateArray} call.
   DCHECK_LE(2u, p.arity());
-  Handle<AllocationSite> site;
   size_t const arity = p.arity() - 2;
   NodeProperties::ReplaceValueInput(node, target, 0);
   NodeProperties::ReplaceValueInput(node, target, 1);
-  NodeProperties::ChangeOp(node, javascript()->CreateArray(arity, site));
+  NodeProperties::ChangeOp(
+      node, javascript()->CreateArray(arity, MaybeHandle<AllocationSite>()));
   return Changed(node);
 }
 
@@ -1532,11 +1532,10 @@ Reduction JSCallReducer::ReduceArrayMap(Node* node,
       simplified()->LoadField(AccessBuilder::ForJSArrayLength(kind)), receiver,
       effect, control);
 
-  // This array should be HOLEY_SMI_ELEMENTS because of the non-zero length.
   // Even though {JSCreateArray} is not marked as {kNoThrow}, we can elide the
   // exceptional projections because it cannot throw with the given parameters.
   Node* a = control = effect = graph()->NewNode(
-      javascript()->CreateArray(1, Handle<AllocationSite>::null()),
+      javascript()->CreateArray(1, MaybeHandle<AllocationSite>()),
       array_constructor, array_constructor, original_length, context,
       outer_frame_state, effect, control);
 
@@ -1634,6 +1633,9 @@ Reduction JSCallReducer::ReduceArrayMap(Node* node,
                                      &check_fail, &control);
   }
 
+  // The array {a} should be HOLEY_SMI_ELEMENTS because we'd only come into this
+  // loop if the input array length is non-zero, and "new Array({x > 0})" always
+  // produces a HOLEY array.
   Handle<Map> double_map(Map::cast(native_context()->get(
                              Context::ArrayMapIndex(HOLEY_DOUBLE_ELEMENTS))),
                          isolate());

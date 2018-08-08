@@ -51,15 +51,6 @@ inline MemOperand FieldMemOperand(Register object, int offset) {
 constexpr Register cp = r7;              // JavaScript context pointer.
 constexpr Register kRootRegister = r10;  // Roots array pointer.
 
-// Flags used for AllocateHeapNumber
-enum TaggingMode {
-  // Tag the result.
-  TAG_RESULT,
-  // Don't tag
-  DONT_TAG_RESULT
-};
-
-
 enum RememberedSetAction { EMIT_REMEMBERED_SET, OMIT_REMEMBERED_SET };
 enum SmiCheck { INLINE_SMI_CHECK, OMIT_SMI_CHECK };
 enum LinkRegisterStatus { kLRHasNotBeenSaved, kLRHasBeenSaved };
@@ -71,19 +62,6 @@ Register GetRegisterThatIsNotOneOf(Register reg1,
                                    Register reg4 = no_reg,
                                    Register reg5 = no_reg,
                                    Register reg6 = no_reg);
-
-
-#ifdef DEBUG
-bool AreAliased(Register reg1,
-                Register reg2,
-                Register reg3 = no_reg,
-                Register reg4 = no_reg,
-                Register reg5 = no_reg,
-                Register reg6 = no_reg,
-                Register reg7 = no_reg,
-                Register reg8 = no_reg);
-#endif
-
 
 enum TargetAddressStorageMode {
   CAN_INLINE_TARGET_ADDRESS,
@@ -608,13 +586,6 @@ class MacroAssembler : public TurboAssembler {
 
   // ---------------------------------------------------------------------------
   // GC Support
-
-  // Record in the remembered set the fact that we have a pointer to new space
-  // at the address pointed to by the addr register.  Only works if addr is not
-  // in new space.
-  void RememberedSetHelper(Register object,  // Used for debug code.
-                           Register addr, Register scratch,
-                           SaveFPRegsMode save_fp);
 
   // Check if object is in new space.  Jumps if the object is not in new space.
   // The register scratch can be object itself, but scratch will be clobbered.

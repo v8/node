@@ -39,7 +39,6 @@ constexpr Register kWasmInstanceRegister = a0;
 
 // Forward declarations
 enum class AbortReason;
-class JumpTarget;
 
 // Reserved Register Usage Summary.
 //
@@ -58,14 +57,6 @@ class JumpTarget;
 enum LeaveExitFrameMode {
   EMIT_RETURN = true,
   NO_EMIT_RETURN = false
-};
-
-// Flags used for AllocateHeapNumber
-enum TaggingMode {
-  // Tag the result.
-  TAG_RESULT,
-  // Don't tag
-  DONT_TAG_RESULT
 };
 
 // Allow programmer to use Branch Delay Slot of Branches, Jumps, Calls.
@@ -95,13 +86,6 @@ Register GetRegisterThatIsNotOneOf(Register reg1,
                                    Register reg4 = no_reg,
                                    Register reg5 = no_reg,
                                    Register reg6 = no_reg);
-
-bool AreAliased(Register reg1, Register reg2, Register reg3 = no_reg,
-                Register reg4 = no_reg, Register reg5 = no_reg,
-                Register reg6 = no_reg, Register reg7 = no_reg,
-                Register reg8 = no_reg, Register reg9 = no_reg,
-                Register reg10 = no_reg);
-
 
 // -----------------------------------------------------------------------------
 // Static helper functions.
@@ -1204,7 +1188,7 @@ void TurboAssembler::GenerateSwitchTable(Register index, size_t case_count,
     bind(&here);
     addu(scratch, scratch, ra);
     pop(ra);
-    lw(scratch, MemOperand(scratch, 6 * v8::internal::Assembler::kInstrSize));
+    lw(scratch, MemOperand(scratch, 6 * v8::internal::kInstrSize));
   }
   jr(scratch);
   nop();  // Branch delay slot nop.

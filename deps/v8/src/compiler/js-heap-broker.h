@@ -120,6 +120,8 @@ class ObjectRef {
   bool BooleanValue();
   double OddballToNumber() const;
 
+  Isolate* isolate() const;
+
  protected:
   JSHeapBroker* broker() const;
   ObjectData* data() const;
@@ -157,15 +159,7 @@ class JSObjectRef : public HeapObjectRef {
 
   FixedArrayBaseRef elements() const;
   void EnsureElementsTenured();
-  ElementsKind GetElementsKind();
-};
-
-struct SlackTrackingResult {
-  SlackTrackingResult(int instance_sizex, int inobject_property_countx)
-      : instance_size(instance_sizex),
-        inobject_property_count(inobject_property_countx) {}
-  int instance_size;
-  int inobject_property_count;
+  ElementsKind GetElementsKind() const;
 };
 
 class JSFunctionRef : public JSObjectRef {
@@ -179,7 +173,7 @@ class JSFunctionRef : public JSObjectRef {
   MapRef initial_map() const;
 
   JSGlobalProxyRef global_proxy() const;
-  SlackTrackingResult FinishSlackTracking() const;
+  int InitialMapInstanceSizeWithMinSlack() const;
   SharedFunctionInfoRef shared() const;
   void EnsureHasInitialMap() const;
 };
@@ -288,6 +282,7 @@ class MapRef : public HeapObjectRef {
   int instance_size() const;
   InstanceType instance_type() const;
   int GetInObjectProperties() const;
+  int GetInObjectPropertiesStartInWords() const;
   int NumberOfOwnDescriptors() const;
   PropertyDetails GetPropertyDetails(int i) const;
   NameRef GetPropertyKey(int i) const;
@@ -359,7 +354,7 @@ class SharedFunctionInfoRef : public HeapObjectRef {
   bool has_duplicate_parameters() const;
   int function_map_index() const;
   FunctionKind kind() const;
-  LanguageMode language_mode();
+  LanguageMode language_mode() const;
   bool native() const;
   bool HasBreakInfo() const;
   bool HasBuiltinId() const;

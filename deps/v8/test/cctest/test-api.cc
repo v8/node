@@ -59,7 +59,6 @@
 #include "src/unicode-inl.h"
 #include "src/utils.h"
 #include "src/vm-state.h"
-#include "src/wasm/wasm-js.h"
 #include "test/cctest/heap/heap-tester.h"
 #include "test/cctest/heap/heap-utils.h"
 
@@ -15391,6 +15390,9 @@ THREADED_TEST(GetPropertyNames) {
   v8::HandleScope scope(isolate);
   v8::Local<v8::Value> result = CompileRun(
       "var result = {0: 0, 1: 1, a: 2, b: 3};"
+      "result[2**32] = '4294967296';"
+      "result[2**32-1] = '4294967295';"
+      "result[2**32-2] = '4294967294';"
       "result[Symbol('symbol')] = true;"
       "result.__proto__ = {__proto__:null, 2: 4, 3: 5, c: 6, d: 7};"
       "result;");
@@ -15401,8 +15403,10 @@ THREADED_TEST(GetPropertyNames) {
 
   v8::Local<v8::Array> properties =
       object->GetPropertyNames(context.local()).ToLocalChecked();
-  const char* expected_properties1[] = {"0", "1", "a", "b", "2", "3", "c", "d"};
-  CheckStringArray(isolate, properties, 8, expected_properties1);
+  const char* expected_properties1[] = {"0", "1",          "4294967294", "a",
+                                        "b", "4294967296", "4294967295", "2",
+                                        "3", "c",          "d"};
+  CheckStringArray(isolate, properties, 11, expected_properties1);
 
   properties =
       object
@@ -15410,7 +15414,7 @@ THREADED_TEST(GetPropertyNames) {
                              v8::KeyCollectionMode::kIncludePrototypes,
                              default_filter, v8::IndexFilter::kIncludeIndices)
           .ToLocalChecked();
-  CheckStringArray(isolate, properties, 8, expected_properties1);
+  CheckStringArray(isolate, properties, 11, expected_properties1);
 
   properties = object
                    ->GetPropertyNames(context.local(),
@@ -15418,10 +15422,11 @@ THREADED_TEST(GetPropertyNames) {
                                       include_symbols_filter,
                                       v8::IndexFilter::kIncludeIndices)
                    .ToLocalChecked();
-  const char* expected_properties1_1[] = {"0", "1", "a", "b", nullptr,
-                                          "2", "3", "c", "d"};
-  CheckStringArray(isolate, properties, 9, expected_properties1_1);
-  CheckIsSymbolAt(isolate, properties, 4, "symbol");
+  const char* expected_properties1_1[] = {
+      "0",          "1",     "4294967294", "a", "b", "4294967296",
+      "4294967295", nullptr, "2",          "3", "c", "d"};
+  CheckStringArray(isolate, properties, 12, expected_properties1_1);
+  CheckIsSymbolAt(isolate, properties, 7, "symbol");
 
   properties =
       object
@@ -15429,8 +15434,9 @@ THREADED_TEST(GetPropertyNames) {
                              v8::KeyCollectionMode::kIncludePrototypes,
                              default_filter, v8::IndexFilter::kSkipIndices)
           .ToLocalChecked();
-  const char* expected_properties2[] = {"a", "b", "c", "d"};
-  CheckStringArray(isolate, properties, 4, expected_properties2);
+  const char* expected_properties2[] = {"a",          "b", "4294967296",
+                                        "4294967295", "c", "d"};
+  CheckStringArray(isolate, properties, 6, expected_properties2);
 
   properties = object
                    ->GetPropertyNames(context.local(),
@@ -15438,43 +15444,48 @@ THREADED_TEST(GetPropertyNames) {
                                       include_symbols_filter,
                                       v8::IndexFilter::kSkipIndices)
                    .ToLocalChecked();
-  const char* expected_properties2_1[] = {"a", "b", nullptr, "c", "d"};
-  CheckStringArray(isolate, properties, 5, expected_properties2_1);
-  CheckIsSymbolAt(isolate, properties, 2, "symbol");
+  const char* expected_properties2_1[] = {
+      "a", "b", "4294967296", "4294967295", nullptr, "c", "d"};
+  CheckStringArray(isolate, properties, 7, expected_properties2_1);
+  CheckIsSymbolAt(isolate, properties, 4, "symbol");
 
   properties =
       object
           ->GetPropertyNames(context.local(), v8::KeyCollectionMode::kOwnOnly,
                              default_filter, v8::IndexFilter::kIncludeIndices)
           .ToLocalChecked();
-  const char* expected_properties3[] = {"0", "1", "a", "b"};
-  CheckStringArray(isolate, properties, 4, expected_properties3);
+  const char* expected_properties3[] = {
+      "0", "1", "4294967294", "a", "b", "4294967296", "4294967295",
+  };
+  CheckStringArray(isolate, properties, 7, expected_properties3);
 
   properties = object
                    ->GetPropertyNames(
                        context.local(), v8::KeyCollectionMode::kOwnOnly,
                        include_symbols_filter, v8::IndexFilter::kIncludeIndices)
                    .ToLocalChecked();
-  const char* expected_properties3_1[] = {"0", "1", "a", "b", nullptr};
-  CheckStringArray(isolate, properties, 5, expected_properties3_1);
-  CheckIsSymbolAt(isolate, properties, 4, "symbol");
+  const char* expected_properties3_1[] = {
+      "0", "1", "4294967294", "a", "b", "4294967296", "4294967295", nullptr};
+  CheckStringArray(isolate, properties, 8, expected_properties3_1);
+  CheckIsSymbolAt(isolate, properties, 7, "symbol");
 
   properties =
       object
           ->GetPropertyNames(context.local(), v8::KeyCollectionMode::kOwnOnly,
                              default_filter, v8::IndexFilter::kSkipIndices)
           .ToLocalChecked();
-  const char* expected_properties4[] = {"a", "b"};
-  CheckStringArray(isolate, properties, 2, expected_properties4);
+  const char* expected_properties4[] = {"a", "b", "4294967296", "4294967295"};
+  CheckStringArray(isolate, properties, 4, expected_properties4);
 
   properties = object
                    ->GetPropertyNames(
                        context.local(), v8::KeyCollectionMode::kOwnOnly,
                        include_symbols_filter, v8::IndexFilter::kSkipIndices)
                    .ToLocalChecked();
-  const char* expected_properties4_1[] = {"a", "b", nullptr};
-  CheckStringArray(isolate, properties, 3, expected_properties4_1);
-  CheckIsSymbolAt(isolate, properties, 2, "symbol");
+  const char* expected_properties4_1[] = {"a", "b", "4294967296", "4294967295",
+                                          nullptr};
+  CheckStringArray(isolate, properties, 5, expected_properties4_1);
+  CheckIsSymbolAt(isolate, properties, 4, "symbol");
 }
 
 THREADED_TEST(ProxyGetPropertyNames) {
@@ -15483,6 +15494,9 @@ THREADED_TEST(ProxyGetPropertyNames) {
   v8::HandleScope scope(isolate);
   v8::Local<v8::Value> result = CompileRun(
       "var target = {0: 0, 1: 1, a: 2, b: 3};"
+      "target[2**32] = '4294967296';"
+      "target[2**32-1] = '4294967295';"
+      "target[2**32-2] = '4294967294';"
       "target[Symbol('symbol')] = true;"
       "target.__proto__ = {__proto__:null, 2: 4, 3: 5, c: 6, d: 7};"
       "var result = new Proxy(target, {});"
@@ -15494,8 +15508,10 @@ THREADED_TEST(ProxyGetPropertyNames) {
 
   v8::Local<v8::Array> properties =
       object->GetPropertyNames(context.local()).ToLocalChecked();
-  const char* expected_properties1[] = {"0", "1", "a", "b", "2", "3", "c", "d"};
-  CheckStringArray(isolate, properties, 8, expected_properties1);
+  const char* expected_properties1[] = {"0", "1",          "4294967294", "a",
+                                        "b", "4294967296", "4294967295", "2",
+                                        "3", "c",          "d"};
+  CheckStringArray(isolate, properties, 11, expected_properties1);
 
   properties =
       object
@@ -15503,7 +15519,7 @@ THREADED_TEST(ProxyGetPropertyNames) {
                              v8::KeyCollectionMode::kIncludePrototypes,
                              default_filter, v8::IndexFilter::kIncludeIndices)
           .ToLocalChecked();
-  CheckStringArray(isolate, properties, 8, expected_properties1);
+  CheckStringArray(isolate, properties, 11, expected_properties1);
 
   properties = object
                    ->GetPropertyNames(context.local(),
@@ -15511,10 +15527,11 @@ THREADED_TEST(ProxyGetPropertyNames) {
                                       include_symbols_filter,
                                       v8::IndexFilter::kIncludeIndices)
                    .ToLocalChecked();
-  const char* expected_properties1_1[] = {"0", "1", "a", "b", nullptr,
-                                          "2", "3", "c", "d"};
-  CheckStringArray(isolate, properties, 9, expected_properties1_1);
-  CheckIsSymbolAt(isolate, properties, 4, "symbol");
+  const char* expected_properties1_1[] = {
+      "0",          "1",     "4294967294", "a", "b", "4294967296",
+      "4294967295", nullptr, "2",          "3", "c", "d"};
+  CheckStringArray(isolate, properties, 12, expected_properties1_1);
+  CheckIsSymbolAt(isolate, properties, 7, "symbol");
 
   properties =
       object
@@ -15522,8 +15539,9 @@ THREADED_TEST(ProxyGetPropertyNames) {
                              v8::KeyCollectionMode::kIncludePrototypes,
                              default_filter, v8::IndexFilter::kSkipIndices)
           .ToLocalChecked();
-  const char* expected_properties2[] = {"a", "b", "c", "d"};
-  CheckStringArray(isolate, properties, 4, expected_properties2);
+  const char* expected_properties2[] = {"a",          "b", "4294967296",
+                                        "4294967295", "c", "d"};
+  CheckStringArray(isolate, properties, 6, expected_properties2);
 
   properties = object
                    ->GetPropertyNames(context.local(),
@@ -15531,43 +15549,47 @@ THREADED_TEST(ProxyGetPropertyNames) {
                                       include_symbols_filter,
                                       v8::IndexFilter::kSkipIndices)
                    .ToLocalChecked();
-  const char* expected_properties2_1[] = {"a", "b", nullptr, "c", "d"};
-  CheckStringArray(isolate, properties, 5, expected_properties2_1);
-  CheckIsSymbolAt(isolate, properties, 2, "symbol");
+  const char* expected_properties2_1[] = {
+      "a", "b", "4294967296", "4294967295", nullptr, "c", "d"};
+  CheckStringArray(isolate, properties, 7, expected_properties2_1);
+  CheckIsSymbolAt(isolate, properties, 4, "symbol");
 
   properties =
       object
           ->GetPropertyNames(context.local(), v8::KeyCollectionMode::kOwnOnly,
                              default_filter, v8::IndexFilter::kIncludeIndices)
           .ToLocalChecked();
-  const char* expected_properties3[] = {"0", "1", "a", "b"};
-  CheckStringArray(isolate, properties, 4, expected_properties3);
+  const char* expected_properties3[] = {"0", "1",          "4294967294", "a",
+                                        "b", "4294967296", "4294967295"};
+  CheckStringArray(isolate, properties, 7, expected_properties3);
 
   properties = object
                    ->GetPropertyNames(
                        context.local(), v8::KeyCollectionMode::kOwnOnly,
                        include_symbols_filter, v8::IndexFilter::kIncludeIndices)
                    .ToLocalChecked();
-  const char* expected_properties3_1[] = {"0", "1", "a", "b", nullptr};
-  CheckStringArray(isolate, properties, 5, expected_properties3_1);
-  CheckIsSymbolAt(isolate, properties, 4, "symbol");
+  const char* expected_properties3_1[] = {
+      "0", "1", "4294967294", "a", "b", "4294967296", "4294967295", nullptr};
+  CheckStringArray(isolate, properties, 8, expected_properties3_1);
+  CheckIsSymbolAt(isolate, properties, 7, "symbol");
 
   properties =
       object
           ->GetPropertyNames(context.local(), v8::KeyCollectionMode::kOwnOnly,
                              default_filter, v8::IndexFilter::kSkipIndices)
           .ToLocalChecked();
-  const char* expected_properties4[] = {"a", "b"};
-  CheckStringArray(isolate, properties, 2, expected_properties4);
+  const char* expected_properties4[] = {"a", "b", "4294967296", "4294967295"};
+  CheckStringArray(isolate, properties, 4, expected_properties4);
 
   properties = object
                    ->GetPropertyNames(
                        context.local(), v8::KeyCollectionMode::kOwnOnly,
                        include_symbols_filter, v8::IndexFilter::kSkipIndices)
                    .ToLocalChecked();
-  const char* expected_properties4_1[] = {"a", "b", nullptr};
-  CheckStringArray(isolate, properties, 3, expected_properties4_1);
-  CheckIsSymbolAt(isolate, properties, 2, "symbol");
+  const char* expected_properties4_1[] = {"a", "b", "4294967296", "4294967295",
+                                          nullptr};
+  CheckStringArray(isolate, properties, 5, expected_properties4_1);
+  CheckIsSymbolAt(isolate, properties, 4, "symbol");
 }
 
 THREADED_TEST(AccessChecksReenabledCorrectly) {
@@ -28257,123 +28279,22 @@ TEST(PersistentValueMap) {
   map.Set("key", value);
 }
 
-namespace {
-
-bool wasm_streaming_callback_got_called = false;
-bool wasm_streaming_data_got_collected = false;
-
-void WasmStreamingTestFinalizer(const v8::WeakCallbackInfo<void>& data) {
-  CHECK(!wasm_streaming_data_got_collected);
-  wasm_streaming_data_got_collected = true;
-  i::JSObject** p = reinterpret_cast<i::JSObject**>(data.GetParameter());
-  i::GlobalHandles::Destroy(reinterpret_cast<i::Object**>(p));
-}
-
-void WasmStreamingCallbackTestCallbackIsCalled(
-    const v8::FunctionCallbackInfo<v8::Value>& args) {
-  CHECK(!wasm_streaming_callback_got_called);
-  wasm_streaming_callback_got_called = true;
-
-  i::Handle<i::Object> global_handle =
-      reinterpret_cast<i::Isolate*>(args.GetIsolate())
-          ->global_handles()
-          ->Create(*v8::Utils::OpenHandle(*args.Data()));
-  i::GlobalHandles::MakeWeak(global_handle.location(), global_handle.location(),
-                             WasmStreamingTestFinalizer,
-                             v8::WeakCallbackType::kParameter);
-}
-
-void WasmStreamingCallbackTestOnBytesReceived(
-    const v8::FunctionCallbackInfo<v8::Value>& args) {
-  std::shared_ptr<v8::WasmStreaming> streaming =
-      v8::WasmStreaming::Unpack(args.GetIsolate(), args.Data());
-
-  // The first bytes of the WebAssembly magic word.
-  const uint8_t bytes[]{0x00, 0x61, 0x73};
-  streaming->OnBytesReceived(bytes, arraysize(bytes));
-}
-
-void WasmStreamingCallbackTestFinishWithSuccess(
-    const v8::FunctionCallbackInfo<v8::Value>& args) {
-  std::shared_ptr<v8::WasmStreaming> streaming =
-      v8::WasmStreaming::Unpack(args.GetIsolate(), args.Data());
-  // The bytes of a minimal WebAssembly module.
-  const uint8_t bytes[]{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-  streaming->OnBytesReceived(bytes, arraysize(bytes));
-  streaming->Finish();
-}
-
-void WasmStreamingCallbackTestFinishWithFailure(
-    const v8::FunctionCallbackInfo<v8::Value>& args) {
-  std::shared_ptr<v8::WasmStreaming> streaming =
-      v8::WasmStreaming::Unpack(args.GetIsolate(), args.Data());
-  streaming->Finish();
-}
-
-void WasmStreamingCallbackTestAbortWithReject(
-    const v8::FunctionCallbackInfo<v8::Value>& args) {
-  std::shared_ptr<v8::WasmStreaming> streaming =
-      v8::WasmStreaming::Unpack(args.GetIsolate(), args.Data());
-  streaming->Abort(v8::Object::New(args.GetIsolate()));
-}
-
-void WasmStreamingCallbackTestAbortNoReject(
-    const v8::FunctionCallbackInfo<v8::Value>& args) {
-  std::shared_ptr<v8::WasmStreaming> streaming =
-      v8::WasmStreaming::Unpack(args.GetIsolate(), args.Data());
-  streaming->Abort({});
-}
-
-void TestWasmStreaming(v8::WasmStreamingCallback callback,
-                       v8::Promise::PromiseState expected_state) {
-  CcTest::isolate()->SetWasmStreamingCallback(callback);
+TEST(WasmStreamingAbort) {
   LocalContext env;
   v8::Isolate* isolate = env->GetIsolate();
   v8::HandleScope scope(isolate);
-
-  // Call {WebAssembly.compileStreaming} with {null} as parameter. The parameter
-  // is only really processed by the embedder, so for this test the value is
-  // irrelevant.
-  v8::Local<v8::Promise> promise = v8::Local<v8::Promise>::Cast(
-      CompileRun("WebAssembly.compileStreaming(null)"));
-
-  EmptyMessageQueues(isolate);
-  CHECK_EQ(expected_state, promise->State());
+  v8::WasmModuleObjectBuilderStreaming streaming(isolate);
+  streaming.Abort(v8::Object::New(isolate));
+  CHECK_EQ(streaming.GetPromise()->State(), v8::Promise::kRejected);
 }
 
-}  // namespace
-
-TEST(WasmStreamingCallback) {
-  TestWasmStreaming(WasmStreamingCallbackTestCallbackIsCalled,
-                    v8::Promise::kPending);
-  CHECK(wasm_streaming_callback_got_called);
-  CcTest::CollectAllAvailableGarbage();
-  CHECK(wasm_streaming_data_got_collected);
-}
-
-TEST(WasmStreamingOnBytesReceived) {
-  TestWasmStreaming(WasmStreamingCallbackTestOnBytesReceived,
-                    v8::Promise::kPending);
-}
-
-TEST(WasmStreamingFinishWithSuccess) {
-  TestWasmStreaming(WasmStreamingCallbackTestFinishWithSuccess,
-                    v8::Promise::kFulfilled);
-}
-
-TEST(WasmStreamingFinishWithFailure) {
-  TestWasmStreaming(WasmStreamingCallbackTestFinishWithFailure,
-                    v8::Promise::kRejected);
-}
-
-TEST(WasmStreamingAbortWithReject) {
-  TestWasmStreaming(WasmStreamingCallbackTestAbortWithReject,
-                    v8::Promise::kRejected);
-}
-
-TEST(WasmStreamingAbortWithoutReject) {
-  TestWasmStreaming(WasmStreamingCallbackTestAbortNoReject,
-                    v8::Promise::kPending);
+TEST(WasmStreamingAbortNoReject) {
+  LocalContext env;
+  v8::Isolate* isolate = env->GetIsolate();
+  v8::HandleScope scope(isolate);
+  v8::WasmModuleObjectBuilderStreaming streaming(isolate);
+  streaming.Abort({});
+  CHECK_EQ(streaming.GetPromise()->State(), v8::Promise::kPending);
 }
 
 enum class AtomicsWaitCallbackAction {

@@ -59,6 +59,9 @@
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/frame-array-inl.h"
 #include "src/objects/hash-table-inl.h"
+#ifdef V8_INTL_SUPPORT
+#include "src/objects/js-collator.h"
+#endif  // V8_INTL_SUPPORT
 #include "src/objects/js-collection-inl.h"
 #include "src/objects/js-generator-inl.h"
 #ifdef V8_INTL_SUPPORT
@@ -68,6 +71,7 @@
 #include "src/objects/js-regexp-inl.h"
 #include "src/objects/js-regexp-string-iterator.h"
 #ifdef V8_INTL_SUPPORT
+#include "src/objects/js-plural-rules.h"
 #include "src/objects/js-relative-time-format.h"
 #endif  // V8_INTL_SUPPORT
 #include "src/objects/literal-objects-inl.h"
@@ -952,11 +956,11 @@ MaybeHandle<FixedArray> Object::CreateListFromArrayLike(
 
 // static
 MaybeHandle<Object> Object::GetLengthFromArrayLike(Isolate* isolate,
-                                                   Handle<Object> object) {
+                                                   Handle<JSReceiver> object) {
   Handle<Object> val;
-  Handle<Object> key = isolate->factory()->length_string();
+  Handle<Name> key = isolate->factory()->length_string();
   ASSIGN_RETURN_ON_EXCEPTION(
-      isolate, val, Runtime::GetObjectProperty(isolate, object, key), Object);
+      isolate, val, JSReceiver::GetProperty(isolate, object, key), Object);
   return Object::ToLength(isolate, val);
 }
 
@@ -1418,10 +1422,14 @@ int JSObject::GetHeaderSize(InstanceType type,
     case JS_MODULE_NAMESPACE_TYPE:
       return JSModuleNamespace::kHeaderSize;
 #ifdef V8_INTL_SUPPORT
+    case JS_INTL_COLLATOR_TYPE:
+      return JSCollator::kSize;
     case JS_INTL_LIST_FORMAT_TYPE:
       return JSListFormat::kSize;
     case JS_INTL_LOCALE_TYPE:
       return JSLocale::kSize;
+    case JS_INTL_PLURAL_RULES_TYPE:
+      return JSPluralRules::kSize;
     case JS_INTL_RELATIVE_TIME_FORMAT_TYPE:
       return JSRelativeTimeFormat::kSize;
 #endif  // V8_INTL_SUPPORT
@@ -3168,8 +3176,10 @@ VisitorId Map::GetVisitorId(Map* map) {
     case JS_REGEXP_TYPE:
     case JS_REGEXP_STRING_ITERATOR_TYPE:
 #ifdef V8_INTL_SUPPORT
+    case JS_INTL_COLLATOR_TYPE:
     case JS_INTL_LIST_FORMAT_TYPE:
     case JS_INTL_LOCALE_TYPE:
+    case JS_INTL_PLURAL_RULES_TYPE:
     case JS_INTL_RELATIVE_TIME_FORMAT_TYPE:
 #endif  // V8_INTL_SUPPORT
     case WASM_GLOBAL_TYPE:
@@ -4609,7 +4619,7 @@ void Map::ReplaceDescriptors(Isolate* isolate, DescriptorArray* new_descriptors,
   // Replace descriptors by new_descriptors in all maps that share it. The old
   // descriptors will not be trimmed in the mark-compactor, we need to mark
   // all its elements.
-  isolate->heap()->incremental_marking()->RecordWrites(to_replace);
+  MarkingBarrierForElements(isolate->heap(), to_replace);
   Map* current = this;
   while (current->instance_descriptors() == to_replace) {
     Object* next = current->GetBackPointer();
@@ -5390,7 +5400,7 @@ void Map::EnsureDescriptorSlack(Isolate* isolate, Handle<Map> map, int slack) {
   // Replace descriptors by new_descriptors in all maps that share it. The old
   // descriptors will not be trimmed in the mark-compactor, we need to mark
   // all its elements.
-  isolate->heap()->incremental_marking()->RecordWrites(*descriptors);
+  MarkingBarrierForElements(isolate->heap(), *descriptors);
 
   Map* current = *map;
   while (current->instance_descriptors() == *descriptors) {
@@ -10362,78 +10372,6 @@ bool FixedArray::IsEqualTo(FixedArray* other) {
 }
 #endif
 
-// static
-void FixedArrayOfWeakCells::Set(Isolate* isolate,
-                                Handle<FixedArrayOfWeakCells> array, int index,
-                                Handle<HeapObject> value) {
-  DCHECK(array->IsEmptySlot(index));  // Don't overwrite anything.
-  DCHECK(!value->IsMap());
-  Handle<WeakCell> cell = isolate->factory()->NewWeakCell(value);
-  Handle<FixedArray>::cast(array)->set(index + kFirstIndex, *cell);
-  array->set_last_used_index(index);
-}
-
-
-// static
-Handle<FixedArrayOfWeakCells> FixedArrayOfWeakCells::Add(
-    Isolate* isolate, Handle<Object> maybe_array, Handle<HeapObject> value,
-    int* assigned_index) {
-  Handle<FixedArrayOfWeakCells> array =
-      (maybe_array.is_null() || !maybe_array->IsFixedArrayOfWeakCells())
-          ? Allocate(isolate, 1, Handle<FixedArrayOfWeakCells>::null())
-          : Handle<FixedArrayOfWeakCells>::cast(maybe_array);
-  // Try to store the new entry if there's room. Optimize for consecutive
-  // accesses.
-  int first_index = array->last_used_index();
-  int length = array->Length();
-  if (length > 0) {
-    for (int i = first_index;;) {
-      if (array->IsEmptySlot((i))) {
-        FixedArrayOfWeakCells::Set(isolate, array, i, value);
-        if (assigned_index != nullptr) *assigned_index = i;
-        return array;
-      }
-      i = (i + 1) % length;
-      if (i == first_index) break;
-    }
-  }
-
-  // No usable slot found, grow the array.
-  int new_length = length == 0 ? 1 : length + (length >> 1) + 4;
-  Handle<FixedArrayOfWeakCells> new_array =
-      Allocate(isolate, new_length, array);
-  FixedArrayOfWeakCells::Set(isolate, new_array, length, value);
-  if (assigned_index != nullptr) *assigned_index = length;
-  return new_array;
-}
-
-template <class CompactionCallback>
-void FixedArrayOfWeakCells::Compact(Isolate* isolate) {
-  FixedArray* array = FixedArray::cast(this);
-  int new_length = kFirstIndex;
-  for (int i = kFirstIndex; i < array->length(); i++) {
-    Object* element = array->get(i);
-    if (element->IsSmi()) continue;
-    if (WeakCell::cast(element)->cleared()) continue;
-    Object* value = WeakCell::cast(element)->value();
-    CompactionCallback::Callback(value, i - kFirstIndex,
-                                 new_length - kFirstIndex);
-    array->set(new_length++, element);
-  }
-  array->Shrink(isolate, new_length);
-  set_last_used_index(0);
-}
-
-void FixedArrayOfWeakCells::Iterator::Reset(Object* maybe_array) {
-  if (maybe_array->IsFixedArrayOfWeakCells()) {
-    list_ = FixedArrayOfWeakCells::cast(maybe_array);
-    index_ = 0;
-#ifdef DEBUG
-    last_used_index_ = list_->last_used_index();
-#endif  // DEBUG
-  }
-}
-
 void JSObject::PrototypeRegistryCompactionCallback(HeapObject* value,
                                                    int old_index,
                                                    int new_index) {
@@ -10443,51 +10381,6 @@ void JSObject::PrototypeRegistryCompactionCallback(HeapObject* value,
   PrototypeInfo* proto_info = PrototypeInfo::cast(map->prototype_info());
   DCHECK_EQ(old_index, proto_info->registry_slot());
   proto_info->set_registry_slot(new_index);
-}
-
-template void FixedArrayOfWeakCells::Compact<
-    FixedArrayOfWeakCells::NullCallback>(Isolate* isolate);
-
-bool FixedArrayOfWeakCells::Remove(Handle<HeapObject> value) {
-  if (Length() == 0) return false;
-  // Optimize for the most recently added element to be removed again.
-  int first_index = last_used_index();
-  for (int i = first_index;;) {
-    if (Get(i) == *value) {
-      Clear(i);
-      // Users of FixedArrayOfWeakCells should make sure that there are no
-      // duplicates.
-      return true;
-    }
-    i = (i + 1) % Length();
-    if (i == first_index) return false;
-  }
-  UNREACHABLE();
-}
-
-
-// static
-Handle<FixedArrayOfWeakCells> FixedArrayOfWeakCells::Allocate(
-    Isolate* isolate, int size, Handle<FixedArrayOfWeakCells> initialize_from) {
-  DCHECK_LE(0, size);
-  Handle<FixedArray> result =
-      isolate->factory()->NewUninitializedFixedArray(size + kFirstIndex);
-  int index = 0;
-  if (!initialize_from.is_null()) {
-    DCHECK(initialize_from->Length() <= size);
-    Handle<FixedArray> raw_source = Handle<FixedArray>::cast(initialize_from);
-    // Copy the entries without compacting, since the PrototypeInfo relies on
-    // the index of the entries not to change.
-    while (index < raw_source->length()) {
-      result->set(index, raw_source->get(index));
-      index++;
-    }
-  }
-  while (index < result->length()) {
-    result->set(index, Smi::kZero);
-    index++;
-  }
-  return Handle<FixedArrayOfWeakCells>::cast(result);
 }
 
 // static
@@ -10576,8 +10469,8 @@ Handle<WeakArrayList> WeakArrayList::AddToEnd(Isolate* isolate,
                                               MaybeObjectHandle value) {
   int length = array->length();
   array = EnsureSpace(isolate, array, length + 1);
-  // Check that GC didn't remove elements from the array.
-  DCHECK_EQ(array->length(), length);
+  // Reload length; GC might have removed elements from the array.
+  length = array->length();
   array->Set(length, *value);
   array->set_length(length + 1);
   return array;
@@ -10612,13 +10505,14 @@ int WeakArrayList::CountLiveWeakReferences() const {
 bool WeakArrayList::RemoveOne(MaybeObjectHandle value) {
   if (length() == 0) return false;
   // Optimize for the most recently added element to be removed again.
-  for (int i = length() - 1; i >= 0; --i) {
+  int last_index = length() - 1;
+  for (int i = last_index; i >= 0; --i) {
     if (Get(i) == *value) {
-      // Users should make sure that there are no duplicates.
-      Set(i, HeapObjectReference::ClearedValue());
-      if (i == length() - 1) {
-        set_length(length() - 1);
-      }
+      // Move the last element into the this slot (or no-op, if this is the
+      // last slot).
+      Set(i, Get(last_index));
+      Set(last_index, HeapObjectReference::ClearedValue());
+      set_length(last_index);
       return true;
     }
   }
@@ -12665,6 +12559,9 @@ static void GetMinInobjectSlack(Map* map, void* data) {
   }
 }
 
+int Map::InstanceSizeFromSlack(int slack) const {
+  return instance_size() - slack * kPointerSize;
+}
 
 static void ShrinkInstanceSize(Map* map, void* data) {
   int slack = *reinterpret_cast<int*>(data);
@@ -12673,7 +12570,7 @@ static void ShrinkInstanceSize(Map* map, void* data) {
   int old_visitor_id = Map::GetVisitorId(map);
   int new_unused = map->UnusedPropertyFields() - slack;
 #endif
-  map->set_instance_size(map->instance_size() - slack * kPointerSize);
+  map->set_instance_size(map->InstanceSizeFromSlack(slack));
   map->set_construction_counter(Map::kNoSlackTracking);
   DCHECK_EQ(old_visitor_id, Map::GetVisitorId(map));
   DCHECK_EQ(new_unused, map->UnusedPropertyFields());
@@ -12683,7 +12580,7 @@ static void StopSlackTracking(Map* map, void* data) {
   map->set_construction_counter(Map::kNoSlackTracking);
 }
 
-void Map::CompleteInobjectSlackTracking(Isolate* isolate) {
+int Map::ComputeMinObjectSlack(Isolate* isolate) {
   DisallowHeapAllocation no_gc;
   // Has to be an initial map.
   DCHECK(GetBackPointer()->IsUndefined(isolate));
@@ -12691,6 +12588,16 @@ void Map::CompleteInobjectSlackTracking(Isolate* isolate) {
   int slack = UnusedPropertyFields();
   TransitionsAccessor transitions(isolate, this, &no_gc);
   transitions.TraverseTransitionTree(&GetMinInobjectSlack, &slack);
+  return slack;
+}
+
+void Map::CompleteInobjectSlackTracking(Isolate* isolate) {
+  DisallowHeapAllocation no_gc;
+  // Has to be an initial map.
+  DCHECK(GetBackPointer()->IsUndefined(isolate));
+
+  int slack = ComputeMinObjectSlack(isolate);
+  TransitionsAccessor transitions(isolate, this, &no_gc);
   if (slack != 0) {
     // Resize the initial map and all maps in its transition tree.
     transitions.TraverseTransitionTree(&ShrinkInstanceSize, &slack);
@@ -13210,6 +13117,10 @@ bool CanSubclassHaveInobjectProperties(InstanceType instance_type) {
     case JS_DATE_TYPE:
     case JS_FUNCTION_TYPE:
     case JS_GENERATOR_OBJECT_TYPE:
+#ifdef V8_INTL_SUPPORT
+    case JS_INTL_COLLATOR_TYPE:
+    case JS_INTL_PLURAL_RULES_TYPE:
+#endif
     case JS_ASYNC_GENERATOR_OBJECT_TYPE:
     case JS_MAP_TYPE:
     case JS_MESSAGE_OBJECT_TYPE:
@@ -13455,6 +13366,14 @@ MaybeHandle<Map> JSFunction::GetDerivedMap(Isolate* isolate,
   return map;
 }
 
+int JSFunction::ComputeInstanceSizeWithMinSlack(Isolate* isolate) {
+  if (has_prototype_slot() && has_initial_map() &&
+      initial_map()->IsInobjectSlackTrackingInProgress()) {
+    int slack = initial_map()->ComputeMinObjectSlack(isolate);
+    return initial_map()->InstanceSizeFromSlack(slack);
+  }
+  return initial_map()->instance_size();
+}
 
 void JSFunction::PrintName(FILE* out) {
   std::unique_ptr<char[]> name = shared()->DebugName()->ToCString();
@@ -13967,6 +13886,7 @@ void SharedFunctionInfo::SetScript(Handle<SharedFunctionInfo> shared,
   // This is okay because the gc-time processing of these lists can tolerate
   // duplicates.
   if (script_object->IsScript()) {
+    DCHECK(!shared->script()->IsScript());
     Handle<Script> script = Handle<Script>::cast(script_object);
     Handle<WeakFixedArray> list =
         handle(script->shared_function_infos(), isolate);
@@ -13979,7 +13899,13 @@ void SharedFunctionInfo::SetScript(Handle<SharedFunctionInfo> shared,
     }
 #endif
     list->Set(function_literal_id, HeapObjectReference::Weak(*shared));
+
+    // Remove shared function info from root array.
+    WeakArrayList* noscript_list =
+        isolate->heap()->noscript_shared_function_infos();
+    CHECK(noscript_list->RemoveOne(MaybeObjectHandle::Weak(shared)));
   } else {
+    DCHECK(shared->script()->IsScript());
     Handle<WeakArrayList> list =
         isolate->factory()->noscript_shared_function_infos();
 
@@ -13997,9 +13923,7 @@ void SharedFunctionInfo::SetScript(Handle<SharedFunctionInfo> shared,
         WeakArrayList::AddToEnd(isolate, list, MaybeObjectHandle::Weak(shared));
 
     isolate->heap()->SetRootNoScriptSharedFunctionInfos(*list);
-  }
 
-  if (shared->script()->IsScript()) {
     // Remove shared function info from old script's list.
     Script* old_script = Script::cast(shared->script());
 
@@ -14016,10 +13940,6 @@ void SharedFunctionInfo::SetScript(Handle<SharedFunctionInfo> shared,
                                      ReadOnlyRoots(isolate).undefined_value()));
       }
     }
-  } else {
-    // Remove shared function info from root array.
-    WeakArrayList* list = isolate->heap()->noscript_shared_function_infos();
-    CHECK(list->RemoveOne(MaybeObjectHandle::Weak(shared)));
   }
 
   // Finally set new script.
@@ -15268,7 +15188,7 @@ void JSArray::SetLength(Handle<JSArray> array, uint32_t new_length) {
   array->GetElementsAccessor()->SetLength(array, new_length);
 }
 
-DependentCode* DependentCode::Get(Handle<HeapObject> object) {
+DependentCode* DependentCode::GetDependentCode(Handle<HeapObject> object) {
   if (object->IsMap()) {
     return Handle<Map>::cast(object)->dependent_code();
   } else if (object->IsPropertyCell()) {
@@ -15279,7 +15199,8 @@ DependentCode* DependentCode::Get(Handle<HeapObject> object) {
   UNREACHABLE();
 }
 
-void DependentCode::Set(Handle<HeapObject> object, Handle<DependentCode> dep) {
+void DependentCode::SetDependentCode(Handle<HeapObject> object,
+                                     Handle<DependentCode> dep) {
   if (object->IsMap()) {
     Handle<Map>::cast(object)->set_dependent_code(*dep);
   } else if (object->IsPropertyCell()) {
@@ -15291,28 +15212,30 @@ void DependentCode::Set(Handle<HeapObject> object, Handle<DependentCode> dep) {
   }
 }
 
-void DependentCode::InstallDependency(Isolate* isolate, Handle<WeakCell> cell,
+void DependentCode::InstallDependency(Isolate* isolate, MaybeObjectHandle code,
                                       Handle<HeapObject> object,
                                       DependencyGroup group) {
-  Handle<DependentCode> old_deps(DependentCode::Get(object), isolate);
+  Handle<DependentCode> old_deps(DependentCode::GetDependentCode(object),
+                                 isolate);
   Handle<DependentCode> new_deps =
-      InsertWeakCode(isolate, old_deps, group, cell);
+      InsertWeakCode(isolate, old_deps, group, code);
   // Update the list head if necessary.
-  if (!new_deps.is_identical_to(old_deps)) DependentCode::Set(object, new_deps);
+  if (!new_deps.is_identical_to(old_deps))
+    DependentCode::SetDependentCode(object, new_deps);
 }
 
 Handle<DependentCode> DependentCode::InsertWeakCode(
     Isolate* isolate, Handle<DependentCode> entries, DependencyGroup group,
-    Handle<WeakCell> code_cell) {
+    MaybeObjectHandle code) {
   if (entries->length() == 0 || entries->group() > group) {
     // There is no such group.
-    return DependentCode::New(isolate, group, code_cell, entries);
+    return DependentCode::New(isolate, group, code, entries);
   }
   if (entries->group() < group) {
     // The group comes later in the list.
     Handle<DependentCode> old_next(entries->next_link(), isolate);
     Handle<DependentCode> new_next =
-        InsertWeakCode(isolate, old_next, group, code_cell);
+        InsertWeakCode(isolate, old_next, group, code);
     if (!old_next.is_identical_to(new_next)) {
       entries->set_next_link(*new_next);
     }
@@ -15322,24 +15245,24 @@ Handle<DependentCode> DependentCode::InsertWeakCode(
   int count = entries->count();
   // Check for existing entry to avoid duplicates.
   for (int i = 0; i < count; i++) {
-    if (entries->object_at(i) == *code_cell) return entries;
+    if (entries->object_at(i) == *code) return entries;
   }
   if (entries->length() < kCodesStartIndex + count + 1) {
     entries = EnsureSpace(isolate, entries);
     // Count could have changed, reload it.
     count = entries->count();
   }
-  entries->set_object_at(count, *code_cell);
+  entries->set_object_at(count, *code);
   entries->set_count(count + 1);
   return entries;
 }
 
 Handle<DependentCode> DependentCode::New(Isolate* isolate,
                                          DependencyGroup group,
-                                         Handle<Object> object,
+                                         MaybeObjectHandle object,
                                          Handle<DependentCode> next) {
   Handle<DependentCode> result = Handle<DependentCode>::cast(
-      isolate->factory()->NewFixedArray(kCodesStartIndex + 1, TENURED));
+      isolate->factory()->NewWeakFixedArray(kCodesStartIndex + 1, TENURED));
   result->set_next_link(*next);
   result->set_flags(GroupField::encode(group) | CountField::encode(1));
   result->set_object_at(0, *object);
@@ -15352,7 +15275,7 @@ Handle<DependentCode> DependentCode::EnsureSpace(
   int capacity = kCodesStartIndex + DependentCode::Grow(entries->count());
   int grow_by = capacity - entries->length();
   return Handle<DependentCode>::cast(
-      isolate->factory()->CopyFixedArrayAndGrow(entries, grow_by, TENURED));
+      isolate->factory()->CopyWeakFixedArrayAndGrow(entries, grow_by, TENURED));
 }
 
 
@@ -15360,8 +15283,8 @@ bool DependentCode::Compact() {
   int old_count = count();
   int new_count = 0;
   for (int i = 0; i < old_count; i++) {
-    Object* obj = object_at(i);
-    if (!obj->IsWeakCell() || !WeakCell::cast(obj)->cleared()) {
+    MaybeObject* obj = object_at(i);
+    if (!obj->IsClearedWeakHeapObject()) {
       if (i != new_count) {
         copy(i, new_count);
       }
@@ -15375,58 +15298,19 @@ bool DependentCode::Compact() {
   return new_count < old_count;
 }
 
-
-void DependentCode::RemoveCompilationDependencies(
-    DependentCode::DependencyGroup group, Foreign* info) {
-  if (this->length() == 0 || this->group() > group) {
-    // There is no such group.
-    return;
-  }
-  if (this->group() < group) {
-    // The group comes later in the list.
-    next_link()->RemoveCompilationDependencies(group, info);
-    return;
-  }
-  DCHECK_EQ(group, this->group());
-  DisallowHeapAllocation no_allocation;
-  int old_count = count();
-  // Find compilation info wrapper.
-  int info_pos = -1;
-  for (int i = 0; i < old_count; i++) {
-    if (object_at(i) == info) {
-      info_pos = i;
-      break;
-    }
-  }
-  if (info_pos == -1) return;  // Not found.
-  // Use the last code to fill the gap.
-  if (info_pos < old_count - 1) {
-    copy(old_count - 1, info_pos);
-  }
-  clear_at(old_count - 1);
-  set_count(old_count - 1);
-
-#ifdef DEBUG
-  for (int i = 0; i < old_count - 1; i++) {
-    DCHECK(object_at(i) != info);
-  }
-#endif
-}
-
-
-bool DependentCode::Contains(DependencyGroup group, WeakCell* code_cell) {
+bool DependentCode::Contains(DependencyGroup group, MaybeObject* code) {
   if (this->length() == 0 || this->group() > group) {
     // There is no such group.
     return false;
   }
   if (this->group() < group) {
     // The group comes later in the list.
-    return next_link()->Contains(group, code_cell);
+    return next_link()->Contains(group, code);
   }
   DCHECK_EQ(group, this->group());
   int count = this->count();
   for (int i = 0; i < count; i++) {
-    if (object_at(i) == code_cell) return true;
+    if (object_at(i) == code) return true;
   }
   return false;
 }
@@ -15463,10 +15347,9 @@ bool DependentCode::MarkCodeForDeoptimization(
   bool marked = false;
   int count = this->count();
   for (int i = 0; i < count; i++) {
-    Object* obj = object_at(i);
-    WeakCell* cell = WeakCell::cast(obj);
-    if (cell->cleared()) continue;
-    Code* code = Code::cast(cell->value());
+    MaybeObject* obj = object_at(i);
+    if (obj->IsClearedWeakHeapObject()) continue;
+    Code* code = Code::cast(obj->ToWeakHeapObject());
     if (!code->marked_for_deoptimization()) {
       code->SetMarkedForDeoptimization(DependencyGroupName(group));
       marked = true;
@@ -17714,12 +17597,17 @@ int SearchLiteralsMapEntry(CompilationCacheTable* cache, int cache_entry,
   DCHECK(native_context->IsNativeContext());
   Object* obj = cache->get(cache_entry);
 
-  if (obj->IsFixedArray()) {
-    FixedArray* literals_map = FixedArray::cast(obj);
+  // Check that there's no confusion between FixedArray and WeakFixedArray (the
+  // object used to be a FixedArray here).
+  DCHECK(!obj->IsFixedArray());
+  if (obj->IsWeakFixedArray()) {
+    WeakFixedArray* literals_map = WeakFixedArray::cast(obj);
     int length = literals_map->length();
     for (int i = 0; i < length; i += kLiteralEntryLength) {
-      if (WeakCell::cast(literals_map->get(i + kLiteralContextOffset))
-              ->value() == native_context) {
+      DCHECK(literals_map->Get(i + kLiteralContextOffset)
+                 ->IsWeakOrClearedHeapObject());
+      if (literals_map->Get(i + kLiteralContextOffset) ==
+          HeapObjectReference::Weak(native_context)) {
         return i;
       }
     }
@@ -17733,23 +17621,25 @@ void AddToFeedbackCellsMap(Handle<CompilationCacheTable> cache, int cache_entry,
   Isolate* isolate = native_context->GetIsolate();
   DCHECK(native_context->IsNativeContext());
   STATIC_ASSERT(kLiteralEntryLength == 2);
-  Handle<FixedArray> new_literals_map;
+  Handle<WeakFixedArray> new_literals_map;
   int entry;
 
   Object* obj = cache->get(cache_entry);
 
-  if (!obj->IsFixedArray() || FixedArray::cast(obj)->length() == 0) {
+  // Check that there's no confusion between FixedArray and WeakFixedArray (the
+  // object used to be a FixedArray here).
+  DCHECK(!obj->IsFixedArray());
+  if (!obj->IsWeakFixedArray() || WeakFixedArray::cast(obj)->length() == 0) {
     new_literals_map =
-        isolate->factory()->NewFixedArray(kLiteralInitialLength, TENURED);
+        isolate->factory()->NewWeakFixedArray(kLiteralInitialLength, TENURED);
     entry = 0;
   } else {
-    Handle<FixedArray> old_literals_map(FixedArray::cast(obj), isolate);
+    Handle<WeakFixedArray> old_literals_map(WeakFixedArray::cast(obj), isolate);
     entry = SearchLiteralsMapEntry(*cache, cache_entry, *native_context);
     if (entry >= 0) {
       // Just set the code of the entry.
-      Handle<WeakCell> literals_cell =
-          isolate->factory()->NewWeakCell(feedback_cell);
-      old_literals_map->set(entry + kLiteralLiteralsOffset, *literals_cell);
+      old_literals_map->Set(entry + kLiteralLiteralsOffset,
+                            HeapObjectReference::Weak(*feedback_cell));
       return;
     }
 
@@ -17757,8 +17647,8 @@ void AddToFeedbackCellsMap(Handle<CompilationCacheTable> cache, int cache_entry,
     DCHECK_LT(entry, 0);
     int length = old_literals_map->length();
     for (int i = 0; i < length; i += kLiteralEntryLength) {
-      if (WeakCell::cast(old_literals_map->get(i + kLiteralContextOffset))
-              ->cleared()) {
+      if (old_literals_map->Get(i + kLiteralContextOffset)
+              ->IsClearedWeakHeapObject()) {
         new_literals_map = old_literals_map;
         entry = i;
         break;
@@ -17767,26 +17657,25 @@ void AddToFeedbackCellsMap(Handle<CompilationCacheTable> cache, int cache_entry,
 
     if (entry < 0) {
       // Copy old optimized code map and append one new entry.
-      new_literals_map = isolate->factory()->CopyFixedArrayAndGrow(
+      new_literals_map = isolate->factory()->CopyWeakFixedArrayAndGrow(
           old_literals_map, kLiteralEntryLength, TENURED);
       entry = old_literals_map->length();
     }
   }
 
-  Handle<WeakCell> literals_cell =
-      isolate->factory()->NewWeakCell(feedback_cell);
-  WeakCell* context_cell = native_context->self_weak_cell();
-
-  new_literals_map->set(entry + kLiteralContextOffset, context_cell);
-  new_literals_map->set(entry + kLiteralLiteralsOffset, *literals_cell);
+  new_literals_map->Set(entry + kLiteralContextOffset,
+                        HeapObjectReference::Weak(*native_context));
+  new_literals_map->Set(entry + kLiteralLiteralsOffset,
+                        HeapObjectReference::Weak(*feedback_cell));
 
 #ifdef DEBUG
   for (int i = 0; i < new_literals_map->length(); i += kLiteralEntryLength) {
-    WeakCell* cell =
-        WeakCell::cast(new_literals_map->get(i + kLiteralContextOffset));
-    DCHECK(cell->cleared() || cell->value()->IsNativeContext());
-    cell = WeakCell::cast(new_literals_map->get(i + kLiteralLiteralsOffset));
-    DCHECK(cell->cleared() || (cell->value()->IsFeedbackCell()));
+    MaybeObject* object = new_literals_map->Get(i + kLiteralContextOffset);
+    DCHECK(object->IsClearedWeakHeapObject() ||
+           object->ToWeakHeapObject()->IsNativeContext());
+    object = new_literals_map->Get(i + kLiteralLiteralsOffset);
+    DCHECK(object->IsClearedWeakHeapObject() ||
+           object->ToWeakHeapObject()->IsFeedbackCell());
   }
 #endif
 
@@ -17801,12 +17690,14 @@ FeedbackCell* SearchLiteralsMap(CompilationCacheTable* cache, int cache_entry,
   FeedbackCell* result = nullptr;
   int entry = SearchLiteralsMapEntry(cache, cache_entry, native_context);
   if (entry >= 0) {
-    FixedArray* literals_map = FixedArray::cast(cache->get(cache_entry));
+    WeakFixedArray* literals_map =
+        WeakFixedArray::cast(cache->get(cache_entry));
     DCHECK_LE(entry + kLiteralEntryLength, literals_map->length());
-    WeakCell* cell =
-        WeakCell::cast(literals_map->get(entry + kLiteralLiteralsOffset));
+    MaybeObject* object = literals_map->Get(entry + kLiteralLiteralsOffset);
 
-    result = cell->cleared() ? nullptr : FeedbackCell::cast(cell->value());
+    result = object->IsClearedWeakHeapObject()
+                 ? nullptr
+                 : FeedbackCell::cast(object->ToWeakHeapObject());
   }
   DCHECK(result == nullptr || result->IsFeedbackCell());
   return result;
@@ -17817,6 +17708,10 @@ FeedbackCell* SearchLiteralsMap(CompilationCacheTable* cache, int cache_entry,
 MaybeHandle<SharedFunctionInfo> CompilationCacheTable::LookupScript(
     Handle<String> src, Handle<Context> native_context,
     LanguageMode language_mode) {
+  // We use the empty function SFI as part of the key. Although the
+  // empty_function is native context dependent, the SFI is de-duped on
+  // snapshot builds by the PartialSnapshotCache, and so this does not prevent
+  // reuse of scripts in the compilation cache across native contexts.
   Handle<SharedFunctionInfo> shared(native_context->empty_function()->shared(),
                                     native_context->GetIsolate());
   StringSharedKey key(src, shared, language_mode, kNoSourcePosition);
@@ -17879,6 +17774,10 @@ Handle<CompilationCacheTable> CompilationCacheTable::PutScript(
     Handle<Context> native_context, LanguageMode language_mode,
     Handle<SharedFunctionInfo> value) {
   Isolate* isolate = native_context->GetIsolate();
+  // We use the empty function SFI as part of the key. Although the
+  // empty_function is native context dependent, the SFI is de-duped on
+  // snapshot builds by the PartialSnapshotCache, and so this does not prevent
+  // reuse of scripts in the compilation cache across native contexts.
   Handle<SharedFunctionInfo> shared(native_context->empty_function()->shared(),
                                     isolate);
   StringSharedKey key(src, shared, language_mode, kNoSourcePosition);

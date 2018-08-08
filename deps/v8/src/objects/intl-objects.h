@@ -15,6 +15,7 @@
 #include "src/contexts.h"
 #include "src/intl.h"
 #include "src/objects.h"
+#include "unicode/locid.h"
 #include "unicode/uversion.h"
 
 namespace U_ICU_NAMESPACE {
@@ -116,61 +117,6 @@ class NumberFormat {
   NumberFormat();
 };
 
-class Collator {
- public:
-  // Create a collator for the specificied locale and options. Stores the
-  // collator in the provided collator_holder.
-  static icu::Collator* InitializeCollator(Isolate* isolate,
-                                           Handle<String> locale,
-                                           Handle<JSObject> options,
-                                           Handle<JSObject> resolved);
-
-  // Unpacks collator object from corresponding JavaScript object.
-  static icu::Collator* UnpackCollator(Handle<JSObject> obj);
-
-  // Layout description.
-  static const int kCollator = JSObject::kHeaderSize;
-  static const int kSize = kCollator + kPointerSize;
-
- private:
-  Collator();
-};
-
-class PluralRules {
- public:
-  // Create a PluralRules and DecimalFormat for the specificied locale and
-  // options. Returns false on an ICU failure.
-  static void InitializePluralRules(Isolate* isolate, Handle<String> locale,
-                                    Handle<JSObject> options,
-                                    Handle<JSObject> resolved,
-                                    icu::PluralRules** plural_rules,
-                                    icu::DecimalFormat** decimal_format);
-
-  // Unpacks PluralRules object from corresponding JavaScript object.
-  static icu::PluralRules* UnpackPluralRules(Handle<JSObject> obj);
-
-  // Unpacks NumberFormat object from corresponding JavaScript PluralRUles
-  // object.
-  static icu::DecimalFormat* UnpackNumberFormat(Handle<JSObject> obj);
-
-  // Release memory we allocated for the Collator once the JS object that holds
-  // the pointer gets garbage collected.
-  static void DeletePluralRules(const v8::WeakCallbackInfo<void>& data);
-
-  // Layout description.
-  static const int kPluralRules = JSObject::kHeaderSize;
-  // Values are formatted with this NumberFormat and then parsed as a Number
-  // to round them based on the options passed into the PluralRules objct.
-  // TODO(littledan): If a future version of ICU supports the rounding
-  // built-in to PluralRules, switch to that, see this bug:
-  // http://bugs.icu-project.org/trac/ticket/12763
-  static const int kNumberFormat = kPluralRules + kPointerSize;
-  static const int kSize = kNumberFormat + kPointerSize;
-
- private:
-  PluralRules();
-};
-
 class V8BreakIterator {
  public:
   // Create a BreakIterator for the specificied locale and options. Returns the
@@ -229,7 +175,7 @@ class Intl {
   static V8_WARN_UNUSED_RESULT MaybeHandle<JSObject> AvailableLocalesOf(
       Isolate* isolate, Handle<String> service);
 
-  static V8_WARN_UNUSED_RESULT Handle<String> DefaultLocale(Isolate* isolate);
+  static std::string DefaultLocale(Isolate* isolate);
 
   static void DefineWEProperty(Isolate* isolate, Handle<JSObject> target,
                                Handle<Name> key, Handle<Object> value);
@@ -265,6 +211,16 @@ class Intl {
   V8_WARN_UNUSED_RESULT static MaybeHandle<JSObject> ResolveLocale(
       Isolate* isolate, const char* service, Handle<Object> requestedLocales,
       Handle<Object> options);
+
+  // This currently calls out to the JavaScript implementation of
+  // CanonicalizeLocaleList.
+  // Note: This is deprecated glue code, required only as long as ResolveLocale
+  // still calls a JS implementation. The C++ successor is the overloaded
+  // version below that returns a Maybe<std::vector<std::string>>.
+  //
+  // ecma402/#sec-canonicalizelocalelist
+  V8_WARN_UNUSED_RESULT static MaybeHandle<JSObject> CanonicalizeLocaleListJS(
+      Isolate* isolate, Handle<Object> locales);
 
   // ECMA402 9.2.10. GetOption( options, property, type, values, fallback)
   // ecma402/#sec-getoption
@@ -302,9 +258,18 @@ class Intl {
       Isolate* isolate, Handle<JSReceiver> options, const char* property,
       const char* service, bool* result);
 
-  // Canonicalize the localeID.
-  static MaybeHandle<String> CanonicalizeLanguageTag(Isolate* isolate,
-                                                     Handle<Object> localeID);
+  // Canonicalize the locale.
+  // https://tc39.github.io/ecma402/#sec-canonicalizelanguagetag,
+  // including type check and structural validity check.
+  static Maybe<std::string> CanonicalizeLanguageTag(Isolate* isolate,
+                                                    Handle<Object> locale_in);
+
+  // https://tc39.github.io/ecma402/#sec-canonicalizelocalelist
+  // {only_return_one_result} is an optimization for callers that only
+  // care about the first result.
+  static Maybe<std::vector<std::string>> CanonicalizeLocaleList(
+      Isolate* isolate, Handle<Object> locales,
+      bool only_return_one_result = false);
 
   // ecma-402/#sec-currencydigits
   // The currency is expected to an all upper case string value.
@@ -328,7 +293,7 @@ class Intl {
       Handle<Object> locales, Handle<Object> options);
 
   V8_WARN_UNUSED_RESULT static Handle<Object> InternalCompare(
-      Isolate* isolate, Handle<JSObject> collator, Handle<String> s1,
+      Isolate* isolate, Handle<JSCollator> collator, Handle<String> s1,
       Handle<String> s2);
 
   // ecma402/#sup-properties-of-the-number-prototype-object
@@ -337,14 +302,25 @@ class Intl {
       Handle<Object> options);
 
   // ecma402/#sec-defaultnumberoption
-  V8_WARN_UNUSED_RESULT static MaybeHandle<Smi> DefaultNumberOption(
+  V8_WARN_UNUSED_RESULT static Maybe<int> DefaultNumberOption(
       Isolate* isolate, Handle<Object> value, int min, int max, int fallback,
       Handle<String> property);
 
   // ecma402/#sec-getnumberoption
-  V8_WARN_UNUSED_RESULT static MaybeHandle<Smi> GetNumberOption(
+  V8_WARN_UNUSED_RESULT static Maybe<int> GetNumberOption(
       Isolate* isolate, Handle<JSReceiver> options, Handle<String> property,
       int min, int max, int fallback);
+  V8_WARN_UNUSED_RESULT static Maybe<int> GetNumberOption(
+      Isolate* isolate, Handle<JSReceiver> options, const char* property,
+      int min, int max, int fallback);
+
+  // ecma402/#sec-setnfdigitoptions
+  V8_WARN_UNUSED_RESULT static Maybe<bool> SetNumberFormatDigitOptions(
+      Isolate* isolate, icu::DecimalFormat* number_format,
+      Handle<JSReceiver> options, int mnfd_default, int mxfd_default);
+
+  icu::Locale static CreateICULocale(Isolate* isolate,
+                                     Handle<String> bcp47_locale_str);
 };
 
 }  // namespace internal

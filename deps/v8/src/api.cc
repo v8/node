@@ -6248,6 +6248,7 @@ HeapStatistics::HeapStatistics()
       used_heap_size_(0),
       heap_size_limit_(0),
       malloced_memory_(0),
+      external_memory_(0),
       peak_malloced_memory_(0),
       does_zap_garbage_(0),
       number_of_native_contexts_(0),
@@ -7778,23 +7779,55 @@ class AsyncCompilationResolver : public i::wasm::CompilationResultResolver {
 };
 
 WasmModuleObjectBuilderStreaming::WasmModuleObjectBuilderStreaming(
-    Isolate* isolate) {
-  USE(isolate_);
+    Isolate* isolate)
+    : isolate_(isolate) {
+  MaybeLocal<Promise::Resolver> maybe_resolver =
+      Promise::Resolver::New(isolate->GetCurrentContext());
+  Local<Promise::Resolver> resolver = maybe_resolver.ToLocalChecked();
+  promise_.Reset(isolate, resolver->GetPromise());
+
+  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
+  streaming_decoder_ = i_isolate->wasm_engine()->StartStreamingCompilation(
+      i_isolate, handle(i_isolate->context(), i_isolate),
+      base::make_unique<AsyncCompilationResolver>(isolate, GetPromise()));
 }
 
-Local<Promise> WasmModuleObjectBuilderStreaming::GetPromise() { return {}; }
+Local<Promise> WasmModuleObjectBuilderStreaming::GetPromise() {
+  return promise_.Get(isolate_);
+}
 
 void WasmModuleObjectBuilderStreaming::OnBytesReceived(const uint8_t* bytes,
                                                        size_t size) {
+  streaming_decoder_->OnBytesReceived(i::Vector<const uint8_t>(bytes, size));
 }
 
 void WasmModuleObjectBuilderStreaming::Finish() {
+  streaming_decoder_->Finish();
 }
 
 void WasmModuleObjectBuilderStreaming::Abort(MaybeLocal<Value> exception) {
+  Local<Promise> promise = GetPromise();
+  // The promise has already been resolved, e.g. because of a compilation
+  // error.
+  if (promise->State() != v8::Promise::kPending) return;
+  streaming_decoder_->Abort();
+
+  // If no exception value is provided, we do not reject the promise. This can
+  // happen when streaming compilation gets aborted when no script execution is
+  // allowed anymore, e.g. when a browser tab gets refreshed.
+  if (exception.IsEmpty()) return;
+
+  Local<Promise::Resolver> resolver = promise.As<Promise::Resolver>();
+  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate_);
+  i::HandleScope scope(i_isolate);
+  Local<Context> context =
+      Utils::ToLocal(handle(i_isolate->context(), i_isolate));
+  auto maybe = resolver->Reject(context, exception.ToLocalChecked());
+  CHECK_IMPLIES(!maybe.FromMaybe(false), i_isolate->has_scheduled_exception());
 }
 
 WasmModuleObjectBuilderStreaming::~WasmModuleObjectBuilderStreaming() {
+  promise_.Reset();
 }
 
 // static
@@ -8690,6 +8723,7 @@ void Isolate::GetHeapStatistics(HeapStatistics* heap_statistics) {
   heap_statistics->malloced_memory_ =
       isolate->allocator()->GetCurrentMemoryUsage() +
       isolate->wasm_engine()->allocator()->GetCurrentMemoryUsage();
+  heap_statistics->external_memory_ = isolate->heap()->external_memory();
   heap_statistics->peak_malloced_memory_ =
       isolate->allocator()->GetMaxMemoryUsage() +
       isolate->wasm_engine()->allocator()->GetMaxMemoryUsage();

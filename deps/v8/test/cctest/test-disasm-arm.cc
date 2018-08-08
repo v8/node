@@ -58,7 +58,7 @@ bool DisassembleAndCompare(byte* begin, UseRegex use_regex,
 
   std::vector<std::string> expected_disassembly = {expected_strings...};
   size_t n_expected = expected_disassembly.size();
-  byte* end = begin + (n_expected * Assembler::kInstrSize);
+  byte* end = begin + (n_expected * kInstrSize);
 
   std::vector<std::string> disassembly;
   for (byte* pc = begin; pc < end;) {
@@ -1513,7 +1513,7 @@ static void TestLoadLiteral(byte* buffer, Assembler* assm, bool* failure,
   char expected_string[80];
   snprintf(expected_string, sizeof(expected_string), expected_string_template,
            abs(offset), offset,
-           progcounter + Instruction::kPCReadOffset + offset);
+           progcounter + Instruction::kPcLoadDelta + offset);
   if (!DisassembleAndCompare(progcounter, kRawString, expected_string)) {
     *failure = true;
   }

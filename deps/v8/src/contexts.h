@@ -72,12 +72,13 @@ enum ContextLookupFlags {
 
 #define NATIVE_CONTEXT_IMPORTED_FIELDS(V)                                      \
   V(ARRAY_SHIFT_INDEX, JSFunction, array_shift)                                \
-  V(ARRAY_SPLICE_INDEX, JSFunction, array_splice)                              \
   V(ARRAY_UNSHIFT_INDEX, JSFunction, array_unshift)                            \
   V(ARRAY_ENTRIES_ITERATOR_INDEX, JSFunction, array_entries_iterator)          \
   V(ARRAY_FOR_EACH_ITERATOR_INDEX, JSFunction, array_for_each_iterator)        \
   V(ARRAY_KEYS_ITERATOR_INDEX, JSFunction, array_keys_iterator)                \
   V(ARRAY_VALUES_ITERATOR_INDEX, JSFunction, array_values_iterator)            \
+  V(CANONICALIZE_LOCALE_LIST_FUNCTION_INDEX, JSFunction,                       \
+    canonicalize_locale_list)                                                  \
   V(ERROR_FUNCTION_INDEX, JSFunction, error_function)                          \
   V(ERROR_TO_STRING, JSFunction, error_to_string)                              \
   V(EVAL_ERROR_FUNCTION_INDEX, JSFunction, eval_error_function)                \
@@ -88,7 +89,6 @@ enum ContextLookupFlags {
   V(MAP_HAS_INDEX, JSFunction, map_has)                                        \
   V(MAP_SET_INDEX, JSFunction, map_set)                                        \
   V(FUNCTION_HAS_INSTANCE_INDEX, JSFunction, function_has_instance)            \
-  V(INITIALIZE_LOCALE_LIST_FUNCTION_INDEX, JSFunction, initialize_locale_list) \
   V(OBJECT_VALUE_OF, JSFunction, object_value_of)                              \
   V(OBJECT_TO_STRING, JSFunction, object_to_string)                            \
   V(PROMISE_CATCH_INDEX, JSFunction, promise_catch)                            \
@@ -275,7 +275,6 @@ enum ContextLookupFlags {
   V(REGEXP_RESULT_MAP_INDEX, Map, regexp_result_map)                           \
   V(SCRIPT_CONTEXT_TABLE_INDEX, ScriptContextTable, script_context_table)      \
   V(SECURITY_TOKEN_INDEX, Object, security_token)                              \
-  V(SELF_WEAK_CELL_INDEX, WeakCell, self_weak_cell)                            \
   V(SERIALIZED_OBJECTS, FixedArray, serialized_objects)                        \
   V(SET_VALUE_ITERATOR_MAP_INDEX, Map, set_value_iterator_map)                 \
   V(SET_KEY_VALUE_ITERATOR_MAP_INDEX, Map, set_key_value_iterator_map)         \

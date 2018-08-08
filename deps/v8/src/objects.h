@@ -75,8 +75,10 @@
 //           - JSDate
 //         - JSMessageObject
 //         - JSModuleNamespace
-//         - JSListFormat  // If V8_INTL_SUPPORT enabled.
-//         - JSLocale  // If V8_INTL_SUPPORT enabled.
+//         - JSCollator            // If V8_INTL_SUPPORT enabled.
+//         - JSListFormat          // If V8_INTL_SUPPORT enabled.
+//         - JSLocale              // If V8_INTL_SUPPORT enabled.
+//         - JSPluralRules         // If V8_INTL_SUPPORT enabled.
 //         - JSRelativeTimeFormat  // If V8_INTL_SUPPORT enabled.
 //         - WasmGlobalObject
 //         - WasmInstanceObject
@@ -106,7 +108,6 @@
 //         - ScopeInfo
 //         - ModuleInfo
 //         - ScriptContextTable
-//         - FixedArrayOfWeakCells
 //       - FixedDoubleArray
 //     - Name
 //       - String
@@ -583,8 +584,10 @@ enum InstanceType : uint16_t {
   JS_DATA_VIEW_TYPE,
 
 #ifdef V8_INTL_SUPPORT
+  JS_INTL_COLLATOR_TYPE,
   JS_INTL_LIST_FORMAT_TYPE,
   JS_INTL_LOCALE_TYPE,
+  JS_INTL_PLURAL_RULES_TYPE,
   JS_INTL_RELATIVE_TIME_FORMAT_TYPE,
 #endif  // V8_INTL_SUPPORT
 
@@ -699,8 +702,10 @@ class JSAsyncGeneratorObject;
 class JSGlobalObject;
 class JSGlobalProxy;
 #ifdef V8_INTL_SUPPORT
+class JSCollator;
 class JSListFormat;
 class JSLocale;
+class JSPluralRules;
 class JSRelativeTimeFormat;
 #endif  // V8_INTL_SUPPORT
 class JSPromise;
@@ -786,7 +791,6 @@ class ZoneForwardList;
   V(FixedArray)                                \
   V(FixedArrayBase)                            \
   V(FixedArrayExact)                           \
-  V(FixedArrayOfWeakCells)                     \
   V(FixedBigInt64Array)                        \
   V(FixedBigUint64Array)                       \
   V(FixedDoubleArray)                          \
@@ -910,8 +914,10 @@ class ZoneForwardList;
 #ifdef V8_INTL_SUPPORT
 #define HEAP_OBJECT_ORDINARY_TYPE_LIST(V) \
   HEAP_OBJECT_ORDINARY_TYPE_LIST_BASE(V)  \
+  V(JSCollator)                           \
   V(JSListFormat)                         \
   V(JSLocale)                             \
+  V(JSPluralRules)                        \
   V(JSRelativeTimeFormat)
 #else
 #define HEAP_OBJECT_ORDINARY_TYPE_LIST(V) HEAP_OBJECT_ORDINARY_TYPE_LIST_BASE(V)
@@ -957,7 +963,6 @@ class ZoneForwardList;
   V(FeedbackMetadata, FEEDBACK_METADATA_TYPE)                          \
   V(FeedbackVector, FEEDBACK_VECTOR_TYPE)                              \
   V(FixedArrayExact, FIXED_ARRAY_TYPE)                                 \
-  V(FixedArrayOfWeakCells, FIXED_ARRAY_TYPE)                           \
   V(FixedDoubleArray, FIXED_DOUBLE_ARRAY_TYPE)                         \
   V(Foreign, FOREIGN_TYPE)                                             \
   V(FreeSpace, FREE_SPACE_TYPE)                                        \
@@ -1028,10 +1033,12 @@ class ZoneForwardList;
 
 #ifdef V8_INTL_SUPPORT
 
-#define INSTANCE_TYPE_CHECKERS_SINGLE(V)    \
-  INSTANCE_TYPE_CHECKERS_SINGLE_BASE(V)     \
-  V(JSListFormat, JS_INTL_LIST_FORMAT_TYPE) \
-  V(JSLocale, JS_INTL_LOCALE_TYPE)          \
+#define INSTANCE_TYPE_CHECKERS_SINGLE(V)      \
+  INSTANCE_TYPE_CHECKERS_SINGLE_BASE(V)       \
+  V(JSCollator, JS_INTL_COLLATOR_TYPE)        \
+  V(JSListFormat, JS_INTL_LIST_FORMAT_TYPE)   \
+  V(JSLocale, JS_INTL_LOCALE_TYPE)            \
+  V(JSPluralRules, JS_INTL_PLURAL_RULES_TYPE) \
   V(JSRelativeTimeFormat, JS_INTL_RELATIVE_TIME_FORMAT_TYPE)
 
 #else
@@ -1287,7 +1294,7 @@ class Object {
 
   // Get length property and apply ToLength.
   V8_WARN_UNUSED_RESULT static MaybeHandle<Object> GetLengthFromArrayLike(
-      Isolate* isolate, Handle<Object> object);
+      Isolate* isolate, Handle<JSReceiver> object);
 
   // ES6 section 12.5.6 The typeof Operator
   static Handle<String> TypeOf(Isolate* isolate, Handle<Object> object);
@@ -2260,7 +2267,7 @@ class JSObject: public JSReceiver {
   static inline void SetMapAndElements(Handle<JSObject> object,
                                        Handle<Map> map,
                                        Handle<FixedArrayBase> elements);
-  inline ElementsKind GetElementsKind();
+  inline ElementsKind GetElementsKind() const;
   ElementsAccessor* GetElementsAccessor();
   // Returns true if an object has elements of PACKED_SMI_ELEMENTS or
   // HOLEY_SMI_ELEMENTS ElementsKind.
@@ -2650,7 +2657,7 @@ class JSObject: public JSReceiver {
   // If a GC was caused while constructing this object, the elements pointer
   // may point to a one pointer filler map. The object won't be rooted, but
   // our heap verification code could stumble across it.
-  bool ElementsAreSafeToExamine();
+  bool ElementsAreSafeToExamine() const;
 #endif
 
   Object* SlowReverseLookup(Object* value);
@@ -3242,6 +3249,11 @@ class JSFunction: public JSObject {
 
   // Clears the optimization marker in the function's feedback vector.
   inline void ClearOptimizationMarker();
+
+  // If slack tracking is active, it computes instance size of the initial map
+  // with minimum permissible object slack.  If it is not active, it simply
+  // returns the initial map's instance size.
+  int ComputeInstanceSizeWithMinSlack(Isolate* isolate);
 
   // Completes inobject slack tracking on initial map if it is active.
   inline void CompleteInobjectSlackTrackingIfActive();

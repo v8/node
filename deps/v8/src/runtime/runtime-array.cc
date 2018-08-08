@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "src/runtime/runtime-utils.h"
-
-#include "src/arguments.h"
+#include "src/arguments-inl.h"
 #include "src/code-stubs.h"
 #include "src/conversions-inl.h"
 #include "src/debug/debug.h"
@@ -17,6 +15,7 @@
 #include "src/objects/hash-table-inl.h"
 #include "src/objects/js-array-inl.h"
 #include "src/prototype.h"
+#include "src/runtime/runtime-utils.h"
 
 namespace v8 {
 namespace internal {
@@ -28,6 +27,16 @@ RUNTIME_FUNCTION(Runtime_TransitionElementsKind) {
   CONVERT_ARG_HANDLE_CHECKED(Map, to_map, 1);
   ElementsKind to_kind = to_map->elements_kind();
   ElementsAccessor::ForKind(to_kind)->TransitionElementsKind(object, to_map);
+  return *object;
+}
+
+RUNTIME_FUNCTION(Runtime_TransitionElementsKindWithKind) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(2, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(JSObject, object, 0);
+  CONVERT_ARG_HANDLE_CHECKED(Smi, elements_kind_smi, 1);
+  ElementsKind to_kind = static_cast<ElementsKind>(elements_kind_smi->value());
+  JSObject::TransitionElementsKind(object, to_kind);
   return *object;
 }
 
@@ -600,9 +609,7 @@ RUNTIME_FUNCTION(Runtime_NewArray) {
   // We should allocate with an initial map that reflects the allocation site
   // advice. Therefore we use AllocateJSObjectFromMap instead of passing
   // the constructor.
-  if (to_kind != initial_map->elements_kind()) {
-    initial_map = Map::AsElementsKind(isolate, initial_map, to_kind);
-  }
+  initial_map = Map::AsElementsKind(isolate, initial_map, to_kind);
 
   // If we don't care to track arrays of to_kind ElementsKind, then
   // don't emit a memento for them.

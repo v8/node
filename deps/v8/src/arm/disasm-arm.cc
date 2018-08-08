@@ -669,7 +669,7 @@ int Decoder::FormatOption(Instruction* instr, const char* format) {
     case 'A': {
       // Print pc-relative address.
       int offset = instr->Offset12Value();
-      byte* pc = reinterpret_cast<byte*>(instr) + Instruction::kPCReadOffset;
+      byte* pc = reinterpret_cast<byte*>(instr) + Instruction::kPcLoadDelta;
       byte* addr;
       switch (instr->PUField()) {
         case db_x: {
@@ -1416,7 +1416,7 @@ int Decoder::DecodeType7(Instruction* instr) {
         break;
     }
   }
-  return Instruction::kInstrSize;
+  return kInstrSize;
 }
 
 
@@ -2599,14 +2599,14 @@ int Decoder::InstructionDecode(byte* instr_ptr) {
                               instr->InstructionBits());
   if (instr->ConditionField() == kSpecialCondition) {
     DecodeSpecialCondition(instr);
-    return Instruction::kInstrSize;
+    return kInstrSize;
   }
   int instruction_bits = *(reinterpret_cast<int*>(instr_ptr));
   if ((instruction_bits & kConstantPoolMarkerMask) == kConstantPoolMarker) {
     out_buffer_pos_ += SNPrintF(out_buffer_ + out_buffer_pos_,
                                 "constant pool begin (length %d)",
                                 DecodeConstantPoolLength(instruction_bits));
-    return Instruction::kInstrSize;
+    return kInstrSize;
   }
   switch (instr->TypeValue()) {
     case 0:
@@ -2643,7 +2643,7 @@ int Decoder::InstructionDecode(byte* instr_ptr) {
       break;
     }
   }
-  return Instruction::kInstrSize;
+  return kInstrSize;
 }
 
 

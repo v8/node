@@ -3782,6 +3782,7 @@ void TurboAssembler::Jump(Handle<Code> code, RelocInfo::Mode rmode,
       if (isolate()->builtins()->IsBuiltinHandle(code, &builtin_index) &&
           Builtins::IsIsolateIndependent(builtin_index)) {
         // Inline the trampoline.
+        RecordCommentForOffHeapTrampoline(builtin_index);
         CHECK_NE(builtin_index, Builtins::kNoBuiltinId);
         EmbeddedData d = EmbeddedData::FromBlob();
         Address entry = d.InstructionStartOfBuiltin(builtin_index);
@@ -3888,6 +3889,7 @@ void TurboAssembler::Call(Handle<Code> code, RelocInfo::Mode rmode,
       if (isolate()->builtins()->IsBuiltinHandle(code, &builtin_index) &&
           Builtins::IsIsolateIndependent(builtin_index)) {
         // Inline the trampoline.
+        RecordCommentForOffHeapTrampoline(builtin_index);
         CHECK_NE(builtin_index, Builtins::kNoBuiltinId);
         EmbeddedData d = EmbeddedData::FromBlob();
         Address entry = d.InstructionStartOfBuiltin(builtin_index);
@@ -3912,41 +3914,23 @@ void TurboAssembler::BranchLong(Label* L, BranchDelaySlot bdslot) {
       (!L->is_bound() || is_near_r6(L))) {
     BranchShortHelperR6(0, L);
   } else {
+    // Generate position independent long branch.
     BlockTrampolinePoolScope block_trampoline_pool(this);
-    uint32_t imm32;
-    imm32 = jump_address(L);
-    if (IsMipsArchVariant(kMips32r6) && bdslot == PROTECT) {
-      uint32_t lui_offset, jic_offset;
-      UnpackTargetAddressUnsigned(imm32, lui_offset, jic_offset);
-      {
-        BlockGrowBufferScope block_buf_growth(this);
-        // Buffer growth (and relocation) must be blocked for internal
-        // references until associated instructions are emitted and
-        // available to be patched.
-        RecordRelocInfo(RelocInfo::INTERNAL_REFERENCE_ENCODED);
-        UseScratchRegisterScope temps(this);
-        Register scratch = temps.hasAvailable() ? temps.Acquire() : t8;
-        lui(scratch, lui_offset);
-        jic(scratch, jic_offset);
-      }
-      CheckBuffer();
-    } else {
-      UseScratchRegisterScope temps(this);
-      Register scratch = temps.hasAvailable() ? temps.Acquire() : t8;
-      {
-        BlockGrowBufferScope block_buf_growth(this);
-        // Buffer growth (and relocation) must be blocked for internal
-        // references until associated instructions are emitted and
-        // available to be patched.
-        RecordRelocInfo(RelocInfo::INTERNAL_REFERENCE_ENCODED);
-        lui(scratch, (imm32 & kHiMask) >> kLuiShift);
-        ori(scratch, scratch, (imm32 & kImm16Mask));
-      }
-      CheckBuffer();
-      jr(scratch);
-      // Emit a nop in the branch delay slot if required.
-      if (bdslot == PROTECT) nop();
+    Label find_pc;
+    int32_t imm32;
+    imm32 = branch_long_offset(L);
+    or_(t8, ra, zero_reg);
+    bal(&find_pc);
+    lui(t9, (imm32 & kHiMask) >> kLuiShift);
+    bind(&find_pc);
+    ori(t9, t9, (imm32 & kImm16Mask));
+    addu(t9, ra, t9);
+    if (bdslot == USE_DELAY_SLOT) {
+      or_(ra, t8, zero_reg);
     }
+    jr(t9);
+    // Emit a or_ in the branch delay slot if it's protected.
+    if (bdslot == PROTECT) or_(ra, t8, zero_reg);
   }
 }
 
@@ -3955,41 +3939,19 @@ void TurboAssembler::BranchAndLinkLong(Label* L, BranchDelaySlot bdslot) {
       (!L->is_bound() || is_near_r6(L))) {
     BranchAndLinkShortHelperR6(0, L);
   } else {
+    // Generate position independent long branch and link.
     BlockTrampolinePoolScope block_trampoline_pool(this);
-    uint32_t imm32;
-    imm32 = jump_address(L);
-    if (IsMipsArchVariant(kMips32r6) && bdslot == PROTECT) {
-      uint32_t lui_offset, jialc_offset;
-      UnpackTargetAddressUnsigned(imm32, lui_offset, jialc_offset);
-      {
-        BlockGrowBufferScope block_buf_growth(this);
-        // Buffer growth (and relocation) must be blocked for internal
-        // references until associated instructions are emitted and
-        // available to be patched.
-        RecordRelocInfo(RelocInfo::INTERNAL_REFERENCE_ENCODED);
-        UseScratchRegisterScope temps(this);
-        Register scratch = temps.hasAvailable() ? temps.Acquire() : t8;
-        lui(scratch, lui_offset);
-        jialc(scratch, jialc_offset);
-      }
-      CheckBuffer();
-    } else {
-      UseScratchRegisterScope temps(this);
-      Register scratch = temps.hasAvailable() ? temps.Acquire() : t8;
-      {
-        BlockGrowBufferScope block_buf_growth(this);
-        // Buffer growth (and relocation) must be blocked for internal
-        // references until associated instructions are emitted and
-        // available to be patched.
-        RecordRelocInfo(RelocInfo::INTERNAL_REFERENCE_ENCODED);
-        lui(scratch, (imm32 & kHiMask) >> kLuiShift);
-        ori(scratch, scratch, (imm32 & kImm16Mask));
-      }
-      CheckBuffer();
-      jalr(scratch);
-      // Emit a nop in the branch delay slot if required.
-      if (bdslot == PROTECT) nop();
-    }
+    Label find_pc;
+    int32_t imm32;
+    imm32 = branch_long_offset(L);
+    lui(t8, (imm32 & kHiMask) >> kLuiShift);
+    bal(&find_pc);
+    ori(t8, t8, (imm32 & kImm16Mask));
+    bind(&find_pc);
+    addu(t8, ra, t8);
+    jalr(t8);
+    // Emit a nop in the branch delay slot if required.
+    if (bdslot == PROTECT) nop();
   }
 }
 
@@ -5445,30 +5407,6 @@ Register GetRegisterThatIsNotOneOf(Register reg1,
     return candidate;
   }
   UNREACHABLE();
-}
-
-bool AreAliased(Register reg1, Register reg2, Register reg3, Register reg4,
-                Register reg5, Register reg6, Register reg7, Register reg8,
-                Register reg9, Register reg10) {
-  int n_of_valid_regs = reg1.is_valid() + reg2.is_valid() + reg3.is_valid() +
-                        reg4.is_valid() + reg5.is_valid() + reg6.is_valid() +
-                        reg7.is_valid() + reg8.is_valid() + reg9.is_valid() +
-                        reg10.is_valid();
-
-  RegList regs = 0;
-  if (reg1.is_valid()) regs |= reg1.bit();
-  if (reg2.is_valid()) regs |= reg2.bit();
-  if (reg3.is_valid()) regs |= reg3.bit();
-  if (reg4.is_valid()) regs |= reg4.bit();
-  if (reg5.is_valid()) regs |= reg5.bit();
-  if (reg6.is_valid()) regs |= reg6.bit();
-  if (reg7.is_valid()) regs |= reg7.bit();
-  if (reg8.is_valid()) regs |= reg8.bit();
-  if (reg9.is_valid()) regs |= reg9.bit();
-  if (reg10.is_valid()) regs |= reg10.bit();
-  int n_of_non_aliasing_regs = NumRegs(regs);
-
-  return n_of_valid_regs != n_of_non_aliasing_regs;
 }
 
 void TurboAssembler::ComputeCodeStartAddress(Register dst) {

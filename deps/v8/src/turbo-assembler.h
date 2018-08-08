@@ -69,6 +69,8 @@ class V8_EXPORT_PRIVATE TurboAssemblerBase : public Assembler {
                      void* buffer, int buffer_size,
                      CodeObjectRequired create_code_object);
 
+  void RecordCommentForOffHeapTrampoline(int builtin_index);
+
   Isolate* const isolate_ = nullptr;
 
   // This handle will be patched with the code object on installation.
@@ -112,6 +114,19 @@ class HardAbortScope BASE_EMBEDDED {
 //  - JavaScript: Call on-heap {Code} object via {RelocInfo::CODE_TARGET}.
 //  - WebAssembly: Call native {WasmCode} stub via {RelocInfo::WASM_STUB_CALL}.
 enum class StubCallMode { kCallOnHeapBuiltin, kCallWasmRuntimeStub };
+
+#ifdef DEBUG
+bool AreAliased(Register reg1, Register reg2, Register reg3 = no_reg,
+                Register reg4 = no_reg, Register reg5 = no_reg,
+                Register reg6 = no_reg, Register reg7 = no_reg,
+                Register reg8 = no_reg, Register reg9 = no_reg,
+                Register reg10 = no_reg);
+bool AreAliased(DoubleRegister reg1, DoubleRegister reg2,
+                DoubleRegister reg3 = no_dreg, DoubleRegister reg4 = no_dreg,
+                DoubleRegister reg5 = no_dreg, DoubleRegister reg6 = no_dreg,
+                DoubleRegister reg7 = no_dreg, DoubleRegister reg8 = no_dreg,
+                DoubleRegister reg9 = no_dreg, DoubleRegister reg10 = no_dreg);
+#endif
 
 }  // namespace internal
 }  // namespace v8

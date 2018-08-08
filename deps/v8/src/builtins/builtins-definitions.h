@@ -315,8 +315,6 @@ namespace internal {
   TFJ(ArrayPrototypeShift, SharedFunctionInfo::kDontAdaptArgumentsSentinel)    \
   /* ES6 #sec-array.prototype.slice */                                         \
   TFJ(ArrayPrototypeSlice, SharedFunctionInfo::kDontAdaptArgumentsSentinel)    \
-  /* ES6 #sec-array.prototype.splice */                                        \
-  CPP(ArraySplice)                                                             \
   /* ES6 #sec-array.prototype.unshift */                                       \
   CPP(ArrayUnshift)                                                            \
   /* Support for Array.from and other array-copying idioms */                  \
@@ -1312,6 +1310,7 @@ namespace internal {
   ASM(CallApiGetter)                                                           \
   ASM(DoubleToI)                                                               \
   TFC(GetProperty, GetProperty, 1)                                             \
+  TFS(SetProperty, kReceiver, kKey, kValue)                                    \
   ASM(MathPowInternal)                                                         \
                                                                                \
   /* Trace */                                                                  \
@@ -1323,6 +1322,8 @@ namespace internal {
   BUILTIN_LIST_BASE(CPP, API, TFJ, TFC, TFS, TFH, ASM)                 \
   BUILTIN_LIST_FROM_DSL(CPP, API, TFJ, TFC, TFS, TFH, ASM)             \
                                                                        \
+  /* ecma402 #sec-intl.collator */                                     \
+  CPP(CollatorConstructor)                                             \
   TFS(StringToLowerCaseIntl, kString)                                  \
   /* ES #sec-string.prototype.tolowercase */                           \
   TFJ(StringPrototypeToLowerCaseIntl, 0, kReceiver)                    \
@@ -1360,6 +1361,8 @@ namespace internal {
   CPP(NumberFormatInternalFormatNumber)                                \
   /* ecma402 #sec-intl.numberformat.prototype.format */                \
   CPP(NumberFormatPrototypeFormatNumber)                               \
+  /* ecma402 #sec-intl.pluralrules */                                  \
+  CPP(PluralRulesConstructor)                                          \
   /* ecma402 #sec-intl.RelativeTimeFormat.constructor */               \
   CPP(RelativeTimeFormatConstructor)                                   \
   /* ecma402 #sec-intl.RelativeTimeFormat.prototype.resolvedOptions */ \

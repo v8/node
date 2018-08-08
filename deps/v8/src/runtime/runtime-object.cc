@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "src/runtime/runtime-utils.h"
-
-#include "src/arguments.h"
+#include "src/arguments-inl.h"
 #include "src/bootstrapper.h"
 #include "src/debug/debug.h"
 #include "src/isolate-inl.h"
@@ -13,6 +11,7 @@
 #include "src/objects/js-array-inl.h"
 #include "src/objects/property-descriptor-object.h"
 #include "src/property-descriptor.h"
+#include "src/runtime/runtime-utils.h"
 #include "src/runtime/runtime.h"
 
 namespace v8 {
@@ -1246,18 +1245,6 @@ RUNTIME_FUNCTION(Runtime_IterableToListCanBeElided) {
   HandleScope scope(isolate);
   DCHECK_EQ(1, args.length());
   CONVERT_ARG_HANDLE_CHECKED(Object, obj, 0);
-
-  // If an iterator symbol is added to the Number prototype, we could see a Smi.
-  if (obj->IsSmi()) return isolate->heap()->ToBoolean(false);
-  if (!HeapObject::cast(*obj)->IsJSObject()) {
-    return isolate->heap()->ToBoolean(false);
-  }
-
-  // While iteration alone may not have observable side-effects, calling
-  // toNumber on an object will. Make sure the arg is not an array of objects.
-  ElementsKind kind = JSObject::cast(*obj)->GetElementsKind();
-  if (!IsFastNumberElementsKind(kind)) return isolate->heap()->ToBoolean(false);
-
   return isolate->heap()->ToBoolean(!obj->IterationHasObservableEffects());
 }
 

@@ -157,7 +157,7 @@ class WasmCodeManagerTest : public TestWithContext,
  public:
   static constexpr uint32_t kNumFunctions = 10;
   static constexpr uint32_t kJumpTableSize = RoundUp<kCodeAlignment>(
-      kNumFunctions * JumpTableAssembler::kJumpTableSlotSize);
+      JumpTableAssembler::SizeForNumberOfSlots(kNumFunctions));
 
   using NativeModulePtr = std::unique_ptr<NativeModule>;
 
@@ -166,8 +166,8 @@ class WasmCodeManagerTest : public TestWithContext,
     std::shared_ptr<WasmModule> module(new WasmModule);
     module->num_declared_functions = kNumFunctions;
     bool can_request_more = style == Growable;
-    wasm::ModuleEnv env(module.get(), UseTrapHandler::kNoTrapHandler,
-                        RuntimeExceptionSupport::kNoRuntimeExceptionSupport);
+    ModuleEnv env(module.get(), UseTrapHandler::kNoTrapHandler,
+                  RuntimeExceptionSupport::kNoRuntimeExceptionSupport);
     return manager->NewNativeModule(i_isolate(), size, can_request_more,
                                     std::move(module), env);
   }

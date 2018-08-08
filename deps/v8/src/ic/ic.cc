@@ -7,7 +7,7 @@
 #include "src/accessors.h"
 #include "src/api-arguments-inl.h"
 #include "src/api.h"
-#include "src/arguments.h"
+#include "src/arguments-inl.h"
 #include "src/ast/ast.h"
 #include "src/base/bits.h"
 #include "src/conversions.h"
@@ -1150,7 +1150,7 @@ bool ConvertKeyToIndex(Handle<Object> receiver, Handle<Object> key,
   // For regular JSReceiver or String receivers, the {key} must be a positive
   // array index.
   if (receiver->IsJSReceiver() || receiver->IsString()) {
-    return key->ToArrayIndex(index);
+    if (key->ToArrayIndex(index)) return true;
   }
   // For JSTypedArray receivers, we can also support negative keys, which we
   // just map into the [2**31, 2**32 - 1] range via a bit_cast. This is valid
@@ -2519,6 +2519,10 @@ static Handle<Map> FastCloneObjectMap(Isolate* isolate,
   map->InitializeDescriptors(*descriptors, *layout);
   map->CopyUnusedPropertyFieldsAdjustedForInstanceSize(*source_map);
 
+  // Update bitfields
+  map->set_may_have_interesting_symbols(
+      source_map->may_have_interesting_symbols());
+
   return map;
 }
 
@@ -2583,7 +2587,7 @@ RUNTIME_FUNCTION(Runtime_CloneObjectIC_Slow) {
 RUNTIME_FUNCTION(Runtime_StoreCallbackProperty) {
   Handle<JSObject> receiver = args.at<JSObject>(0);
   Handle<JSObject> holder = args.at<JSObject>(1);
-  Handle<HeapObject> callback_or_cell = args.at<HeapObject>(2);
+  Handle<HeapObject> callback = args.at<HeapObject>(2);
   Handle<Name> name = args.at<Name>(3);
   Handle<Object> value = args.at(4);
   CONVERT_LANGUAGE_MODE_ARG_CHECKED(language_mode, 5);
@@ -2595,12 +2599,7 @@ RUNTIME_FUNCTION(Runtime_StoreCallbackProperty) {
                                             language_mode));
   }
 
-  Handle<AccessorInfo> info(
-      callback_or_cell->IsWeakCell()
-          ? AccessorInfo::cast(WeakCell::cast(*callback_or_cell)->value())
-          : AccessorInfo::cast(*callback_or_cell),
-      isolate);
-
+  Handle<AccessorInfo> info(AccessorInfo::cast(*callback), isolate);
   DCHECK(info->IsCompatibleReceiver(*receiver));
 
   ShouldThrow should_throw =
