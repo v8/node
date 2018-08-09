@@ -9,6 +9,7 @@
 #ifndef V8_OBJECTS_INTL_OBJECTS_H_
 #define V8_OBJECTS_INTL_OBJECTS_H_
 
+#include <map>
 #include <set>
 #include <string>
 
@@ -24,6 +25,7 @@ class Collator;
 class DecimalFormat;
 class PluralRules;
 class SimpleDateFormat;
+class UnicodeString;
 }
 
 namespace v8 {
@@ -275,6 +277,10 @@ class Intl {
   // The currency is expected to an all upper case string value.
   static Handle<Smi> CurrencyDigits(Isolate* isolate, Handle<String> currency);
 
+  // TODO(ftang): Remove this and use ICU to the conversion in the future
+  static void ParseExtension(Isolate* isolate, const std::string& extension,
+                             std::map<std::string, std::string>& out);
+
   V8_WARN_UNUSED_RESULT static MaybeHandle<JSObject> CreateNumberFormat(
       Isolate* isolate, Handle<String> locale, Handle<JSObject> options,
       Handle<JSObject> resolved);
@@ -321,6 +327,31 @@ class Intl {
 
   icu::Locale static CreateICULocale(Isolate* isolate,
                                      Handle<String> bcp47_locale_str);
+
+  // Helper funciton to convert a UnicodeString to a Handle<String>
+  V8_WARN_UNUSED_RESULT static MaybeHandle<String> ToString(
+      Isolate* isolate, const icu::UnicodeString& string);
+
+  // Helper function to convert a substring of UnicodeString to a Handle<String>
+  V8_WARN_UNUSED_RESULT static MaybeHandle<String> ToString(
+      Isolate* isolate, const icu::UnicodeString& string, int32_t begin,
+      int32_t end);
+
+  // A helper function to implement formatToParts which add element to array as
+  // $array[$index] = { type: $field_type_string, value: $value }
+  static void AddElement(Isolate* isolate, Handle<JSArray> array, int index,
+                         Handle<String> field_type_string,
+                         Handle<String> value);
+
+  // A helper function to implement formatToParts which add element to array as
+  // $array[$index] = {
+  //   type: $field_type_string, value: $value,
+  //   $additional_property_name: $additional_property_value
+  // }
+  static void AddElement(Isolate* isolate, Handle<JSArray> array, int index,
+                         Handle<String> field_type_string, Handle<String> value,
+                         Handle<String> additional_property_name,
+                         Handle<String> additional_property_value);
 };
 
 }  // namespace internal

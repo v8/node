@@ -20,7 +20,10 @@
 #include "src/messages.h"
 #include "src/objects/intl-objects-inl.h"
 #include "src/objects/intl-objects.h"
+#include "src/objects/js-array-inl.h"
 #include "src/objects/js-collator-inl.h"
+#include "src/objects/js-list-format-inl.h"
+#include "src/objects/js-list-format.h"
 #include "src/objects/js-plural-rules-inl.h"
 #include "src/objects/managed.h"
 #include "src/runtime/runtime-utils.h"
@@ -53,6 +56,26 @@
 
 namespace v8 {
 namespace internal {
+
+// ecma402 #sec-formatlist
+RUNTIME_FUNCTION(Runtime_FormatList) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(2, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(JSListFormat, list_format, 0);
+  CONVERT_ARG_HANDLE_CHECKED(JSArray, list, 1);
+  RETURN_RESULT_OR_FAILURE(
+      isolate, JSListFormat::FormatList(isolate, list_format, list));
+}
+
+// ecma402 #sec-formatlisttoparts
+RUNTIME_FUNCTION(Runtime_FormatListToParts) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(2, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(JSListFormat, list_format, 0);
+  CONVERT_ARG_HANDLE_CHECKED(JSArray, list, 1);
+  RETURN_RESULT_OR_FAILURE(
+      isolate, JSListFormat::FormatListToParts(isolate, list_format, list));
+}
 
 RUNTIME_FUNCTION(Runtime_GetNumberOption) {
   HandleScope scope(isolate);
@@ -304,6 +327,25 @@ RUNTIME_FUNCTION(Runtime_PluralRulesResolvedOptions) {
       Handle<JSPluralRules>::cast(plural_rules_obj);
 
   return *JSPluralRules::ResolvedOptions(isolate, plural_rules);
+}
+
+RUNTIME_FUNCTION(Runtime_ParseExtension) {
+  Factory* factory = isolate->factory();
+  HandleScope scope(isolate);
+  DCHECK_EQ(1, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(String, extension, 0);
+  std::map<std::string, std::string> map;
+  Intl::ParseExtension(isolate, std::string(extension->ToCString().get()), map);
+  Handle<JSObject> extension_map =
+      isolate->factory()->NewJSObjectWithNullProto();
+  for (std::map<std::string, std::string>::iterator it = map.begin();
+       it != map.end(); it++) {
+    JSObject::AddProperty(
+        isolate, extension_map,
+        factory->NewStringFromAsciiChecked(it->first.c_str()),
+        factory->NewStringFromAsciiChecked(it->second.c_str()), NONE);
+  }
+  return *extension_map;
 }
 
 RUNTIME_FUNCTION(Runtime_PluralRulesSelect) {

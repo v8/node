@@ -315,6 +315,8 @@ namespace internal {
   TFJ(ArrayPrototypeShift, SharedFunctionInfo::kDontAdaptArgumentsSentinel)    \
   /* ES6 #sec-array.prototype.slice */                                         \
   TFJ(ArrayPrototypeSlice, SharedFunctionInfo::kDontAdaptArgumentsSentinel)    \
+  /* ES6 #sec-array.prototype.splice */                                        \
+  CPP(ArraySplice)                                                             \
   /* ES6 #sec-array.prototype.unshift */                                       \
   CPP(ArrayUnshift)                                                            \
   /* Support for Array.from and other array-copying idioms */                  \
@@ -1340,6 +1342,12 @@ namespace internal {
   CPP(ListFormatConstructor)                                           \
   /* ecma402 #sec-intl.listformat.prototype.resolvedoptions */         \
   CPP(ListFormatPrototypeResolvedOptions)                              \
+  /* ecma402 #sec-intl-list-format.prototype.format */                 \
+  TFJ(ListFormatPrototypeFormat,                                       \
+      SharedFunctionInfo::kDontAdaptArgumentsSentinel)                 \
+  /* ecma402 #sec-intl-list-format.prototype.formattoparts */          \
+  TFJ(ListFormatPrototypeFormatToParts,                                \
+      SharedFunctionInfo::kDontAdaptArgumentsSentinel)                 \
   /* ecma402 #sec-intl-locale-constructor */                           \
   CPP(LocaleConstructor)                                               \
   CPP(LocalePrototypeLanguage)                                         \

@@ -764,6 +764,9 @@ class AndroidPlatform(Platform):  # pragma: no cover
           timeout=runnable.timeout,
       )
       logging.info(title % "Stdout" + "\n%s", stdout)
+    except android.CommandFailedException as e:
+      logging.info(title % "Stdout" + "\n%s", e.output)
+      raise
     except android.TimeoutException:
       logging.warning(">>> Test timed out after %ss.", runnable.timeout)
       stdout = ""
@@ -935,6 +938,9 @@ def Main(args):
                     "--filter=JSTests/TypedArrays/ will run only TypedArray "
                     "benchmarks from the JSTests suite.",
                     default="")
+  parser.add_option("--run-count-multiplier", default=1, type="int",
+                    help="Multipled used to increase number of times each test "
+                    "is retried.")
 
   (options, args) = parser.parse_args(args)
 
@@ -1039,7 +1045,8 @@ def Main(args):
 
         def Runner():
           """Output generator that reruns several times."""
-          for i in xrange(0, max(1, runnable.run_count)):
+          total_runs = runnable.run_count * options.run_count_multiplier
+          for i in xrange(0, max(1, total_runs)):
             # TODO(machenbach): Allow timeout per arch like with run_count per
             # arch.
             yield platform.Run(runnable, i)

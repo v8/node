@@ -700,6 +700,59 @@ void V8BreakIterator::DeleteBreakIterator(
   GlobalHandles::Destroy(reinterpret_cast<Object**>(data.GetParameter()));
 }
 
+MaybeHandle<String> Intl::ToString(Isolate* isolate,
+                                   const icu::UnicodeString& string) {
+  return isolate->factory()->NewStringFromTwoByte(Vector<const uint16_t>(
+      reinterpret_cast<const uint16_t*>(string.getBuffer()), string.length()));
+}
+
+MaybeHandle<String> Intl::ToString(Isolate* isolate,
+                                   const icu::UnicodeString& string,
+                                   int32_t begin, int32_t end) {
+  return Intl::ToString(isolate, string.tempSubStringBetween(begin, end));
+}
+
+namespace {
+
+Handle<JSObject> InnerAddElement(Isolate* isolate, Handle<JSArray> array,
+                                 int index, Handle<String> field_type_string,
+                                 Handle<String> value) {
+  // let element = $array[$index] = {
+  //   type: $field_type_string,
+  //   value: $value
+  // }
+  // return element;
+  Factory* factory = isolate->factory();
+  Handle<JSObject> element = factory->NewJSObject(isolate->object_function());
+  JSObject::AddProperty(isolate, element, factory->type_string(),
+                        field_type_string, NONE);
+
+  JSObject::AddProperty(isolate, element, factory->value_string(), value, NONE);
+  JSObject::AddDataElement(array, index, element, NONE);
+  return element;
+}
+
+}  // namespace
+
+void Intl::AddElement(Isolate* isolate, Handle<JSArray> array, int index,
+                      Handle<String> field_type_string, Handle<String> value) {
+  // Same as $array[$index] = {type: $field_type_string, value: $value};
+  InnerAddElement(isolate, array, index, field_type_string, value);
+}
+
+void Intl::AddElement(Isolate* isolate, Handle<JSArray> array, int index,
+                      Handle<String> field_type_string, Handle<String> value,
+                      Handle<String> additional_property_name,
+                      Handle<String> additional_property_value) {
+  // Same as $array[$index] = {
+  //   type: $field_type_string, value: $value,
+  //   $additional_property_name: $additional_property_value
+  // }
+  Handle<JSObject> element =
+      InnerAddElement(isolate, array, index, field_type_string, value);
+  JSObject::AddProperty(isolate, element, additional_property_name,
+                        additional_property_value, NONE);
+}
 // Build the shortened locale; eg, convert xx_Yyyy_ZZ  to xx_ZZ.
 bool Intl::RemoveLocaleScriptTag(const std::string& icu_locale,
                                  std::string* locale_less_script) {
@@ -1585,6 +1638,50 @@ MaybeHandle<JSObject> Intl::CreateNumberFormat(Isolate* isolate,
                           NumberFormat::DeleteNumberFormat,
                           WeakCallbackType::kInternalFields);
   return local_object;
+}
+
+/**
+ * Parses Unicode extension into key - value map.
+ * Returns empty object if the extension string is invalid.
+ * We are not concerned with the validity of the values at this point.
+ * 'attribute' in RFC 6047 is not supported. Keys without explicit
+ * values are assigned UNDEFINED.
+ * TODO(jshin): Fix the handling of 'attribute' (in RFC 6047, but none
+ * has been defined so that it's not used) and boolean keys without
+ * an explicit value.
+ */
+void Intl::ParseExtension(Isolate* isolate, const std::string& extension,
+                          std::map<std::string, std::string>& out) {
+  if (extension.compare(0, 3, "-u-") != 0) return;
+
+  // Key is {2}alphanum, value is {3,8}alphanum.
+  // Some keys may not have explicit values (booleans).
+  std::string key;
+  std::string value;
+  // Skip the "-u-".
+  size_t start = 3;
+  size_t end;
+  do {
+    end = extension.find("-", start);
+    size_t length =
+        (end == std::string::npos) ? extension.length() - start : end - start;
+    std::string element = extension.substr(start, length);
+    // Key is {2}alphanum
+    if (length == 2) {
+      if (!key.empty()) {
+        out.insert(std::pair<std::string, std::string>(key, value));
+        value.clear();
+      }
+      key = element;
+      // value is {3,8}alphanum.
+    } else if (length >= 3 && length <= 8 && !key.empty()) {
+      value = value.empty() ? element : (value + "-" + element);
+    } else {
+      return;
+    }
+    start = end + 1;
+  } while (end != std::string::npos);
+  if (!key.empty()) out.insert(std::pair<std::string, std::string>(key, value));
 }
 
 namespace {

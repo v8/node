@@ -1722,6 +1722,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 
     SimpleInstallFunction(isolate_, proto, "concat", Builtins::kArrayConcat, 1,
                           false);
+    SimpleInstallFunction(isolate_, proto, "copyWithin",
+                          Builtins::kArrayPrototypeCopyWithin, 2, false);
     SimpleInstallFunction(isolate_, proto, "fill",
                           Builtins::kArrayPrototypeFill, 1, false);
     SimpleInstallFunction(isolate_, proto, "find",
@@ -1738,8 +1740,13 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                           1, false);
     SimpleInstallFunction(isolate_, proto, "slice",
                           Builtins::kArrayPrototypeSlice, 2, false);
-    SimpleInstallFunction(isolate_, proto, "splice", Builtins::kArraySplice, 2,
-                          false);
+    if (FLAG_enable_experimental_builtins) {
+      SimpleInstallFunction(isolate_, proto, "splice",
+                            Builtins::kArraySpliceTorque, 2, false);
+    } else {
+      SimpleInstallFunction(isolate_, proto, "splice", Builtins::kArraySplice,
+                            2, false);
+    }
     SimpleInstallFunction(isolate_, proto, "includes", Builtins::kArrayIncludes,
                           1, false);
     SimpleInstallFunction(isolate_, proto, "indexOf", Builtins::kArrayIndexOf,
@@ -4541,6 +4548,10 @@ void Genesis::InitializeGlobal_harmony_intl_list_format() {
   SimpleInstallFunction(isolate(), prototype, "resolvedOptions",
                         Builtins::kListFormatPrototypeResolvedOptions, 0,
                         false);
+  SimpleInstallFunction(isolate(), prototype, "format",
+                        Builtins::kListFormatPrototypeFormat, 1, false);
+  SimpleInstallFunction(isolate(), prototype, "formatToParts",
+                        Builtins::kListFormatPrototypeFormatToParts, 1, false);
 }
 
 void Genesis::InitializeGlobal_harmony_locale() {
