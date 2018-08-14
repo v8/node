@@ -220,7 +220,7 @@ namespace internal {
   TFC(RunMicrotasks, RunMicrotasks, 1)                                         \
                                                                                \
   /* Object property helpers */                                                \
-  TFS(HasProperty, kKey, kObject)                                              \
+  TFS(HasProperty, kObject, kKey)                                              \
   TFS(DeleteProperty, kObject, kKey, kLanguageMode)                            \
                                                                                \
   /* Abort */                                                                  \
@@ -312,7 +312,6 @@ namespace internal {
   TFJ(ArrayPrototypePush, SharedFunctionInfo::kDontAdaptArgumentsSentinel)     \
   /* ES6 #sec-array.prototype.shift */                                         \
   CPP(ArrayShift)                                                              \
-  TFJ(ArrayPrototypeShift, SharedFunctionInfo::kDontAdaptArgumentsSentinel)    \
   /* ES6 #sec-array.prototype.slice */                                         \
   TFJ(ArrayPrototypeSlice, SharedFunctionInfo::kDontAdaptArgumentsSentinel)    \
   /* ES6 #sec-array.prototype.splice */                                        \

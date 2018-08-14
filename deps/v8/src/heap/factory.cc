@@ -156,7 +156,7 @@ HeapObject* Factory::AllocateRawArray(int size, PretenureFlag pretenure) {
       isolate()->heap()->AllocateRawWithRetryOrFail(size, space);
   if (size > kMaxRegularHeapObjectSize && FLAG_use_marking_progress_bar) {
     MemoryChunk* chunk = MemoryChunk::FromAddress(result->address());
-    chunk->SetFlag<AccessMode::ATOMIC>(MemoryChunk::HAS_PROGRESS_BAR);
+    chunk->SetFlag(MemoryChunk::HAS_PROGRESS_BAR);
   }
   return result;
 }
@@ -209,6 +209,7 @@ Handle<PrototypeInfo> Factory::NewPrototypeInfo() {
   result->set_prototype_users(*empty_weak_array_list());
   result->set_registry_slot(PrototypeInfo::UNREGISTERED);
   result->set_bit_field(0);
+  result->set_module_namespace(*undefined_value());
   return result;
 }
 
@@ -375,7 +376,7 @@ MaybeHandle<FixedArray> Factory::TryNewFixedArray(int length,
   if (!allocation.To(&result)) return MaybeHandle<FixedArray>();
   if (size > kMaxRegularHeapObjectSize && FLAG_use_marking_progress_bar) {
     MemoryChunk* chunk = MemoryChunk::FromAddress(result->address());
-    chunk->SetFlag<AccessMode::ATOMIC>(MemoryChunk::HAS_PROGRESS_BAR);
+    chunk->SetFlag(MemoryChunk::HAS_PROGRESS_BAR);
   }
   result->set_map_after_allocation(*fixed_array_map(), SKIP_WRITE_BARRIER);
   Handle<FixedArray> array(FixedArray::cast(result), isolate());
@@ -3741,27 +3742,24 @@ Handle<Map> Factory::ObjectLiteralMapFromCache(Handle<Context> native_context,
   Handle<Object> maybe_cache(native_context->map_cache(), isolate());
   if (maybe_cache->IsUndefined(isolate())) {
     // Allocate the new map cache for the native context.
-    maybe_cache = NewFixedArray(kMapCacheSize, TENURED);
+    maybe_cache = NewWeakFixedArray(kMapCacheSize, TENURED);
     native_context->set_map_cache(*maybe_cache);
   } else {
     // Check to see whether there is a matching element in the cache.
-    Handle<FixedArray> cache = Handle<FixedArray>::cast(maybe_cache);
-    Object* result = cache->get(cache_index);
-    if (result->IsWeakCell()) {
-      WeakCell* cell = WeakCell::cast(result);
-      if (!cell->cleared()) {
-        Map* map = Map::cast(cell->value());
-        DCHECK(!map->is_dictionary_map());
-        return handle(map, isolate());
-      }
+    Handle<WeakFixedArray> cache = Handle<WeakFixedArray>::cast(maybe_cache);
+    MaybeObject* result = cache->Get(cache_index);
+    HeapObject* heap_object;
+    if (result->ToWeakHeapObject(&heap_object)) {
+      Map* map = Map::cast(heap_object);
+      DCHECK(!map->is_dictionary_map());
+      return handle(map, isolate());
     }
   }
   // Create a new map and add it to the cache.
-  Handle<FixedArray> cache = Handle<FixedArray>::cast(maybe_cache);
+  Handle<WeakFixedArray> cache = Handle<WeakFixedArray>::cast(maybe_cache);
   Handle<Map> map = Map::Create(isolate(), number_of_properties);
   DCHECK(!map->is_dictionary_map());
-  Handle<WeakCell> cell = NewWeakCell(map);
-  cache->set(cache_index, *cell);
+  cache->Set(cache_index, HeapObjectReference::Weak(*map));
   return map;
 }
 

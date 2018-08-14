@@ -336,8 +336,6 @@ void DebugFeatureTracker::Track(DebugFeatureTracker::Feature feature) {
 
 // Threading support.
 void Debug::ThreadInit() {
-  thread_local_.break_count_ = 0;
-  thread_local_.break_id_ = 0;
   thread_local_.break_frame_id_ = StackFrame::NO_ID;
   thread_local_.last_step_action_ = StepNone;
   thread_local_.last_statement_position_ = kNoSourcePosition;
@@ -1743,7 +1741,6 @@ void Debug::OnException(Handle<Object> exception, Handle<Object> promise) {
 
   DebugScope debug_scope(this);
   HandleScope scope(isolate_);
-  PostponeInterruptsScope postpone(isolate_);
   DisableBreak no_recursive_break(this);
 
   Handle<Context> native_context(isolate_->native_context());
@@ -1871,7 +1868,6 @@ void Debug::ProcessCompileEvent(bool has_compile_error, Handle<Script> script) {
   SuppressDebug while_processing(this);
   DebugScope debug_scope(this);
   HandleScope scope(isolate_);
-  PostponeInterruptsScope postpone(isolate_);
   DisableBreak no_recursive_break(this);
   AllowJavascriptExecution allow_script(isolate_);
   debug_delegate_->ScriptCompiled(ToApiHandle<debug::Script>(script),
@@ -2012,15 +2008,14 @@ void Debug::PrintBreakLocation() {
 
 DebugScope::DebugScope(Debug* debug)
     : debug_(debug),
-      prev_(debug->debugger_entry()),
-      no_termination_exceptons_(debug_->isolate_,
-                                StackGuard::TERMINATE_EXECUTION) {
+      prev_(reinterpret_cast<DebugScope*>(
+          base::Relaxed_Load(&debug->thread_local_.current_debug_scope_))),
+      no_interrupts_(debug_->isolate_) {
   // Link recursive debugger entry.
   base::Relaxed_Store(&debug_->thread_local_.current_debug_scope_,
                       reinterpret_cast<base::AtomicWord>(this));
 
-  // Store the previous break id, frame id and return value.
-  break_id_ = debug_->break_id();
+  // Store the previous frame id and return value.
   break_frame_id_ = debug_->break_frame_id();
 
   // Create the new break info. If there is no proper frames there is no break
@@ -2029,7 +2024,6 @@ DebugScope::DebugScope(Debug* debug)
   bool has_frames = !it.done();
   debug_->thread_local_.break_frame_id_ =
       has_frames ? it.frame()->id() : StackFrame::NO_ID;
-  debug_->SetNextBreakId();
 
   debug_->UpdateState();
 }
@@ -2042,7 +2036,6 @@ DebugScope::~DebugScope() {
 
   // Restore to the previous break state.
   debug_->thread_local_.break_frame_id_ = break_frame_id_;
-  debug_->thread_local_.break_id_ = break_id_;
 
   debug_->UpdateState();
 }

@@ -237,7 +237,6 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructDoubleVarargs(
     TNode<Object> target, SloppyTNode<Object> new_target,
     TNode<FixedDoubleArray> elements, TNode<Int32T> length,
     TNode<Int32T> args_count, TNode<Context> context, TNode<Int32T> kind) {
-  Label if_holey_double(this), if_packed_double(this), if_done(this);
 
   const ElementsKind new_kind = PACKED_ELEMENTS;
   const WriteBarrierMode barrier_mode = UPDATE_WRITE_BARRIER;
@@ -245,38 +244,28 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructDoubleVarargs(
   CSA_ASSERT(this, WordNotEqual(intptr_length, IntPtrConstant(0)));
 
   // Allocate a new FixedArray of Objects.
-  TNode<FixedArray> new_elements = AllocateFixedArray(
-      new_kind, intptr_length, CodeStubAssembler::kAllowLargeObjectAllocation);
+  TNode<FixedArray> new_elements = CAST(AllocateFixedArray(
+      new_kind, intptr_length, CodeStubAssembler::kAllowLargeObjectAllocation));
   Branch(Word32Equal(kind, Int32Constant(HOLEY_DOUBLE_ELEMENTS)),
-         &if_holey_double, &if_packed_double);
+         [=] {
+           // Fill the FixedArray with pointers to HeapObjects.
+           CopyFixedArrayElements(HOLEY_DOUBLE_ELEMENTS, elements, new_kind,
+                                  new_elements, intptr_length, intptr_length,
+                                  barrier_mode);
+         },
+         [=] {
+           CopyFixedArrayElements(PACKED_DOUBLE_ELEMENTS, elements, new_kind,
+                                  new_elements, intptr_length, intptr_length,
+                                  barrier_mode);
+         });
 
-  BIND(&if_holey_double);
-  {
-    // Fill the FixedArray with pointers to HeapObjects.
-    CopyFixedArrayElements(HOLEY_DOUBLE_ELEMENTS, elements, new_kind,
-                           new_elements, intptr_length, intptr_length,
-                           barrier_mode);
-    Goto(&if_done);
-  }
-
-  BIND(&if_packed_double);
-  {
-    CopyFixedArrayElements(PACKED_DOUBLE_ELEMENTS, elements, new_kind,
-                           new_elements, intptr_length, intptr_length,
-                           barrier_mode);
-    Goto(&if_done);
-  }
-
-  BIND(&if_done);
-  {
-    if (new_target == nullptr) {
-      Callable callable = CodeFactory::CallVarargs(isolate());
-      TailCallStub(callable, context, target, args_count, new_elements, length);
-    } else {
-      Callable callable = CodeFactory::ConstructVarargs(isolate());
-      TailCallStub(callable, context, target, new_target, args_count,
-                   new_elements, length);
-    }
+  if (new_target == nullptr) {
+    Callable callable = CodeFactory::CallVarargs(isolate());
+    TailCallStub(callable, context, target, args_count, new_elements, length);
+  } else {
+    Callable callable = CodeFactory::ConstructVarargs(isolate());
+    TailCallStub(callable, context, target, new_target, args_count,
+                 new_elements, length);
   }
 }
 

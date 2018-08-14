@@ -1187,6 +1187,9 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kIA32Popcnt:
       __ Popcnt(i.OutputRegister(), i.InputOperand(0));
       break;
+    case kIA32Bswap:
+      __ bswap(i.OutputRegister());
+      break;
     case kArchWordPoisonOnSpeculation:
       DCHECK_EQ(i.OutputRegister(), i.InputRegister(0));
       __ and_(i.InputRegister(0), kSpeculationPoisonRegister);
@@ -3630,6 +3633,20 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       ExternalReference const stack_limit =
           ExternalReference::address_of_stack_limit(__ isolate());
       __ cmp(esp, Operand::StaticVariable(stack_limit));
+      break;
+    }
+    case kIA32Word32AtomicPairLoad: {
+      XMMRegister tmp = i.ToDoubleRegister(instr->TempAt(0));
+      __ movq(tmp, i.MemoryOperand());
+      __ Pextrd(i.OutputRegister(0), tmp, 0);
+      __ Pextrd(i.OutputRegister(1), tmp, 1);
+      break;
+    }
+    case kIA32Word32AtomicPairStore: {
+      __ mov(i.TempRegister(0), i.MemoryOperand(2));
+      __ mov(i.TempRegister(1), i.NextMemoryOperand(2));
+      __ lock();
+      __ cmpxchg8b(i.MemoryOperand(2));
       break;
     }
     case kWord32AtomicExchangeInt8: {

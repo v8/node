@@ -640,6 +640,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   void movzx_w(Register dst, Register src) { movzx_w(dst, Operand(src)); }
   void movzx_w(Register dst, Operand src);
 
+  void movq(XMMRegister dst, Operand src);
   // Conditional moves
   void cmov(Condition cc, Register dst, Register src) {
     cmov(cc, dst, Operand(src));
@@ -816,6 +817,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   void xor_(Operand dst, const Immediate& x);
 
   // Bit operations.
+  void bswap(Register dst);
   void bt(Operand dst, Register src);
   void bts(Register dst, Register src) { bts(Operand(dst), src); }
   void bts(Operand dst, Register src);
@@ -1821,7 +1823,9 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   // sel specifies the /n in the modrm byte (see the Intel PRM).
   void emit_arith(int sel, Operand dst, const Immediate& x);
 
+  void emit_operand(int code, Operand adr);
   void emit_operand(Register reg, Operand adr);
+  void emit_operand(XMMRegister reg, Operand adr);
 
   void emit_label(Label* label);
 

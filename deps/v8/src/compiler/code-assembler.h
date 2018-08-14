@@ -538,12 +538,12 @@ TNode<Float64T> Float64Add(TNode<Float64T> a, TNode<Float64T> b);
   V(Float64RoundTiesEven, Float64T, Float64T)                  \
   V(Float64RoundTruncate, Float64T, Float64T)                  \
   V(Word32Clz, Int32T, Word32T)                                \
-  V(Word32Not, Word32T, Word32T)                               \
+  V(Word32BitwiseNot, Word32T, Word32T)                        \
   V(WordNot, WordT, WordT)                                     \
   V(Int32AbsWithOverflow, PAIR_TYPE(Int32T, BoolT), Int32T)    \
   V(Int64AbsWithOverflow, PAIR_TYPE(Int64T, BoolT), Int64T)    \
   V(IntPtrAbsWithOverflow, PAIR_TYPE(IntPtrT, BoolT), IntPtrT) \
-  V(Word32BinaryNot, Word32T, Word32T)
+  V(Word32BinaryNot, BoolT, Word32T)
 
 // A "public" interface used by components outside of compiler directory to
 // create code objects with TurboFan's backend. This class is mostly a thin
@@ -772,6 +772,9 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   void GotoIfNot(SloppyTNode<IntegralT> condition, Label* false_label);
   void Branch(SloppyTNode<IntegralT> condition, Label* true_label,
               Label* false_label);
+
+  void Branch(TNode<BoolT> condition, std::function<void()> true_body,
+              std::function<void()> false_body);
 
   void Switch(Node* index, Label* default_label, const int32_t* case_values,
               Label** case_labels, size_t case_count);

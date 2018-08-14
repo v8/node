@@ -768,6 +768,14 @@ bool MemoryChunk::IsPagedSpace() const {
   return owner()->identity() != LO_SPACE;
 }
 
+bool MemoryChunk::InOldSpace() const {
+  return owner()->identity() == OLD_SPACE;
+}
+
+bool MemoryChunk::InLargeObjectSpace() const {
+  return owner()->identity() == LO_SPACE;
+}
+
 MemoryChunk* MemoryAllocator::AllocateChunk(size_t reserve_area_size,
                                             size_t commit_area_size,
                                             Executability executable,
@@ -1396,6 +1404,22 @@ void MemoryChunk::RegisterObjectWithInvalidatedSlots(HeapObject* object,
     }
     int old_size = (*invalidated_slots())[object];
     (*invalidated_slots())[object] = std::max(old_size, size);
+  }
+}
+
+void MemoryChunk::MoveObjectWithInvalidatedSlots(HeapObject* old_start,
+                                                 HeapObject* new_start) {
+  DCHECK_LT(old_start, new_start);
+  DCHECK_EQ(MemoryChunk::FromHeapObject(old_start),
+            MemoryChunk::FromHeapObject(new_start));
+  if (!ShouldSkipEvacuationSlotRecording() && invalidated_slots()) {
+    auto it = invalidated_slots()->find(old_start);
+    if (it != invalidated_slots()->end()) {
+      int old_size = it->second;
+      int delta = static_cast<int>(new_start->address() - old_start->address());
+      invalidated_slots()->erase(it);
+      (*invalidated_slots())[new_start] = old_size - delta;
+    }
   }
 }
 
@@ -2176,7 +2200,7 @@ bool SemiSpace::EnsureCurrentCapacity() {
       DCHECK_NOT_NULL(current_page);
       memory_chunk_list_.PushBack(current_page);
       marking_state->ClearLiveness(current_page);
-      current_page->SetFlags(first_page()->GetFlags(),
+      current_page->SetFlags(first_page()->flags(),
                              static_cast<uintptr_t>(Page::kCopyAllFlags));
       heap()->CreateFillerObjectAt(current_page->area_start(),
                                    static_cast<int>(current_page->area_size()),
@@ -2575,7 +2599,7 @@ bool SemiSpace::GrowTo(size_t new_capacity) {
     memory_chunk_list_.PushBack(new_page);
     marking_state->ClearLiveness(new_page);
     // Duplicate the flags that was set on the old page.
-    new_page->SetFlags(last_page()->GetFlags(), Page::kCopyOnFlipFlagsMask);
+    new_page->SetFlags(last_page()->flags(), Page::kCopyOnFlipFlagsMask);
   }
   AccountCommitted(delta);
   current_capacity_ = new_capacity;
@@ -2650,7 +2674,7 @@ void SemiSpace::RemovePage(Page* page) {
 }
 
 void SemiSpace::PrependPage(Page* page) {
-  page->SetFlags(current_page()->GetFlags(),
+  page->SetFlags(current_page()->flags(),
                  static_cast<uintptr_t>(Page::kCopyAllFlags));
   page->set_owner(this);
   memory_chunk_list_.PushFront(page);
@@ -2666,7 +2690,7 @@ void SemiSpace::Swap(SemiSpace* from, SemiSpace* to) {
   DCHECK(from->first_page());
   DCHECK(to->first_page());
 
-  intptr_t saved_to_space_flags = to->current_page()->GetFlags();
+  intptr_t saved_to_space_flags = to->current_page()->flags();
 
   // We swap all properties but id_.
   std::swap(from->current_capacity_, to->current_capacity_);

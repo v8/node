@@ -280,12 +280,14 @@ class Scanner {
     }
 
     V8_INLINE void AddChar(uc32 code_unit) {
-      if (is_one_byte_ &&
-          code_unit <= static_cast<uc32>(unibrow::Latin1::kMaxChar)) {
-        AddOneByteChar(static_cast<byte>(code_unit));
-      } else {
-        AddCharSlow(code_unit);
+      if (is_one_byte_) {
+        if (code_unit <= static_cast<uc32>(unibrow::Latin1::kMaxChar)) {
+          AddOneByteChar(static_cast<byte>(code_unit));
+          return;
+        }
+        ConvertToTwoByte();
       }
+      AddTwoByteChar(code_unit);
     }
 
     bool is_one_byte() const { return is_one_byte_; }
@@ -310,10 +312,6 @@ class Scanner {
     }
 
     int length() const { return is_one_byte_ ? position_ : (position_ >> 1); }
-
-    void ReduceLength(int delta) {
-      position_ -= delta * (is_one_byte_ ? kOneByteSize : kUC16Size);
-    }
 
     void Reset() {
       position_ = 0;
@@ -343,7 +341,7 @@ class Scanner {
       position_ += kOneByteSize;
     }
 
-    void AddCharSlow(uc32 code_unit);
+    void AddTwoByteChar(uc32 code_unit);
     int NewCapacity(int min_capacity);
     void ExpandBuffer();
     void ConvertToTwoByte();
@@ -381,7 +379,7 @@ class Scanner {
 
   // Scans octal escape sequence. Also accepts "\0" decimal escape sequence.
   template <bool capture_raw>
-  uc32 ScanOctalEscape(uc32 c, int length, bool in_template_literal);
+  uc32 ScanOctalEscape(uc32 c, int length);
 
   // Call this after setting source_ to the input.
   void Init() {
@@ -459,11 +457,6 @@ class Scanner {
   V8_INLINE void AddRawLiteralChar(uc32 c) {
     DCHECK_NOT_NULL(next_.raw_literal_chars);
     next_.raw_literal_chars->AddChar(c);
-  }
-
-  V8_INLINE void ReduceRawLiteralLength(int delta) {
-    DCHECK_NOT_NULL(next_.raw_literal_chars);
-    next_.raw_literal_chars->ReduceLength(delta);
   }
 
   // Stops scanning of a literal and drop the collected characters,
@@ -637,7 +630,7 @@ class Scanner {
   // Scans an escape-sequence which is part of a string and adds the
   // decoded character to the current literal. Returns true if a pattern
   // is scanned.
-  template <bool capture_raw, bool in_template_literal>
+  template <bool capture_raw>
   bool ScanEscape();
 
   // Decodes a Unicode escape-sequence which is part of an identifier.

@@ -3324,7 +3324,7 @@ bool JSObject::IsUnmodifiedApiObject(Object** o) {
   HeapObject* heap_object = HeapObject::cast(object);
   if (!object->IsJSObject()) return false;
   JSObject* js_object = JSObject::cast(object);
-  if (!js_object->WasConstructedFromApiFunction()) return false;
+  if (!js_object->IsApiWrapper()) return false;
   Object* maybe_constructor = js_object->map()->GetConstructor();
   if (!maybe_constructor->IsJSFunction()) return false;
   JSFunction* constructor = JSFunction::cast(maybe_constructor);
@@ -5656,7 +5656,7 @@ Handle<Map> Map::TransitionElementsTo(Isolate* isolate, Handle<Map> map,
 
   DCHECK(!map->IsUndefined(isolate));
   // Check if we can go back in the elements kind transition chain.
-  if (IsHoleyOrDictionaryElementsKind(from_kind) &&
+  if (IsHoleyElementsKind(from_kind) &&
       to_kind == GetPackedElementsKind(from_kind) &&
       map->GetBackPointer()->IsMap() &&
       Map::cast(map->GetBackPointer())->elements_kind() == to_kind) {
@@ -10629,14 +10629,16 @@ Handle<FrameArray> FrameArray::AppendJSFrame(Handle<FrameArray> in,
 Handle<FrameArray> FrameArray::AppendWasmFrame(
     Handle<FrameArray> in, Handle<WasmInstanceObject> wasm_instance,
     int wasm_function_index, wasm::WasmCode* code, int offset, int flags) {
+  Isolate* isolate = wasm_instance->GetIsolate();
   const int frame_count = in->FrameCount();
   const int new_length = LengthFor(frame_count + 1);
-  Handle<FrameArray> array =
-      EnsureSpace(wasm_instance->GetIsolate(), in, new_length);
+  Handle<FrameArray> array = EnsureSpace(isolate, in, new_length);
+  // The {code} will be {nullptr} for interpreted wasm frames.
+  Handle<Foreign> code_foreign =
+      isolate->factory()->NewForeign(reinterpret_cast<Address>(code));
   array->SetWasmInstance(frame_count, *wasm_instance);
   array->SetWasmFunctionIndex(frame_count, Smi::FromInt(wasm_function_index));
-  // The {code} will be {nullptr} for interpreted wasm frames.
-  array->SetIsWasmInterpreterFrame(frame_count, Smi::FromInt(code == nullptr));
+  array->SetWasmCodeObject(frame_count, *code_foreign);
   array->SetOffset(frame_count, Smi::FromInt(offset));
   array->SetFlags(frame_count, Smi::FromInt(flags));
   array->set(kFrameCountIndex, Smi::FromInt(frame_count + 1));
@@ -12913,30 +12915,6 @@ bool Map::IsPrototypeChainInvalidated(Map* map) {
 }
 
 // static
-Handle<WeakCell> Map::GetOrCreatePrototypeWeakCell(Handle<JSReceiver> prototype,
-                                                   Isolate* isolate) {
-  DCHECK(!prototype.is_null());
-  if (prototype->IsJSProxy()) {
-    Handle<WeakCell> cell = isolate->factory()->NewWeakCell(prototype);
-    return cell;
-  }
-
-  Handle<PrototypeInfo> proto_info =
-      GetOrCreatePrototypeInfo(Handle<JSObject>::cast(prototype), isolate);
-  Object* maybe_cell = proto_info->weak_cell();
-  // Return existing cell if it's already created.
-  if (maybe_cell->IsWeakCell()) {
-    Handle<WeakCell> cell(WeakCell::cast(maybe_cell), isolate);
-    DCHECK(!cell->cleared());
-    return cell;
-  }
-  // Otherwise create a new cell.
-  Handle<WeakCell> cell = isolate->factory()->NewWeakCell(prototype);
-  proto_info->set_weak_cell(*cell);
-  return cell;
-}
-
-// static
 void Map::SetPrototype(Isolate* isolate, Handle<Map> map,
                        Handle<Object> prototype,
                        bool enable_prototype_setup_mode) {
@@ -14623,29 +14601,6 @@ bool Code::IsIsolateIndependent(Isolate* isolate) {
   return is_process_independent;
 }
 
-Handle<WeakCell> Code::WeakCellFor(Handle<Code> code) {
-  DCHECK(code->kind() == OPTIMIZED_FUNCTION);
-  WeakCell* raw_cell = code->CachedWeakCell();
-  if (raw_cell != nullptr) {
-    return Handle<WeakCell>(raw_cell, code->GetIsolate());
-  }
-  Handle<WeakCell> cell = code->GetIsolate()->factory()->NewWeakCell(code);
-  DeoptimizationData::cast(code->deoptimization_data())
-      ->SetWeakCellCache(*cell);
-  return cell;
-}
-
-WeakCell* Code::CachedWeakCell() {
-  DCHECK(kind() == OPTIMIZED_FUNCTION);
-  Object* weak_cell_cache =
-      DeoptimizationData::cast(deoptimization_data())->WeakCellCache();
-  if (weak_cell_cache->IsWeakCell()) {
-    DCHECK(this == WeakCell::cast(weak_cell_cache)->value());
-    return WeakCell::cast(weak_cell_cache);
-  }
-  return nullptr;
-}
-
 bool Code::Inlines(SharedFunctionInfo* sfi) {
   // We can only check for inlining for optimized code.
   DCHECK(is_optimized_code());
@@ -15769,8 +15724,7 @@ void JSObject::AddDataElement(Handle<JSObject> object, uint32_t index,
   }
 
   ElementsKind to = value->OptimalElementsKind();
-  if (IsHoleyOrDictionaryElementsKind(kind) || !object->IsJSArray() ||
-      index > old_length) {
+  if (IsHoleyElementsKind(kind) || !object->IsJSArray() || index > old_length) {
     to = GetHoleyElementsKind(to);
     kind = GetHoleyElementsKind(kind);
   }
@@ -15834,7 +15788,7 @@ bool AllocationSite::DigestTransitionFeedback(Handle<AllocationSite> site,
     Handle<JSArray> boilerplate(JSArray::cast(site->boilerplate()), isolate);
     ElementsKind kind = boilerplate->GetElementsKind();
     // if kind is holey ensure that to_kind is as well.
-    if (IsHoleyOrDictionaryElementsKind(kind)) {
+    if (IsHoleyElementsKind(kind)) {
       to_kind = GetHoleyElementsKind(to_kind);
     }
     if (IsMoreGeneralElementsKindTransition(kind, to_kind)) {
@@ -15862,7 +15816,7 @@ bool AllocationSite::DigestTransitionFeedback(Handle<AllocationSite> site,
     // The AllocationSite is for a constructed Array.
     ElementsKind kind = site->GetElementsKind();
     // if kind is holey ensure that to_kind is as well.
-    if (IsHoleyOrDictionaryElementsKind(kind)) {
+    if (IsHoleyElementsKind(kind)) {
       to_kind = GetHoleyElementsKind(to_kind);
     }
     if (IsMoreGeneralElementsKindTransition(kind, to_kind)) {
@@ -16123,34 +16077,10 @@ bool FixedArrayBase::IsCowArray() const {
   return map() == GetReadOnlyRoots().fixed_cow_array_map();
 }
 
-bool JSObject::WasConstructedFromApiFunction() {
+bool JSObject::IsApiWrapper() {
   auto instance_type = map()->instance_type();
-  bool is_api_object = instance_type == JS_API_OBJECT_TYPE ||
-                       instance_type == JS_SPECIAL_API_OBJECT_TYPE;
-  bool is_wasm_object =
-      instance_type == WASM_GLOBAL_TYPE || instance_type == WASM_MEMORY_TYPE ||
-      instance_type == WASM_MODULE_TYPE ||
-      instance_type == WASM_INSTANCE_TYPE || instance_type == WASM_TABLE_TYPE;
-#ifdef ENABLE_SLOW_DCHECKS
-  if (FLAG_enable_slow_asserts) {
-    Object* maybe_constructor = map()->GetConstructor();
-    if (maybe_constructor->IsJSFunction()) {
-      JSFunction* constructor = JSFunction::cast(maybe_constructor);
-      DCHECK_EQ(constructor->shared()->IsApiFunction(),
-                is_api_object || is_wasm_object);
-    } else if (maybe_constructor->IsFunctionTemplateInfo()) {
-      DCHECK(is_api_object || is_wasm_object);
-    } else {
-      return false;
-    }
-  }
-#endif
-  // TODO(titzer): Clean this up somehow. WebAssembly objects should not be
-  // considered "constructed from API functions" even though they have
-  // function template info, since that would make the V8 GC identify them to
-  // the embedder, e.g. the Oilpan GC.
-  USE(is_wasm_object);
-  return is_api_object;
+  return instance_type == JS_API_OBJECT_TYPE ||
+         instance_type == JS_SPECIAL_API_OBJECT_TYPE;
 }
 
 const char* Symbol::PrivateSymbolToName() const {

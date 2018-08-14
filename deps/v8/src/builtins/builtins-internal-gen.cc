@@ -8,6 +8,7 @@
 #include "src/code-stub-assembler.h"
 #include "src/heap/heap-inl.h"
 #include "src/ic/accessor-assembler.h"
+#include "src/ic/keyed-store-generic.h"
 #include "src/macro-assembler.h"
 #include "src/objects/debug-objects.h"
 #include "src/objects/shared-function-info.h"
@@ -100,7 +101,7 @@ TF_BUILTIN(NewArgumentsElements, CodeStubAssembler) {
     BIND(&if_notempty);
     {
       // Allocate a FixedArray in new space.
-      TNode<FixedArray> result = AllocateFixedArray(kind, length);
+      TNode<FixedArray> result = CAST(AllocateFixedArray(kind, length));
 
       // The elements might be used to back mapped arguments. In that case fill
       // the mapped elements (i.e. the first {mapped_count}) with the hole, but
@@ -579,7 +580,7 @@ TF_BUILTIN(ForInFilter, CodeStubAssembler) {
   CSA_ASSERT(this, IsString(key));
 
   Label if_true(this), if_false(this);
-  TNode<Oddball> result = HasProperty(object, key, context, kForInHasProperty);
+  TNode<Oddball> result = HasProperty(context, object, key, kForInHasProperty);
   Branch(IsTrue(result), &if_true, &if_false);
 
   BIND(&if_true);
@@ -844,7 +845,7 @@ TF_BUILTIN(EnqueueMicrotask, InternalBuiltinsAssembler) {
       // This is the likely case where the new queue fits into new space,
       // and thus we don't need any write barriers for initializing it.
       TNode<FixedArray> new_queue =
-          AllocateFixedArray(PACKED_ELEMENTS, new_queue_length);
+          CAST(AllocateFixedArray(PACKED_ELEMENTS, new_queue_length));
       CopyFixedArrayElements(PACKED_ELEMENTS, queue, new_queue, num_tasks,
                              SKIP_WRITE_BARRIER);
       StoreFixedArrayElement(new_queue, num_tasks, microtask,
@@ -858,9 +859,9 @@ TF_BUILTIN(EnqueueMicrotask, InternalBuiltinsAssembler) {
     BIND(&if_lospace);
     {
       // The fallback case where the new queue ends up in large object space.
-      TNode<FixedArray> new_queue = AllocateFixedArray(
+      TNode<FixedArray> new_queue = CAST(AllocateFixedArray(
           PACKED_ELEMENTS, new_queue_length, INTPTR_PARAMETERS,
-          AllocationFlag::kAllowLargeObjectAllocation);
+          AllocationFlag::kAllowLargeObjectAllocation));
       CopyFixedArrayElements(PACKED_ELEMENTS, queue, new_queue, num_tasks);
       StoreFixedArrayElement(new_queue, num_tasks, microtask);
       FillFixedArrayWithValue(PACKED_ELEMENTS, new_queue, new_num_tasks,
@@ -1265,10 +1266,8 @@ TF_BUILTIN(SetProperty, CodeStubAssembler) {
   TNode<Object> key = CAST(Parameter(Descriptor::kKey));
   TNode<Object> value = CAST(Parameter(Descriptor::kValue));
 
-  // TODO(szuend): Add implementation similar to KeyedStoreGeneric().
-
-  TailCallRuntime(Runtime::kSetProperty, context, receiver, key, value,
-                  SmiConstant(LanguageMode::kStrict));
+  KeyedStoreGenericGenerator::SetProperty(state(), context, receiver, key,
+                                          value, LanguageMode::kStrict);
 }
 
 }  // namespace internal

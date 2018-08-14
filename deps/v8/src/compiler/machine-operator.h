@@ -140,8 +140,6 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
     kWord64Popcnt = 1u << 15,
     kWord32ReverseBits = 1u << 16,
     kWord64ReverseBits = 1u << 17,
-    kWord32ReverseBytes = 1u << 18,
-    kWord64ReverseBytes = 1u << 19,
     kInt32AbsWithOverflow = 1u << 20,
     kInt64AbsWithOverflow = 1u << 21,
     kSpeculationFence = 1u << 22,
@@ -150,9 +148,8 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
         kFloat64RoundUp | kFloat32RoundTruncate | kFloat64RoundTruncate |
         kFloat64RoundTiesAway | kFloat32RoundTiesEven | kFloat64RoundTiesEven |
         kWord32Ctz | kWord64Ctz | kWord32Popcnt | kWord64Popcnt |
-        kWord32ReverseBits | kWord64ReverseBits | kWord32ReverseBytes |
-        kWord64ReverseBytes | kInt32AbsWithOverflow | kInt64AbsWithOverflow |
-        kSpeculationFence
+        kWord32ReverseBits | kWord64ReverseBits | kInt32AbsWithOverflow |
+        kInt64AbsWithOverflow | kSpeculationFence
   };
   typedef base::Flags<Flag, unsigned> Flags;
 
@@ -238,8 +235,8 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const OptionalOperator Word64Popcnt();
   const OptionalOperator Word32ReverseBits();
   const OptionalOperator Word64ReverseBits();
-  const OptionalOperator Word32ReverseBytes();
-  const OptionalOperator Word64ReverseBytes();
+  const Operator* Word32ReverseBytes();
+  const Operator* Word64ReverseBytes();
   const OptionalOperator Int32AbsWithOverflow();
   const OptionalOperator Int64AbsWithOverflow();
 
@@ -665,6 +662,10 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* Word64AtomicNarrowExchange(MachineType type);
   // atomic-narrow-compare-exchange [base + index], old_value, new_value
   const Operator* Word64AtomicNarrowCompareExchange(MachineType type);
+  // atomic-pair-load [base + index]
+  const Operator* Word32AtomicPairLoad();
+  // atomic-pair-sub [base + index], value_high, value-low
+  const Operator* Word32AtomicPairStore();
   // atomic-pair-add [base + index], value_high, value_low
   const Operator* Word32AtomicPairAdd();
   // atomic-pair-sub [base + index], value_high, value-low

@@ -827,7 +827,10 @@ void InstructionSelector::VisitWord32ReverseBits(Node* node) { UNREACHABLE(); }
 
 void InstructionSelector::VisitWord64ReverseBytes(Node* node) { UNREACHABLE(); }
 
-void InstructionSelector::VisitWord32ReverseBytes(Node* node) { UNREACHABLE(); }
+void InstructionSelector::VisitWord32ReverseBytes(Node* node) {
+  IA32OperandGenerator g(this);
+  Emit(kIA32Bswap, g.DefineSameAsFirst(node), g.UseRegister(node->InputAt(0)));
+}
 
 void InstructionSelector::VisitInt32Add(Node* node) {
   IA32OperandGenerator g(this);
@@ -1758,6 +1761,44 @@ VISIT_ATOMIC_BINOP(And)
 VISIT_ATOMIC_BINOP(Or)
 VISIT_ATOMIC_BINOP(Xor)
 #undef VISIT_ATOMIC_BINOP
+
+void InstructionSelector::VisitWord32AtomicPairLoad(Node* node) {
+  IA32OperandGenerator g(this);
+  AddressingMode mode;
+  Node* base = node->InputAt(0);
+  Node* index = node->InputAt(1);
+  InstructionOperand inputs[] = {g.UseUniqueRegister(base),
+                                 g.GetEffectiveIndexOperand(index, &mode)};
+  InstructionOperand temps[] = {g.TempDoubleRegister()};
+  InstructionOperand outputs[] = {
+      g.DefineAsRegister(NodeProperties::FindProjection(node, 0)),
+      g.DefineAsRegister(NodeProperties::FindProjection(node, 1))};
+  InstructionCode code =
+      kIA32Word32AtomicPairLoad | AddressingModeField::encode(mode);
+  Emit(code, arraysize(outputs), outputs, arraysize(inputs), inputs,
+       arraysize(temps), temps);
+}
+
+void InstructionSelector::VisitWord32AtomicPairStore(Node* node) {
+  IA32OperandGenerator g(this);
+  Node* base = node->InputAt(0);
+  Node* index = node->InputAt(1);
+  Node* value = node->InputAt(2);
+  Node* value_high = node->InputAt(3);
+
+  AddressingMode addressing_mode;
+  InstructionOperand inputs[] = {
+      g.UseFixed(value, ebx), g.UseFixed(value_high, ecx),
+      g.UseUniqueRegister(base),
+      g.GetEffectiveIndexOperand(index, &addressing_mode)};
+  // Allocating temp registers here as stores are performed using an atomic
+  // exchange, the output of which is stored in edx:eax, which should be saved
+  // and restored at the end of the instruction.
+  InstructionOperand temps[] = {g.TempRegister(eax), g.TempRegister(edx)};
+  InstructionCode code =
+      kIA32Word32AtomicPairStore | AddressingModeField::encode(addressing_mode);
+  Emit(code, 0, nullptr, arraysize(inputs), inputs, arraysize(temps), temps);
+}
 
 void InstructionSelector::VisitWord32AtomicPairAdd(Node* node) {
   VisitPairAtomicBinOp(this, node, kIA32Word32AtomicPairAdd);

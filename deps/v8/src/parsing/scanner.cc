@@ -103,16 +103,9 @@ void Scanner::LiteralBuffer::ConvertToTwoByte() {
   is_one_byte_ = false;
 }
 
-void Scanner::LiteralBuffer::AddCharSlow(uc32 code_unit) {
+void Scanner::LiteralBuffer::AddTwoByteChar(uc32 code_unit) {
+  DCHECK(!is_one_byte_);
   if (position_ >= backing_store_.length()) ExpandBuffer();
-  if (is_one_byte_) {
-    if (code_unit <= static_cast<uc32>(unibrow::Latin1::kMaxChar)) {
-      backing_store_[position_] = static_cast<byte>(code_unit);
-      position_ += kOneByteSize;
-      return;
-    }
-    ConvertToTwoByte();
-  }
   if (code_unit <=
       static_cast<uc32>(unibrow::Utf16::kMaxNonSurrogateCharCode)) {
     *reinterpret_cast<uint16_t*>(&backing_store_[position_]) = code_unit;
@@ -904,17 +897,16 @@ void Scanner::SeekForward(int pos) {
   Scan();
 }
 
-
-template <bool capture_raw, bool in_template_literal>
+template <bool capture_raw>
 bool Scanner::ScanEscape() {
   uc32 c = c0_;
   Advance<capture_raw>();
 
   // Skip escaped newlines.
   DCHECK(!unibrow::IsLineTerminator(kEndOfInput));
-  if (!in_template_literal && unibrow::IsLineTerminator(c)) {
+  if (!capture_raw && unibrow::IsLineTerminator(c)) {
     // Allow escaped CR+LF newlines in multiline string literals.
-    if (IsCarriageReturn(c) && IsLineFeed(c0_)) Advance<capture_raw>();
+    if (IsCarriageReturn(c) && IsLineFeed(c0_)) Advance();
     return true;
   }
 
@@ -948,7 +940,7 @@ bool Scanner::ScanEscape() {
     case '5':  // fall through
     case '6':  // fall through
     case '7':
-      c = ScanOctalEscape<capture_raw>(c, 2, in_template_literal);
+      c = ScanOctalEscape<capture_raw>(c, 2);
       break;
   }
 
@@ -958,7 +950,7 @@ bool Scanner::ScanEscape() {
 }
 
 template <bool capture_raw>
-uc32 Scanner::ScanOctalEscape(uc32 c, int length, bool in_template_literal) {
+uc32 Scanner::ScanOctalEscape(uc32 c, int length) {
   uc32 x = c - '0';
   int i = 0;
   for (; i < length; i++) {
@@ -976,9 +968,8 @@ uc32 Scanner::ScanOctalEscape(uc32 c, int length, bool in_template_literal) {
   // occur before the "use strict" directive.
   if (c != '0' || i > 0 || c0_ == '8' || c0_ == '9') {
     octal_pos_ = Location(source_pos() - i - 1, source_pos() - 1);
-    octal_message_ = in_template_literal
-                         ? MessageTemplate::kTemplateOctalLiteral
-                         : MessageTemplate::kStrictOctalEscape;
+    octal_message_ = capture_raw ? MessageTemplate::kTemplateOctalLiteral
+                                 : MessageTemplate::kStrictOctalEscape;
   }
   return x;
 }
@@ -1001,7 +992,7 @@ Token::Value Scanner::ScanString() {
     if (c0_ == '\\') {
       Advance();
       // TODO(verwaest): Check whether we can remove the additional check.
-      if (c0_ == kEndOfInput || !ScanEscape<false, false>()) {
+      if (c0_ == kEndOfInput || !ScanEscape<false>()) {
         return Token::ILLEGAL;
       }
       continue;
@@ -1056,35 +1047,31 @@ Token::Value Scanner::ScanTemplateSpan() {
   LiteralScope literal(this);
   StartRawLiteral();
   const bool capture_raw = true;
-  const bool in_template_literal = true;
   while (true) {
     uc32 c = c0_;
-    Advance<capture_raw>();
+    Advance();
     if (c == '`') {
       result = Token::TEMPLATE_TAIL;
-      ReduceRawLiteralLength(1);
       break;
     } else if (c == '$' && c0_ == '{') {
-      Advance<capture_raw>();  // Consume '{'
-      ReduceRawLiteralLength(2);
+      Advance();  // Consume '{'
       break;
     } else if (c == '\\') {
       DCHECK(!unibrow::IsLineTerminator(kEndOfInput));
+      if (capture_raw) AddRawLiteralChar('\\');
       if (unibrow::IsLineTerminator(c0_)) {
         // The TV of LineContinuation :: \ LineTerminatorSequence is the empty
         // code unit sequence.
         uc32 lastChar = c0_;
-        Advance<capture_raw>();
+        Advance();
         if (lastChar == '\r') {
-          ReduceRawLiteralLength(1);  // Remove \r
-          if (c0_ == '\n') {
-            Advance<capture_raw>();  // Adds \n
-          } else {
-            AddRawLiteralChar('\n');
-          }
+          // Also skip \n.
+          if (c0_ == '\n') Advance();
+          lastChar = '\n';
         }
+        if (capture_raw) AddRawLiteralChar(lastChar);
       } else {
-        bool success = ScanEscape<capture_raw, in_template_literal>();
+        bool success = ScanEscape<capture_raw>();
         USE(success);
         DCHECK_EQ(!success, has_error());
         // For templates, invalid escape sequence checking is handled in the
@@ -1101,14 +1088,10 @@ Token::Value Scanner::ScanTemplateSpan() {
       // The TRV of LineTerminatorSequence :: <CR><LF> is the sequence
       // consisting of the CV 0x000A.
       if (c == '\r') {
-        ReduceRawLiteralLength(1);  // Remove \r
-        if (c0_ == '\n') {
-          Advance<capture_raw>();  // Adds \n
-        } else {
-          AddRawLiteralChar('\n');
-        }
+        if (c0_ == '\n') Advance();  // Skip \n
         c = '\n';
       }
+      if (capture_raw) AddRawLiteralChar(c);
       AddLiteralChar(c);
     }
   }
@@ -1609,13 +1592,15 @@ Token::Value Scanner::ScanIdentifierOrKeywordInner(LiteralScope* literal) {
   bool escaped = false;
   if (IsInRange(c0_, 'a', 'z') || c0_ == '_') {
     do {
-      AddLiteralCharAdvance();
+      AddLiteralChar(static_cast<char>(c0_));
+      Advance();
     } while (IsInRange(c0_, 'a', 'z') || c0_ == '_');
 
     if (IsDecimalDigit(c0_) || IsInRange(c0_, 'A', 'Z') || c0_ == '$') {
       // Identifier starting with lowercase or _.
       do {
-        AddLiteralCharAdvance();
+        AddLiteralChar(static_cast<char>(c0_));
+        Advance();
       } while (IsAsciiIdentifier(c0_));
 
       if (c0_ <= kMaxAscii && c0_ != '\\') {
@@ -1635,7 +1620,8 @@ Token::Value Scanner::ScanIdentifierOrKeywordInner(LiteralScope* literal) {
     }
   } else if (IsInRange(c0_, 'A', 'Z') || c0_ == '$') {
     do {
-      AddLiteralCharAdvance();
+      AddLiteralChar(static_cast<char>(c0_));
+      Advance();
     } while (IsAsciiIdentifier(c0_));
 
     if (c0_ <= kMaxAscii && c0_ != '\\') {

@@ -1070,9 +1070,9 @@ static bool ReverseBytesSupported(MachineOperatorBuilder* m,
   switch (size_in_bytes) {
     case 4:
     case 16:
-      return m->Word32ReverseBytes().IsSupported();
+      return true;
     case 8:
-      return m->Word64ReverseBytes().IsSupported();
+      return m->Is64();
     default:
       break;
   }
@@ -1137,16 +1137,16 @@ Node* WasmGraphBuilder::BuildChangeEndiannessStore(
   if (ReverseBytesSupported(m, valueSizeInBytes)) {
     switch (valueSizeInBytes) {
       case 4:
-        result = graph()->NewNode(m->Word32ReverseBytes().op(), value);
+        result = graph()->NewNode(m->Word32ReverseBytes(), value);
         break;
       case 8:
-        result = graph()->NewNode(m->Word64ReverseBytes().op(), value);
+        result = graph()->NewNode(m->Word64ReverseBytes(), value);
         break;
       case 16: {
         Node* byte_reversed_lanes[4];
         for (int lane = 0; lane < 4; lane++) {
           byte_reversed_lanes[lane] = graph()->NewNode(
-              m->Word32ReverseBytes().op(),
+              m->Word32ReverseBytes(),
               graph()->NewNode(mcgraph()->machine()->I32x4ExtractLane(lane),
                                value));
         }
@@ -1272,21 +1272,21 @@ Node* WasmGraphBuilder::BuildChangeEndiannessLoad(Node* node,
     switch (valueSizeInBytes) {
       case 2:
         result =
-            graph()->NewNode(m->Word32ReverseBytes().op(),
+            graph()->NewNode(m->Word32ReverseBytes(),
                              graph()->NewNode(m->Word32Shl(), value,
                                               mcgraph()->Int32Constant(16)));
         break;
       case 4:
-        result = graph()->NewNode(m->Word32ReverseBytes().op(), value);
+        result = graph()->NewNode(m->Word32ReverseBytes(), value);
         break;
       case 8:
-        result = graph()->NewNode(m->Word64ReverseBytes().op(), value);
+        result = graph()->NewNode(m->Word64ReverseBytes(), value);
         break;
       case 16: {
         Node* byte_reversed_lanes[4];
         for (int lane = 0; lane < 4; lane++) {
           byte_reversed_lanes[lane] = graph()->NewNode(
-              m->Word32ReverseBytes().op(),
+              m->Word32ReverseBytes(),
               graph()->NewNode(mcgraph()->machine()->I32x4ExtractLane(lane),
                                value));
         }
@@ -2889,7 +2889,6 @@ void WasmGraphBuilder::GetGlobalBaseAndOffset(MachineType mem_type,
                                               Node** offset_node) {
   DCHECK_NOT_NULL(instance_node_);
   if (global.mutability && global.imported) {
-    DCHECK(FLAG_experimental_wasm_mut_global);
     if (imported_mutable_globals_ == nullptr) {
       // Load imported_mutable_globals_ from the instance object at runtime.
       imported_mutable_globals_ = graph()->NewNode(
@@ -3009,8 +3008,13 @@ Node* WasmGraphBuilder::GetGlobal(uint32_t index) {
   Node* offset = nullptr;
   GetGlobalBaseAndOffset(mem_type, env_->module->globals[index], &base,
                          &offset);
-  return SetEffect(graph()->NewNode(mcgraph()->machine()->Load(mem_type), base,
-                                    offset, Effect(), Control()));
+  Node* load = SetEffect(graph()->NewNode(mcgraph()->machine()->Load(mem_type),
+                                          base, offset, Effect(), Control()));
+#if defined(V8_TARGET_BIG_ENDIAN)
+  load = BuildChangeEndiannessLoad(load, mem_type,
+                                   env_->module->globals[index].type);
+#endif
+  return load;
 }
 
 Node* WasmGraphBuilder::SetGlobal(uint32_t index, Node* val) {
@@ -3022,6 +3026,10 @@ Node* WasmGraphBuilder::SetGlobal(uint32_t index, Node* val) {
                          &offset);
   const Operator* op = mcgraph()->machine()->Store(
       StoreRepresentation(mem_type.representation(), kNoWriteBarrier));
+#if defined(V8_TARGET_BIG_ENDIAN)
+  val = BuildChangeEndiannessStore(val, mem_type.representation(),
+                                   env_->module->globals[index].type);
+#endif
   return SetEffect(
       graph()->NewNode(op, base, offset, val, Effect(), Control()));
 }
@@ -5035,9 +5043,14 @@ SourcePositionTable* TurbofanWasmCompilationUnit::BuildGraphForWasmFunction(
       new (mcgraph->zone()) SourcePositionTable(mcgraph->graph());
   WasmGraphBuilder builder(wasm_unit_->env_, mcgraph->zone(), mcgraph,
                            wasm_unit_->func_body_.sig, source_position_table);
-  graph_construction_result_ =
-      wasm::BuildTFGraph(wasm_unit_->wasm_engine_->allocator(), &builder,
-                         wasm_unit_->func_body_, node_origins);
+  // TODO(titzer): gather detected features into a per-module location
+  // in order to increment an embedder feature use count.
+  wasm::WasmFeatures unused_detected_features;
+  graph_construction_result_ = wasm::BuildTFGraph(
+      wasm_unit_->wasm_engine_->allocator(),
+      wasm_unit_->native_module_->enabled_features(), wasm_unit_->env_->module,
+      &builder, &unused_detected_features, wasm_unit_->func_body_,
+      node_origins);
   if (graph_construction_result_.failed()) {
     if (FLAG_trace_wasm_compiler) {
       StdoutStream{} << "Compilation failed: "

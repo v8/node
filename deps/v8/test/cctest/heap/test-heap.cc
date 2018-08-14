@@ -48,6 +48,7 @@
 #include "src/objects-inl.h"
 #include "src/objects/js-array-inl.h"
 #include "src/objects/js-collection-inl.h"
+#include "src/objects/managed.h"
 #include "src/regexp/jsregexp.h"
 #include "src/snapshot/snapshot.h"
 #include "src/transitions.h"
@@ -3677,6 +3678,7 @@ TEST(AllocationSiteCreation) {
   Isolate* isolate = CcTest::i_isolate();
   Heap* heap = isolate->heap();
   HandleScope scope(isolate);
+  i::FLAG_enable_one_shot_optimization = true;
 
   // Array literals.
   CheckNumberOfAllocations(heap, "(function f1() { return []; })()", 1, 0);
@@ -3726,6 +3728,52 @@ TEST(AllocationSiteCreation) {
 
   // No new AllocationSites created on the second invocation.
   CheckNumberOfAllocations(heap, "f9(); ", 0, 0);
+
+  // No allocation sites for literals in an iife/top level code even if it has
+  // array subliterals
+  CheckNumberOfAllocations(heap,
+                           R"(
+                            (function f10() {
+                              return {a: [1], b: [2]};
+                            })();
+                            )",
+                           0, 0);
+
+  CheckNumberOfAllocations(heap,
+                           R"(
+                            l = {
+                              a: 1,
+                              b: {
+                                c: [5],
+                              }
+                            };
+                            )",
+                           0, 0);
+
+  // Eagerly create allocation sites for literals within a loop of iife or
+  // top-level code
+  CheckNumberOfAllocations(heap,
+                           R"(
+                            (function f11() {
+                              while(true) {
+                                return {a: [1], b: [2]};
+                              }
+                            })();
+                            )",
+                           1, 2);
+
+  CheckNumberOfAllocations(heap,
+                           R"(
+                            for (i = 0; i < 1; ++i) {
+                              l = {
+                                a: 1,
+                                b: {
+                                  c: [5],
+                                }
+                              };
+                            }
+                            )",
+                           1, 1);
 }
 
 TEST(CellsInOptimizedCodeAreWeak) {
@@ -5659,7 +5707,7 @@ TEST(Regress618958) {
   v8::HandleScope scope(CcTest::isolate());
   Heap* heap = CcTest::heap();
   bool isolate_is_locked = true;
-  heap->update_external_memory(100 * MB);
+  CcTest::isolate()->AdjustAmountOfExternalAllocatedMemory(100 * MB);
   int mark_sweep_count_before = heap->ms_count();
   heap->MemoryPressureNotification(MemoryPressureLevel::kCritical,
                                    isolate_is_locked);
@@ -6197,6 +6245,31 @@ UNINITIALIZED_TEST(OutOfMemoryLargeObjects) {
 void HeapTester::UncommitFromSpace(Heap* heap) {
   heap->UncommitFromSpace();
   heap->memory_allocator()->unmapper()->EnsureUnmappingCompleted();
+}
+
+class DeleteNative {
+ public:
+  static void Deleter(void* arg) {
+    delete reinterpret_cast<DeleteNative*>(arg);
+  }
+};
+
+TEST(Regress8014) {
+  Isolate* isolate = CcTest::InitIsolateOnce();
+  Heap* heap = isolate->heap();
+  {
+    HandleScope scope(isolate);
+    for (int i = 0; i < 10000; i++) {
+      auto handle = Managed<DeleteNative>::FromRawPtr(isolate, 1000000,
+                                                      new DeleteNative());
+      USE(handle);
+    }
+  }
+  int ms_count = heap->ms_count();
+  heap->MemoryPressureNotification(MemoryPressureLevel::kCritical, true);
+  // Several GCs can be triggred by the above call.
+  // The bad case triggers 10000 GCs.
+  CHECK_LE(heap->ms_count(), ms_count + 10);
 }
 
 }  // namespace heap

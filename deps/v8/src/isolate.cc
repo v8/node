@@ -1124,6 +1124,8 @@ void ReportBootstrappingException(Handle<Object> exception,
 }
 
 bool Isolate::is_catchable_by_wasm(Object* exception) {
+  // TODO(titzer): thread WASM features here, or just remove this check?
+  if (!FLAG_experimental_wasm_eh) return false;
   if (!is_catchable_by_javascript(exception) || !exception->IsJSError())
     return false;
   HandleScope scope(this);
@@ -1307,7 +1309,7 @@ Object* Isolate::UnwindAndFindHandler() {
           trap_handler::ClearThreadInWasm();
         }
 
-        if (!FLAG_experimental_wasm_eh || !is_catchable_by_wasm(exception)) {
+        if (!is_catchable_by_wasm(exception)) {
           break;
         }
         int stack_slots = 0;  // Will contain stack slot count of frame.
@@ -1735,18 +1737,15 @@ bool Isolate::ComputeLocationFromStackTrace(MessageLocation* target,
       Handle<WasmInstanceObject> instance(elements->WasmInstance(i), this);
       uint32_t func_index =
           static_cast<uint32_t>(elements->WasmFunctionIndex(i)->value());
+      wasm::WasmCode* wasm_code = reinterpret_cast<wasm::WasmCode*>(
+          elements->WasmCodeObject(i)->foreign_address());
       int code_offset = elements->Offset(i)->value();
-
-      // TODO(titzer): store a reference to the code object in FrameArray;
-      // a second lookup here could lead to inconsistency.
-      int byte_offset =
-          FrameSummary::WasmCompiledFrameSummary::GetWasmSourcePosition(
-              instance->module_object()->native_module()->code(func_index),
-              code_offset);
-
       bool is_at_number_conversion =
           elements->IsAsmJsWasmFrame(i) &&
           elements->Flags(i)->value() & FrameArray::kAsmJsAtNumberConversion;
+      int byte_offset =
+          FrameSummary::WasmCompiledFrameSummary::GetWasmSourcePosition(
+              wasm_code, code_offset);
       int pos = WasmModuleObject::GetSourcePosition(
           handle(instance->module_object(), this), func_index, byte_offset,
           is_at_number_conversion);
@@ -2214,6 +2213,14 @@ void Isolate::SetCaptureStackTraceForUncaughtExceptions(
 void Isolate::SetAbortOnUncaughtExceptionCallback(
     v8::Isolate::AbortOnUncaughtExceptionCallback callback) {
   abort_on_uncaught_exception_callback_ = callback;
+}
+
+bool Isolate::AreWasmThreadsEnabled(Handle<Context> context) {
+  if (wasm_threads_enabled_callback()) {
+    v8::Local<v8::Context> api_context = v8::Utils::ToLocal(context);
+    return wasm_threads_enabled_callback()(api_context);
+  }
+  return FLAG_experimental_wasm_threads;
 }
 
 Handle<Context> Isolate::GetCallingNativeContext() {

@@ -62,6 +62,7 @@ type ExtractFixedArrayFlags generates
 'TNode<Smi>' constexpr 'ExtractFixedArrayFlags';
 type ParameterMode generates 'TNode<Int32T>' constexpr 'ParameterMode';
 type RootListIndex generates 'TNode<Int32T>' constexpr 'Heap::RootListIndex';
+type WriteBarrierMode generates 'TNode<Int32T>' constexpr 'WriteBarrierMode';
 
 type MessageTemplate constexpr 'MessageTemplate::Template';
 
@@ -144,6 +145,8 @@ extern macro NullConstant(): Oddball;
 extern macro UndefinedConstant(): Oddball;
 extern macro TrueConstant(): Boolean;
 extern macro FalseConstant(): Boolean;
+extern macro Int32TrueConstant(): bool;
+extern macro Int32FalseConstant(): bool;
 
 const Hole: Oddball = TheHoleConstant();
 const Null: Oddball = NullConstant();
@@ -160,7 +163,13 @@ const kSloppy: constexpr LanguageMode generates 'LanguageMode::kSloppy';
 const SMI_PARAMETERS: constexpr ParameterMode generates 'SMI_PARAMETERS';
 const INTPTR_PARAMETERS: constexpr ParameterMode generates 'INTPTR_PARAMETERS';
 
+
+const SKIP_WRITE_BARRIER: constexpr WriteBarrierMode
+    generates 'SKIP_WRITE_BARRIER';
+
 extern macro Is64(): constexpr bool;
+
+extern macro SelectBooleanConstant(bool): Boolean;
 
 extern macro Print(constexpr string);
 extern macro Print(constexpr string, Object);
@@ -173,15 +182,9 @@ extern macro ToLength_Inline(Context, Object): Number;
 extern macro ToNumber_Inline(Context, Object): Number;
 extern macro ToString_Inline(Context, Object): String;
 extern macro GetProperty(Context, Object, Object): Object;
-
-// TODO(mvstanton): the HasProperty builtin takes the key as the first argument,
-// and the object as the second, reversing the usual order. Reverse this in the
-// builtin definition at some point.
-extern builtin HasProperty(Context, Object, JSReceiver): Boolean;
-macro TorqueHasProperty(
-    context: Context, receiver: JSReceiver, key: Object): Boolean {
-  return HasProperty(context, key, receiver);
-}
+extern builtin SetProperty(Context, Object, Object, Object);
+extern builtin DeleteProperty(Context, Object, Object, LanguageMode);
+extern builtin HasProperty(Context, JSReceiver, Object): Boolean;
 
 extern macro ThrowRangeError(Context, constexpr MessageTemplate): never;
 extern macro ThrowTypeError(Context, constexpr MessageTemplate): never;
@@ -192,14 +195,13 @@ extern macro ArraySpeciesCreate(Context, Object, Number): Object;
 extern macro EnsureArrayPushable(Map): ElementsKind labels Bailout;
 
 extern builtin ToObject(Context, Object): JSReceiver;
+extern macro ToObject_Inline(Context, Object): JSReceiver;
 extern macro IsNullOrUndefined(Object): bool;
 extern macro IsTheHole(Object): bool;
 extern macro IsString(HeapObject): bool;
 extern builtin ToString(Context, Object): String;
 
 extern runtime CreateDataProperty(Context, Object, Object, Object);
-extern runtime SetProperty(Context, Object, Object, Object, LanguageMode);
-extern runtime DeleteProperty(Context, Object, Object, LanguageMode);
 
 extern macro LoadRoot(constexpr RootListIndex): Object;
 extern macro StoreRoot(constexpr RootListIndex, Object): Object;
@@ -262,7 +264,9 @@ extern operator '!=' macro WordNotEqual(Object, Object): bool;
 extern operator '+' macro SmiAdd(Smi, Smi): Smi;
 extern operator '-' macro SmiSub(Smi, Smi): Smi;
 extern operator '&' macro SmiAnd(Smi, Smi): Smi;
+extern operator '|' macro SmiOr(Smi, Smi): Smi;
 extern operator '>>>' macro SmiShr(Smi, constexpr int31): Smi;
+extern operator '<<' macro SmiShl(Smi, constexpr int31): Smi;
 
 extern operator '+' macro IntPtrAdd(intptr, intptr): intptr;
 extern operator '-' macro IntPtrSub(intptr, intptr): intptr;
@@ -301,8 +305,12 @@ macro max(x: Number, y: Number): Number {
   return NumberMax(x, y);
 }
 
+extern macro SmiMax(Smi, Smi): Smi;
+extern macro SmiMin(Smi, Smi): Smi;
+
 extern operator '!' macro ConstexprBoolNot(constexpr bool): constexpr bool;
 extern operator '!' macro Word32BinaryNot(bool): bool;
+extern operator '!' macro IsFalse(Boolean): bool;
 
 extern operator '.map' macro LoadMap(HeapObject): Map;
 extern operator '.map=' macro StoreMap(HeapObject, Map);
@@ -626,7 +634,7 @@ extern operator '.length' macro LoadFixedArrayBaseLength(FixedArrayBase): Smi;
 extern operator '[]' macro LoadFixedArrayElement(FixedArray, intptr): Object;
 extern operator '[]' macro LoadFixedArrayElement(FixedArray, Smi): Object;
 extern operator
-'[]' macro LoadFixedArrayElementInt(FixedArray, constexpr int31): Object;
+'[]' macro LoadFixedArrayElement(FixedArray, constexpr int31): Object;
 extern operator
 '[]=' macro StoreFixedArrayElement(FixedArray, intptr, Object): void;
 extern operator
@@ -634,6 +642,9 @@ extern operator
     FixedArray, constexpr int31, Object): void;
 extern operator
 '[]=' macro StoreFixedArrayElementSmi(FixedArray, Smi, Object): void;
+
+extern macro StoreFixedArrayElementSmi(FixedArray, Smi, Object,
+  constexpr WriteBarrierMode): void;
 
 extern operator '.instance_type' macro LoadMapInstanceType(Map): int32;
 
@@ -659,7 +670,8 @@ extern macro IsFastSmiOrTaggedElementsKind(ElementsKind): bool;
 extern macro IsFastSmiElementsKind(ElementsKind): bool;
 extern macro IsHoleyFastElementsKind(ElementsKind): bool;
 
-extern macro AllocateFixedArray(constexpr ElementsKind, intptr): FixedArray;
+extern macro AllocateZeroedFixedArray(intptr): FixedArray;
+extern macro AllocateZeroedFixedDoubleArray(intptr): FixedDoubleArray;
 
 extern macro CopyFixedArrayElements(
     constexpr ElementsKind, FixedArray, constexpr ElementsKind, FixedArray,
@@ -726,9 +738,11 @@ extern macro IsJSArray(HeapObject): bool;
 extern macro TaggedIsCallable(Object): bool;
 extern macro IsDetachedBuffer(JSArrayBuffer): bool;
 extern macro IsHeapNumber(HeapObject): bool;
+extern macro IsFixedArray(HeapObject): bool;
 extern macro IsExtensibleMap(Map): bool;
 extern macro IsCustomElementsReceiverInstanceType(int32): bool;
 extern macro Typeof(Object): Object;
+extern macro LoadTargetFromFrame(): JSFunction;
 
 // Return true iff number is NaN.
 macro NumberIsNaN(number: Number): bool {

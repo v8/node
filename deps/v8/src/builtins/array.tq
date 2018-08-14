@@ -178,7 +178,7 @@ module array {
       let from: String = ToString_Inline(context, actualStart + k);
 
       // b. Let fromPresent be ? HasProperty(O, from).
-      let fromPresent: Oddball = TorqueHasProperty(context, o, from);
+      let fromPresent: Oddball = HasProperty(context, o, from);
 
       // c. If fromPresent is true, then
       if (fromPresent == True) {
@@ -194,7 +194,7 @@ module array {
     }
 
     // 12. Perform ? Set(A, "length", actualDeleteCount, true).
-    SetProperty(context, a, 'length', actualDeleteCount, kStrict);
+    SetProperty(context, a, 'length', actualDeleteCount);
 
     // 13. Let items be a List whose elements are, in left-to-right order,
     //     the portion of the actual argument list starting with the third
@@ -216,7 +216,7 @@ module array {
         let to: String = ToString_Inline(context, k + itemCount);
 
         // iii. Let fromPresent be ? HasProperty(O, from).
-        let fromPresent: Oddball = TorqueHasProperty(context, o, from);
+        let fromPresent: Oddball = HasProperty(context, o, from);
 
         // iv. If fromPresent is true, then
         if (fromPresent == True) {
@@ -224,7 +224,7 @@ module array {
           let fromValue: Object = GetProperty(context, o, from);
 
           // 2. Perform ? Set(O, to, fromValue, true).
-          SetProperty(context, o, to, fromValue, kStrict);
+          SetProperty(context, o, to, fromValue);
 
           // v. Else fromPresent is false,
         } else {
@@ -259,7 +259,7 @@ module array {
         let to: String = ToString_Inline(context, k + itemCount - 1);
 
         // iii. Let fromPresent be ? HasProperty(O, from).
-        let fromPresent: Oddball = TorqueHasProperty(context, o, from);
+        let fromPresent: Oddball = HasProperty(context, o, from);
 
         // iv. If fromPresent is true, then
         if (fromPresent == True) {
@@ -267,7 +267,7 @@ module array {
           let fromValue: Object = GetProperty(context, o, from);
 
           // 2. Perform ? Set(O, to, fromValue, true).
-          SetProperty(context, o, to, fromValue, kStrict);
+          SetProperty(context, o, to, fromValue);
 
           // v. Else fromPresent is false,
         } else {
@@ -289,7 +289,7 @@ module array {
     if (arguments.length > 2) {
       for (let e: Object of arguments [2: ]) {
         // b. Perform ? Set(O, ! ToString(k), E, true).
-        SetProperty(context, o, ToString_Inline(context, k), e, kStrict);
+        SetProperty(context, o, ToString_Inline(context, k), e);
 
         // c. Increase k by 1.
         k = k + 1;
@@ -298,8 +298,7 @@ module array {
 
     // 19. Perform ? Set(O, "length", len - actualDeleteCount + itemCount,
     // true).
-    SetProperty(
-        context, o, 'length', len - actualDeleteCount + itemCount, kStrict);
+    SetProperty(context, o, 'length', len - actualDeleteCount + itemCount);
 
     return a;
   }

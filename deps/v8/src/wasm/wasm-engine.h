@@ -22,6 +22,7 @@ class WasmInstanceObject;
 namespace wasm {
 
 class ErrorThrower;
+struct WasmFeatures;
 struct ModuleWireBytes;
 
 class V8_EXPORT_PRIVATE CompilationResultResolver {
@@ -47,7 +48,8 @@ class V8_EXPORT_PRIVATE WasmEngine {
 
   // Synchronously validates the given bytes that represent an encoded WASM
   // module.
-  bool SyncValidate(Isolate* isolate, const ModuleWireBytes& bytes);
+  bool SyncValidate(Isolate* isolate, const WasmFeatures& enabled,
+                    const ModuleWireBytes& bytes);
 
   // Synchronously compiles the given bytes that represent a translated
   // asm.js module.
@@ -59,6 +61,7 @@ class V8_EXPORT_PRIVATE WasmEngine {
   // Synchronously compiles the given bytes that represent an encoded WASM
   // module.
   MaybeHandle<WasmModuleObject> SyncCompile(Isolate* isolate,
+                                            const WasmFeatures& enabled,
                                             ErrorThrower* thrower,
                                             const ModuleWireBytes& bytes);
 
@@ -74,7 +77,7 @@ class V8_EXPORT_PRIVATE WasmEngine {
   // encoded WASM module.
   // The {is_shared} flag indicates if the bytes backing the module could
   // be shared across threads, i.e. could be concurrently modified.
-  void AsyncCompile(Isolate* isolate,
+  void AsyncCompile(Isolate* isolate, const WasmFeatures& enabled,
                     std::unique_ptr<CompilationResultResolver> resolver,
                     const ModuleWireBytes& bytes, bool is_shared);
 
@@ -85,7 +88,7 @@ class V8_EXPORT_PRIVATE WasmEngine {
                         MaybeHandle<JSReceiver> imports);
 
   std::shared_ptr<StreamingDecoder> StartStreamingCompilation(
-      Isolate* isolate, Handle<Context> context,
+      Isolate* isolate, const WasmFeatures& enabled, Handle<Context> context,
       std::unique_ptr<CompilationResultResolver> resolver);
 
   // Exports the sharable parts of the given module object so that they can be
@@ -120,14 +123,9 @@ class V8_EXPORT_PRIVATE WasmEngine {
   // Isolate is currently running.
   bool HasRunningCompileJob(Isolate* isolate);
 
-  // Cancel all AsyncCompileJobs that belong to the given Isolate. Their
-  // deletion is delayed until all tasks accessing the AsyncCompileJob finish
-  // their execution. This is used to clean-up the isolate to be reused.
-  void AbortCompileJobsOnIsolate(Isolate* isolate);
-
-  // Deletes all AsyncCompileJobs that belong to the given Isolate. Similar to
-  // the above {AbortCompileJobsOnIsolate} but does not delay deletion because
-  // this is only used during tear-down of the Isolate.
+  // Deletes all AsyncCompileJobs that belong to the given Isolate. All
+  // compilation is aborted, no more callbacks will be triggered. This is used
+  // for tearing down an isolate, or to clean it up to be reused.
   void DeleteCompileJobsOnIsolate(Isolate* isolate);
 
   // Call on process start and exit.
@@ -140,7 +138,8 @@ class V8_EXPORT_PRIVATE WasmEngine {
 
  private:
   AsyncCompileJob* CreateAsyncCompileJob(
-      Isolate* isolate, std::unique_ptr<byte[]> bytes_copy, size_t length,
+      Isolate* isolate, const WasmFeatures& enabled,
+      std::unique_ptr<byte[]> bytes_copy, size_t length,
       Handle<Context> context,
       std::unique_ptr<CompilationResultResolver> resolver);
 

@@ -515,6 +515,9 @@ class MemoryChunk {
   InvalidatedSlots* AllocateInvalidatedSlots();
   void ReleaseInvalidatedSlots();
   void RegisterObjectWithInvalidatedSlots(HeapObject* object, int size);
+  // Updates invalidated_slots after array left-trimming.
+  void MoveObjectWithInvalidatedSlots(HeapObject* old_start,
+                                      HeapObject* new_start);
   InvalidatedSlots* invalidated_slots() { return invalidated_slots_; }
 
   void ReleaseLocalTracker();
@@ -563,36 +566,24 @@ class MemoryChunk {
     return this->address() + (index << kPointerSizeLog2);
   }
 
-  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
-  void SetFlag(Flag flag) {
-    if (access_mode == AccessMode::NON_ATOMIC) {
-      flags_ |= flag;
-    } else {
-      base::AsAtomicWord::SetBits<uintptr_t>(&flags_, flag, flag);
-    }
-  }
+  void SetFlag(Flag flag) { SetFlags(flag, flag); }
 
-  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
-  bool IsFlagSet(Flag flag) {
-    return (GetFlags<access_mode>() & flag) != 0;
-  }
+  bool IsFlagSet(Flag flag) { return (flags() & flag) != 0; }
 
   void ClearFlag(Flag flag) { flags_ &= ~flag; }
   // Set or clear multiple flags at a time. The flags in the mask are set to
   // the value in "flags", the rest retain the current value in |flags_|.
   void SetFlags(uintptr_t flags, uintptr_t mask) {
-    flags_ = (flags_ & ~mask) | (flags & mask);
+    uintptr_t old_flags;
+    uintptr_t new_flags;
+    do {
+      old_flags = flags_;
+      new_flags = (old_flags & ~mask) | (flags & mask);
+    } while (!flags_.compare_exchange_weak(old_flags, new_flags));
   }
 
   // Return all current flags.
-  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
-  uintptr_t GetFlags() {
-    if (access_mode == AccessMode::NON_ATOMIC) {
-      return flags_;
-    } else {
-      return base::AsAtomicWord::Relaxed_Load(&flags_);
-    }
-  }
+  uintptr_t flags() { return flags_; }
 
   bool NeverEvacuate() { return IsFlagSet(NEVER_EVACUATE); }
 
@@ -602,18 +593,15 @@ class MemoryChunk {
     return !IsEvacuationCandidate() && !IsFlagSet(NEVER_ALLOCATE_ON_PAGE);
   }
 
-  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
   bool IsEvacuationCandidate() {
-    DCHECK(!(IsFlagSet<access_mode>(NEVER_EVACUATE) &&
-             IsFlagSet<access_mode>(EVACUATION_CANDIDATE)));
-    return IsFlagSet<access_mode>(EVACUATION_CANDIDATE);
+    DCHECK(!(IsFlagSet(NEVER_EVACUATE) && IsFlagSet(EVACUATION_CANDIDATE)));
+    return IsFlagSet(EVACUATION_CANDIDATE);
   }
 
-  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
   bool ShouldSkipEvacuationSlotRecording() {
-    uintptr_t flags = GetFlags<access_mode>();
-    return ((flags & kSkipEvacuationSlotsRecordingMask) != 0) &&
-           ((flags & COMPACTION_WAS_ABORTED) == 0);
+    uintptr_t current_flags = flags();
+    return ((current_flags & kSkipEvacuationSlotsRecordingMask) != 0) &&
+           ((current_flags & COMPACTION_WAS_ABORTED) == 0);
   }
 
   Executability executable() {
@@ -625,6 +613,10 @@ class MemoryChunk {
   bool InToSpace() { return IsFlagSet(IN_TO_SPACE); }
 
   bool InFromSpace() { return IsFlagSet(IN_FROM_SPACE); }
+
+  bool InOldSpace() const;
+
+  bool InLargeObjectSpace() const;
 
   Space* owner() const { return owner_; }
 
@@ -653,7 +645,7 @@ class MemoryChunk {
   VirtualMemory* reserved_memory() { return &reservation_; }
 
   size_t size_;
-  uintptr_t flags_;
+  std::atomic<uintptr_t> flags_;
 
   // Start and end of allocatable memory on this chunk.
   Address area_start_;

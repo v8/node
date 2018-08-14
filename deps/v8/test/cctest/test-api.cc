@@ -21986,12 +21986,11 @@ THREADED_TEST(ReadOnlyIndexedProperties) {
 
 
 static int CountLiveMapsInMapCache(i::Context* context) {
-  i::FixedArray* map_cache = i::FixedArray::cast(context->map_cache());
+  i::WeakFixedArray* map_cache = i::WeakFixedArray::cast(context->map_cache());
   int length = map_cache->length();
   int count = 0;
   for (int i = 0; i < length; i++) {
-    i::Object* value = map_cache->get(i);
-    if (value->IsWeakCell() && !i::WeakCell::cast(value)->cleared()) count++;
+    if (map_cache->Get(i)->IsWeakHeapObject()) count++;
   }
   return count;
 }
@@ -28619,4 +28618,43 @@ TEST(BigIntAPI) {
     CHECK_EQ(real_sign_bit, sign_bit);
     CHECK_EQ(word_count, 2);
   }
+}
+
+namespace {
+
+bool wasm_threads_enabled_value = false;
+
+bool MockWasmThreadsEnabledCallback(Local<Context>) {
+  return wasm_threads_enabled_value;
+}
+
+}  // namespace
+
+TEST(TestSetWasmThreadsEnabledCallback) {
+  LocalContext env;
+  v8::Isolate* isolate = env->GetIsolate();
+  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
+  v8::HandleScope scope(isolate);
+  v8::Local<Context> context = Context::New(CcTest::isolate());
+  i::Handle<i::Context> i_context = v8::Utils::OpenHandle(*context);
+
+  // {Isolate::AreWasmThreadsEnabled} calls the callback set by the embedder if
+  // such a callback exists. Otherwise it returns
+  // {FLAG_experimental_wasm_threads}. First we test that the flag is returned
+  // correctly if no callback is set. Then we test that the flag is ignored if
+  // the callback is set.
+
+  i::FLAG_experimental_wasm_threads = false;
+  CHECK(!i_isolate->AreWasmThreadsEnabled(i_context));
+
+  i::FLAG_experimental_wasm_threads = true;
+  CHECK(i_isolate->AreWasmThreadsEnabled(i_context));
+
+  isolate->SetWasmThreadsEnabledCallback(MockWasmThreadsEnabledCallback);
+  wasm_threads_enabled_value = false;
+  CHECK(!i_isolate->AreWasmThreadsEnabled(i_context));
+
+  wasm_threads_enabled_value = true;
+  i::FLAG_experimental_wasm_threads = false;
+  CHECK(i_isolate->AreWasmThreadsEnabled(i_context));
 }

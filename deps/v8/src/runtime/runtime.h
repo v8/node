@@ -282,9 +282,10 @@ namespace internal {
   F(Typeof, 1, 1)                                                    \
   F(UnwindAndFindExceptionHandler, 0, 1)
 
-#define FOR_EACH_INTRINSIC_LITERALS(F) \
-  F(CreateArrayLiteral, 4, 1)          \
-  F(CreateObjectLiteral, 4, 1)         \
+#define FOR_EACH_INTRINSIC_LITERALS(F)              \
+  F(CreateArrayLiteral, 4, 1)                       \
+  F(CreateObjectLiteral, 4, 1)                      \
+  F(CreateObjectLiteralWithoutAllocationSite, 2, 1) \
   F(CreateRegExpLiteral, 4, 1)
 
 #define FOR_EACH_INTRINSIC_MATHS(F) F(GenerateRandomNumbers, 0, 1)
@@ -546,7 +547,8 @@ namespace internal {
   F(WasmGetNumberOfInstances, 1, 1)           \
   F(WasmNumInterpretedCalls, 1, 1)            \
   F(WasmTraceMemory, 1, 1)                    \
-  F(WasmMemoryHasFullGuardRegion, 1, 1)
+  F(WasmMemoryHasFullGuardRegion, 1, 1)       \
+  F(SetWasmThreadsEnabled, 1, 1)
 
 #define FOR_EACH_INTRINSIC_TYPEDARRAY(F) \
   F(ArrayBufferNeuter, 1, 1)             \

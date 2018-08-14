@@ -37,6 +37,12 @@ namespace wasm {
     if (FLAG_trace_wasm_interpreter) PrintF(__VA_ARGS__); \
   } while (false)
 
+#if V8_TARGET_BIG_ENDIAN
+#define LANE(i, type) ((sizeof(type.val) / sizeof(type.val[0])) - (i)-1)
+#else
+#define LANE(i, type) (i)
+#endif
+
 #define FOREACH_INTERNAL_OPCODE(V) V(Breakpoint, 0xFF)
 
 #define WASM_CTYPES(V) \
@@ -786,7 +792,8 @@ class SideTable : public ZoneObject {
         case kExprBlock:
         case kExprLoop: {
           bool is_loop = opcode == kExprLoop;
-          BlockTypeImmediate<Decoder::kNoValidate> imm(&i, i.pc());
+          BlockTypeImmediate<Decoder::kNoValidate> imm(kAllWasmFeatures, &i,
+                                                       i.pc());
           if (imm.type == kWasmVar) {
             imm.sig = module->signatures[imm.sig_index];
           }
@@ -801,7 +808,8 @@ class SideTable : public ZoneObject {
           break;
         }
         case kExprIf: {
-          BlockTypeImmediate<Decoder::kNoValidate> imm(&i, i.pc());
+          BlockTypeImmediate<Decoder::kNoValidate> imm(kAllWasmFeatures, &i,
+                                                       i.pc());
           if (imm.type == kWasmVar) {
             imm.sig = module->signatures[imm.sig_index];
           }
@@ -1664,7 +1672,6 @@ class ThreadImpl {
 
   byte* GetGlobalPtr(const WasmGlobal* global) {
     if (global->mutability && global->imported) {
-      DCHECK(FLAG_experimental_wasm_mut_global);
       return reinterpret_cast<byte*>(
           instance_object_->imported_mutable_globals()[global->index]);
     } else {
@@ -1695,7 +1702,8 @@ class ThreadImpl {
     ++len;                                                              \
     WasmValue val = Pop();                                              \
     Simd128 s = val.to_s128();                                          \
-    Push(WasmValue(s.to_##name().val[imm.lane]));                       \
+    auto ss = s.to_##name();                                            \
+    Push(WasmValue(ss.val[LANE(imm.lane, ss)]));                        \
     return true;                                                        \
   }
       EXTRACT_LANE_CASE(I32x4, i32x4)
@@ -1711,9 +1719,9 @@ class ThreadImpl {
     stype s2 = v2.to_s128().to_##name();         \
     stype res;                                   \
     for (size_t i = 0; i < count; ++i) {         \
-      auto a = s1.val[i];                        \
-      auto b = s2.val[i];                        \
-      res.val[i] = expr;                         \
+      auto a = s1.val[LANE(i, s1)];              \
+      auto b = s2.val[LANE(i, s1)];              \
+      res.val[LANE(i, s1)] = expr;               \
     }                                            \
     Push(WasmValue(Simd128(res)));               \
     return true;                                 \
@@ -1856,7 +1864,7 @@ class ThreadImpl {
     WasmValue new_val = Pop();                                          \
     WasmValue simd_val = Pop();                                         \
     stype s = simd_val.to_s128().to_##name();                           \
-    s.val[imm.lane] = new_val.to<ctype>();                              \
+    s.val[LANE(imm.lane, s)] = new_val.to<ctype>();                     \
     Push(WasmValue(Simd128(s)));                                        \
     return true;                                                        \
   }
@@ -1905,8 +1913,8 @@ class ThreadImpl {
     src_type s = v.to_s128().to_##name();                                     \
     dst_type res;                                                             \
     for (size_t i = 0; i < count; ++i) {                                      \
-      ctype a = s.val[start_index + i];                                       \
-      res.val[i] = expr;                                                      \
+      ctype a = s.val[LANE(start_index + i, s)];                              \
+      res.val[LANE(i, res)] = expr;                                           \
     }                                                                         \
     Push(WasmValue(Simd128(res)));                                            \
     return true;                                                              \
@@ -1940,23 +1948,25 @@ class ThreadImpl {
         CONVERT_CASE(I16x8UConvertI8x16Low, int16, i8x16, int8, 8, 0, uint8_t,
                      a)
 #undef CONVERT_CASE
-#define PACK_CASE(op, src_type, name, dst_type, count, ctype, dst_ctype,    \
-                  is_unsigned)                                              \
-  case kExpr##op: {                                                         \
-    WasmValue v2 = Pop();                                                   \
-    WasmValue v1 = Pop();                                                   \
-    src_type s1 = v1.to_s128().to_##name();                                 \
-    src_type s2 = v2.to_s128().to_##name();                                 \
-    dst_type res;                                                           \
-    int64_t min = std::numeric_limits<ctype>::min();                        \
-    int64_t max = std::numeric_limits<ctype>::max();                        \
-    for (size_t i = 0; i < count; ++i) {                                    \
-      int32_t v = i < count / 2 ? s1.val[i] : s2.val[i - count / 2];        \
-      int64_t a = is_unsigned ? static_cast<int64_t>(v & 0xFFFFFFFFu) : v;  \
-      res.val[i] = static_cast<dst_ctype>(std::max(min, std::min(max, a))); \
-    }                                                                       \
-    Push(WasmValue(Simd128(res)));                                          \
-    return true;                                                            \
+#define PACK_CASE(op, src_type, name, dst_type, count, ctype, dst_ctype,   \
+                  is_unsigned)                                             \
+  case kExpr##op: {                                                        \
+    WasmValue v2 = Pop();                                                  \
+    WasmValue v1 = Pop();                                                  \
+    src_type s1 = v1.to_s128().to_##name();                                \
+    src_type s2 = v2.to_s128().to_##name();                                \
+    dst_type res;                                                          \
+    int64_t min = std::numeric_limits<ctype>::min();                       \
+    int64_t max = std::numeric_limits<ctype>::max();                       \
+    for (size_t i = 0; i < count; ++i) {                                   \
+      int32_t v = i < count / 2 ? s1.val[LANE(i, s1)]                      \
+                                : s2.val[LANE(i - count / 2, s2)];         \
+      int64_t a = is_unsigned ? static_cast<int64_t>(v & 0xFFFFFFFFu) : v; \
+      res.val[LANE(i, res)] =                                              \
+          static_cast<dst_ctype>(std::max(min, std::min(max, a)));         \
+    }                                                                      \
+    Push(WasmValue(Simd128(res)));                                         \
+    return true;                                                           \
   }
         PACK_CASE(I16x8SConvertI32x4, int4, i32x4, int8, 8, int16_t, int16_t,
                   false)
@@ -1978,19 +1988,21 @@ class ThreadImpl {
         Push(WasmValue(Simd128(res)));
         return true;
       }
-#define ADD_HORIZ_CASE(op, name, stype, count)                    \
-  case kExpr##op: {                                               \
-    WasmValue v2 = Pop();                                         \
-    WasmValue v1 = Pop();                                         \
-    stype s1 = v1.to_s128().to_##name();                          \
-    stype s2 = v2.to_s128().to_##name();                          \
-    stype res;                                                    \
-    for (size_t i = 0; i < count / 2; ++i) {                      \
-      res.val[i] = s1.val[i * 2] + s1.val[i * 2 + 1];             \
-      res.val[i + count / 2] = s2.val[i * 2] + s2.val[i * 2 + 1]; \
-    }                                                             \
-    Push(WasmValue(Simd128(res)));                                \
-    return true;                                                  \
+#define ADD_HORIZ_CASE(op, name, stype, count)                   \
+  case kExpr##op: {                                              \
+    WasmValue v2 = Pop();                                        \
+    WasmValue v1 = Pop();                                        \
+    stype s1 = v1.to_s128().to_##name();                         \
+    stype s2 = v2.to_s128().to_##name();                         \
+    stype res;                                                   \
+    for (size_t i = 0; i < count / 2; ++i) {                     \
+      res.val[LANE(i, s1)] =                                     \
+          s1.val[LANE(i * 2, s1)] + s1.val[LANE(i * 2 + 1, s1)]; \
+      res.val[LANE(i + count / 2, s1)] =                         \
+          s2.val[LANE(i * 2, s1)] + s2.val[LANE(i * 2 + 1, s1)]; \
+    }                                                            \
+    Push(WasmValue(Simd128(res)));                               \
+    return true;                                                 \
   }
         ADD_HORIZ_CASE(I32x4AddHoriz, i32x4, int4, 4)
         ADD_HORIZ_CASE(F32x4AddHoriz, f32x4, float4, 4)
@@ -2005,8 +2017,9 @@ class ThreadImpl {
         int16 res;
         for (size_t i = 0; i < kSimd128Size; ++i) {
           int lane = imm.shuffle[i];
-          res.val[i] =
-              lane < kSimd128Size ? v1.val[lane] : v2.val[lane - kSimd128Size];
+          res.val[LANE(i, v1)] = lane < kSimd128Size
+                                     ? v1.val[LANE(lane, v1)]
+                                     : v2.val[LANE(lane - kSimd128Size, v1)];
         }
         Push(WasmValue(Simd128(res)));
         return true;
@@ -2133,17 +2146,20 @@ class ThreadImpl {
         case kExprNop:
           break;
         case kExprBlock: {
-          BlockTypeImmediate<Decoder::kNoValidate> imm(&decoder, code->at(pc));
+          BlockTypeImmediate<Decoder::kNoValidate> imm(kAllWasmFeatures,
+                                                       &decoder, code->at(pc));
           len = 1 + imm.length;
           break;
         }
         case kExprLoop: {
-          BlockTypeImmediate<Decoder::kNoValidate> imm(&decoder, code->at(pc));
+          BlockTypeImmediate<Decoder::kNoValidate> imm(kAllWasmFeatures,
+                                                       &decoder, code->at(pc));
           len = 1 + imm.length;
           break;
         }
         case kExprIf: {
-          BlockTypeImmediate<Decoder::kNoValidate> imm(&decoder, code->at(pc));
+          BlockTypeImmediate<Decoder::kNoValidate> imm(kAllWasmFeatures,
+                                                       &decoder, code->at(pc));
           WasmValue cond = Pop();
           bool is_true = cond.to<uint32_t>() != 0;
           if (is_true) {
@@ -2331,9 +2347,10 @@ class ThreadImpl {
           byte* ptr = GetGlobalPtr(global);
           WasmValue val;
           switch (global->type) {
-#define CASE_TYPE(wasm, ctype)                       \
-  case kWasm##wasm:                                  \
-    val = WasmValue(*reinterpret_cast<ctype*>(ptr)); \
+#define CASE_TYPE(wasm, ctype)                                         \
+  case kWasm##wasm:                                                    \
+    val = WasmValue(                                                   \
+        ReadLittleEndianValue<ctype>(reinterpret_cast<Address>(ptr))); \
     break;
             WASM_CTYPES(CASE_TYPE)
 #undef CASE_TYPE
@@ -2351,9 +2368,10 @@ class ThreadImpl {
           byte* ptr = GetGlobalPtr(global);
           WasmValue val = Pop();
           switch (global->type) {
-#define CASE_TYPE(wasm, ctype)                        \
-  case kWasm##wasm:                                   \
-    *reinterpret_cast<ctype*>(ptr) = val.to<ctype>(); \
+#define CASE_TYPE(wasm, ctype)                                    \
+  case kWasm##wasm:                                               \
+    WriteLittleEndianValue<ctype>(reinterpret_cast<Address>(ptr), \
+                                  val.to<ctype>());               \
     break;
             WASM_CTYPES(CASE_TYPE)
 #undef CASE_TYPE
@@ -3203,6 +3221,7 @@ void InterpretedFrameDeleter::operator()(InterpretedFrame* ptr) {
 }
 
 #undef TRACE
+#undef LANE
 #undef FOREACH_INTERNAL_OPCODE
 #undef WASM_CTYPES
 #undef FOREACH_SIMPLE_BINOP

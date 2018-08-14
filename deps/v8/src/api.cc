@@ -7738,9 +7738,11 @@ MaybeLocal<WasmCompiledModule> WasmCompiledModule::Compile(Isolate* isolate,
   if (!i::wasm::IsWasmCodegenAllowed(i_isolate, i_isolate->native_context())) {
     return MaybeLocal<WasmCompiledModule>();
   }
+  auto enabled_features = i::wasm::WasmFeaturesFromIsolate(i_isolate);
   i::MaybeHandle<i::JSObject> maybe_compiled =
       i_isolate->wasm_engine()->SyncCompile(
-          i_isolate, &thrower, i::wasm::ModuleWireBytes(start, start + length));
+          i_isolate, enabled_features, &thrower,
+          i::wasm::ModuleWireBytes(start, start + length));
   if (maybe_compiled.is_null()) return MaybeLocal<WasmCompiledModule>();
   return Local<WasmCompiledModule>::Cast(
       Utils::ToLocal(maybe_compiled.ToHandleChecked()));
@@ -7787,8 +7789,9 @@ WasmModuleObjectBuilderStreaming::WasmModuleObjectBuilderStreaming(
   promise_.Reset(isolate, resolver->GetPromise());
 
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
+  auto enabled_features = i::wasm::WasmFeaturesFromIsolate(i_isolate);
   streaming_decoder_ = i_isolate->wasm_engine()->StartStreamingCompilation(
-      i_isolate, handle(i_isolate->context(), i_isolate),
+      i_isolate, enabled_features, handle(i_isolate->context(), i_isolate),
       base::make_unique<AsyncCompilationResolver>(isolate, GetPromise()));
 }
 
@@ -9013,7 +9016,7 @@ int Isolate::ContextDisposedNotification(bool dependant_context) {
   if (!dependant_context) {
     // We left the current context, we can abort all WebAssembly compilations on
     // that isolate.
-    isolate->wasm_engine()->AbortCompileJobsOnIsolate(isolate);
+    isolate->wasm_engine()->DeleteCompileJobsOnIsolate(isolate);
   }
   // TODO(ahaas): move other non-heap activity out of the heap call.
   return isolate->heap()->NotifyContextDisposed(dependant_context);
@@ -9118,6 +9121,9 @@ CALLBACK_SETTER(WasmCompileStreamingCallback, ApiImplementationCallback,
 
 CALLBACK_SETTER(WasmStreamingCallback, WasmStreamingCallback,
                 wasm_streaming_callback)
+
+CALLBACK_SETTER(WasmThreadsEnabledCallback, WasmThreadsEnabledCallback,
+                wasm_threads_enabled_callback)
 
 void Isolate::AddNearHeapLimitCallback(v8::NearHeapLimitCallback callback,
                                        void* data) {
@@ -10044,7 +10050,6 @@ void debug::GlobalLexicalScopeNames(
 void debug::SetReturnValue(v8::Isolate* v8_isolate,
                            v8::Local<v8::Value> value) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
-  if (!isolate->debug()->break_id()) return;
   isolate->debug()->set_return_value(*Utils::OpenHandle(*value));
 }
 

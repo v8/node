@@ -43,6 +43,7 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kIA32Lzcnt:
     case kIA32Tzcnt:
     case kIA32Popcnt:
+    case kIA32Bswap:
     case kIA32Lea:
     case kSSEFloat32Cmp:
     case kSSEFloat32Add:
@@ -368,6 +369,10 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kLFence:
       return kHasSideEffect;
 
+    case kIA32Word32AtomicPairLoad:
+      return kIsLoadOperation;
+
+    case kIA32Word32AtomicPairStore:
     case kIA32Word32AtomicPairAdd:
     case kIA32Word32AtomicPairSub:
     case kIA32Word32AtomicPairAnd:

@@ -39,6 +39,7 @@ LoadRepresentation LoadRepresentationOf(Operator const* op) {
          IrOpcode::kProtectedLoad == op->opcode() ||
          IrOpcode::kWord32AtomicLoad == op->opcode() ||
          IrOpcode::kWord64AtomicLoad == op->opcode() ||
+         IrOpcode::kWord32AtomicPairLoad == op->opcode() ||
          IrOpcode::kPoisonedLoad == op->opcode() ||
          IrOpcode::kUnalignedLoad == op->opcode());
   return OpParameter<LoadRepresentation>(op);
@@ -80,7 +81,8 @@ StackSlotRepresentation const& StackSlotRepresentationOf(Operator const* op) {
 
 MachineRepresentation AtomicStoreRepresentationOf(Operator const* op) {
   DCHECK(IrOpcode::kWord32AtomicStore == op->opcode() ||
-         IrOpcode::kWord64AtomicStore == op->opcode());
+         IrOpcode::kWord64AtomicStore == op->opcode() ||
+         IrOpcode::kWord32AtomicPairStore == op->opcode());
   return OpParameter<MachineRepresentation>(op);
 }
 
@@ -137,6 +139,8 @@ MachineType AtomicOpType(Operator const* op) {
   PURE_BINARY_OP_LIST_64(V)                                               \
   V(Word32Clz, Operator::kNoProperties, 1, 0, 1)                          \
   V(Word64Clz, Operator::kNoProperties, 1, 0, 1)                          \
+  V(Word32ReverseBytes, Operator::kNoProperties, 1, 0, 1)                 \
+  V(Word64ReverseBytes, Operator::kNoProperties, 1, 0, 1)                 \
   V(BitcastWordToTaggedSigned, Operator::kNoProperties, 1, 0, 1)          \
   V(TruncateFloat64ToWord32, Operator::kNoProperties, 1, 0, 1)            \
   V(ChangeFloat32ToFloat64, Operator::kNoProperties, 1, 0, 1)             \
@@ -338,8 +342,6 @@ MachineType AtomicOpType(Operator const* op) {
   V(Word64Ctz, Operator::kNoProperties, 1, 0, 1)            \
   V(Word32ReverseBits, Operator::kNoProperties, 1, 0, 1)    \
   V(Word64ReverseBits, Operator::kNoProperties, 1, 0, 1)    \
-  V(Word32ReverseBytes, Operator::kNoProperties, 1, 0, 1)   \
-  V(Word64ReverseBytes, Operator::kNoProperties, 1, 0, 1)   \
   V(Int32AbsWithOverflow, Operator::kNoProperties, 1, 0, 1) \
   V(Int64AbsWithOverflow, Operator::kNoProperties, 1, 0, 1) \
   V(Word32Popcnt, Operator::kNoProperties, 1, 0, 1)         \
@@ -687,6 +689,22 @@ struct MachineOperatorGlobalCache {
       kWord64AtomicCompareExchange##Type;
   ATOMIC_U64_TYPE_LIST(ATOMIC_COMPARE_EXCHANGE)
 #undef ATOMIC_COMPARE_EXCHANGE
+
+  struct Word32AtomicPairLoadOperator : public Operator {
+    Word32AtomicPairLoadOperator()
+        : Operator(IrOpcode::kWord32AtomicPairLoad,
+                   Operator::kNoDeopt | Operator::kNoThrow,
+                   "Word32AtomicPairLoad", 2, 1, 1, 2, 1, 0) {}
+  };
+  Word32AtomicPairLoadOperator kWord32AtomicPairLoad;
+
+  struct Word32AtomicPairStoreOperator : public Operator {
+    Word32AtomicPairStoreOperator()
+        : Operator(IrOpcode::kWord32AtomicPairStore,
+                   Operator::kNoDeopt | Operator::kNoThrow,
+                   "Word32AtomicPairStore", 4, 1, 1, 0, 1, 0) {}
+  };
+  Word32AtomicPairStoreOperator kWord32AtomicPairStore;
 
 #define ATOMIC_PAIR_OP(op)                                      \
   struct Word32AtomicPair##op##Operator : public Operator {     \
@@ -1189,6 +1207,14 @@ const Operator* MachineOperatorBuilder::Word64AtomicCompareExchange(
   ATOMIC_U64_TYPE_LIST(COMPARE_EXCHANGE)
 #undef COMPARE_EXCHANGE
   UNREACHABLE();
+}
+
+const Operator* MachineOperatorBuilder::Word32AtomicPairLoad() {
+  return &cache_.kWord32AtomicPairLoad;
+}
+
+const Operator* MachineOperatorBuilder::Word32AtomicPairStore() {
+  return &cache_.kWord32AtomicPairStore;
 }
 
 const Operator* MachineOperatorBuilder::Word32AtomicPairAdd() {

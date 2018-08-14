@@ -18,6 +18,8 @@ namespace v8 {
 namespace internal {
 
 using Node = compiler::Node;
+template <class T>
+using TNode = compiler::TNode<T>;
 
 ArrayBuiltinsAssembler::ArrayBuiltinsAssembler(
     compiler::CodeAssemblerState* state)
@@ -416,7 +418,7 @@ Node* ArrayBuiltinsAssembler::FindProcessor(Node* k_value, Node* k) {
 
     // 1. Let O be ToObject(this value).
     // 2. ReturnIfAbrupt(O)
-    o_ = ToObject(context(), receiver());
+    o_ = ToObject_Inline(context(), receiver());
 
     // 3. Let len be ToLength(Get(O, "length")).
     // 4. ReturnIfAbrupt(len).
@@ -607,7 +609,7 @@ Node* ArrayBuiltinsAssembler::FindProcessor(Node* k_value, Node* k) {
         // b. Let kPresent be HasProperty(O, Pk).
         // c. ReturnIfAbrupt(kPresent).
         TNode<Oddball> k_present =
-            HasProperty(o(), k(), context(), kHasProperty);
+            HasProperty(context(), o(), k(), kHasProperty);
 
         // d. If kPresent is true, then
         GotoIf(IsFalse(k_present), &done_element);
@@ -1289,7 +1291,7 @@ class ArrayPrototypeSliceCodeStubAssembler : public CodeStubAssembler {
                       Variable& n) {
     // b. Let kPresent be HasProperty(O, Pk).
     // c. ReturnIfAbrupt(kPresent).
-    TNode<Oddball> k_present = HasProperty(o, p_k, context, kHasProperty);
+    TNode<Oddball> k_present = HasProperty(context, o, p_k, kHasProperty);
 
     // d. If kPresent is true, then
     Label done_element(this);
@@ -1371,7 +1373,7 @@ TF_BUILTIN(ArrayPrototypeSlice, ArrayPrototypeSliceCodeStubAssembler) {
   BIND(&generic_length);
   // 1. Let O be ToObject(this value).
   // 2. ReturnIfAbrupt(O).
-  o = ToObject(context, receiver);
+  o = ToObject_Inline(context, receiver);
 
   // 3. Let len be ToLength(Get(O, "length")).
   // 4. ReturnIfAbrupt(len).
@@ -1481,17 +1483,9 @@ TF_BUILTIN(ArrayPrototypeSlice, ArrayPrototypeSliceCodeStubAssembler) {
   args.PopAndReturn(a);
 }
 
-TF_BUILTIN(ArrayPrototypeShift, CodeStubAssembler) {
-  TNode<Int32T> argc =
-      UncheckedCast<Int32T>(Parameter(Descriptor::kJSActualArgumentsCount));
-  TNode<Context> context = CAST(Parameter(Descriptor::kContext));
-  CSA_ASSERT(this, IsUndefined(Parameter(Descriptor::kJSNewTarget)));
-
-  CodeStubArguments args(this, ChangeInt32ToIntPtr(argc));
-  TNode<Object> receiver = args.GetReceiver();
-
-  Label runtime(this, Label::kDeferred);
-  Label fast(this);
+TNode<Object> ArrayBuiltinsAssembler::GenerateFastArrayShift(
+    TNode<Context> context, TNode<Object> receiver, Label* slow) {
+  Label fast(this), done(this);
 
   // Only shift in this stub if
   // 1) the array has fast elements
@@ -1501,10 +1495,11 @@ TF_BUILTIN(ArrayPrototypeShift, CodeStubAssembler) {
   // 5) we aren't supposed to left-trim the backing store.
 
   // 1) Check that the array has fast elements.
-  BranchIfFastJSArray(receiver, context, &fast, &runtime);
+  BranchIfFastJSArray(receiver, context, &fast, slow);
 
   BIND(&fast);
   {
+    TVARIABLE(Object, result, UndefinedConstant());
     TNode<JSArray> array_receiver = CAST(receiver);
     CSA_ASSERT(this, TaggedIsPositiveSmi(LoadJSArrayLength(array_receiver)));
     Node* length =
@@ -1514,13 +1509,13 @@ TF_BUILTIN(ArrayPrototypeShift, CodeStubAssembler) {
     GotoIf(IntPtrEqual(length, IntPtrConstant(0)), &return_undefined);
 
     // 2) Ensure that the length is writable.
-    EnsureArrayLengthWritable(LoadMap(array_receiver), &runtime);
+    EnsureArrayLengthWritable(LoadMap(array_receiver), slow);
 
     // 3) Check that the elements backing store isn't copy-on-write.
     Node* elements = LoadElements(array_receiver);
     GotoIf(WordEqual(LoadMap(elements),
                      LoadRoot(Heap::kFixedCOWArrayMapRootIndex)),
-           &runtime);
+           slow);
 
     Node* new_length = IntPtrSub(length, IntPtrConstant(1));
 
@@ -1531,13 +1526,13 @@ TF_BUILTIN(ArrayPrototypeShift, CodeStubAssembler) {
                IntPtrAdd(IntPtrAdd(new_length, new_length),
                          IntPtrConstant(JSObject::kMinAddedElementsCapacity)),
                capacity),
-           &runtime);
+           slow);
 
     // 5) Check that we're not supposed to left-trim the backing store, as
     //    implemented in elements.cc:FastElementsAccessor::MoveElements.
     GotoIf(IntPtrGreaterThan(new_length,
                              IntPtrConstant(JSArray::kMaxCopyElements)),
-           &runtime);
+           slow);
 
     StoreObjectFieldNoWriteBarrier(array_receiver, JSArray::kLengthOffset,
                                    SmiTag(new_length));
@@ -1555,12 +1550,10 @@ TF_BUILTIN(ArrayPrototypeShift, CodeStubAssembler) {
                  Int32LessThanOrEqual(elements_kind,
                                       Int32Constant(HOLEY_DOUBLE_ELEMENTS)));
 
-      VARIABLE(result, MachineRepresentation::kTagged, UndefinedConstant());
-
       Label move_elements(this);
-      result.Bind(AllocateHeapNumberWithValue(LoadFixedDoubleArrayElement(
+      result = AllocateHeapNumberWithValue(LoadFixedDoubleArrayElement(
           elements, IntPtrConstant(0), MachineType::Float64(), 0,
-          INTPTR_PARAMETERS, &move_elements)));
+          INTPTR_PARAMETERS, &move_elements));
       Goto(&move_elements);
       BIND(&move_elements);
 
@@ -1590,13 +1583,14 @@ TF_BUILTIN(ArrayPrototypeShift, CodeStubAssembler) {
                             IntPtrAdd(offset, IntPtrConstant(kPointerSize)),
                             double_hole);
       }
-      args.PopAndReturn(result.value());
+
+      Goto(&done);
     }
 
     BIND(&fast_elements_tagged);
     {
       TNode<FixedArray> elements_fixed_array = CAST(elements);
-      Node* value = LoadFixedArrayElement(elements_fixed_array, 0);
+      TNode<Object> value = LoadFixedArrayElement(elements_fixed_array, 0);
       BuildFastLoop(
           IntPtrConstant(0), new_length,
           [&](Node* index) {
@@ -1609,13 +1603,15 @@ TF_BUILTIN(ArrayPrototypeShift, CodeStubAssembler) {
       StoreFixedArrayElement(elements_fixed_array, new_length,
                              TheHoleConstant());
       GotoIf(WordEqual(value, TheHoleConstant()), &return_undefined);
-      args.PopAndReturn(value);
+
+      result = value;
+      Goto(&done);
     }
 
     BIND(&fast_elements_smi);
     {
       TNode<FixedArray> elements_fixed_array = CAST(elements);
-      Node* value = LoadFixedArrayElement(elements_fixed_array, 0);
+      TNode<Object> value = LoadFixedArrayElement(elements_fixed_array, 0);
       BuildFastLoop(
           IntPtrConstant(0), new_length,
           [&](Node* index) {
@@ -1629,21 +1625,19 @@ TF_BUILTIN(ArrayPrototypeShift, CodeStubAssembler) {
       StoreFixedArrayElement(elements_fixed_array, new_length,
                              TheHoleConstant());
       GotoIf(WordEqual(value, TheHoleConstant()), &return_undefined);
-      args.PopAndReturn(value);
+
+      result = value;
+      Goto(&done);
     }
 
     BIND(&return_undefined);
-    { args.PopAndReturn(UndefinedConstant()); }
-  }
+    {
+      result = UndefinedConstant();
+      Goto(&done);
+    }
 
-  BIND(&runtime);
-  {
-    // We are not using Parameter(Descriptor::kJSTarget) and loading the value
-    // from the current frame here in order to reduce register pressure on the
-    // fast path.
-    TNode<JSFunction> target = LoadTargetFromFrame();
-    TailCallBuiltin(Builtins::kArrayShift, context, target, UndefinedConstant(),
-                    argc);
+    BIND(&done);
+    return result.value();
   }
 }
 
@@ -2031,7 +2025,7 @@ TF_BUILTIN(ArrayFrom, ArrayPopulatorAssembler) {
   TNode<Object> items = args.GetOptionalArgumentValue(0);
   // The spec doesn't require ToObject to be called directly on the iterable
   // branch, but it's part of GetMethod that is in the spec.
-  TNode<JSReceiver> array_like = ToObject(context, items);
+  TNode<JSReceiver> array_like = ToObject_Inline(context, items);
 
   TVARIABLE(Object, array);
   TVARIABLE(Number, length);
@@ -3474,7 +3468,7 @@ TF_BUILTIN(ArrayIndexOfHoleyDoubles, ArrayIncludesIndexofAssembler) {
 TF_BUILTIN(ArrayPrototypeValues, CodeStubAssembler) {
   TNode<Context> context = CAST(Parameter(Descriptor::kContext));
   TNode<Object> receiver = CAST(Parameter(Descriptor::kReceiver));
-  Return(CreateArrayIterator(context, ToObject(context, receiver),
+  Return(CreateArrayIterator(context, ToObject_Inline(context, receiver),
                              IterationKind::kValues));
 }
 
@@ -3482,7 +3476,7 @@ TF_BUILTIN(ArrayPrototypeValues, CodeStubAssembler) {
 TF_BUILTIN(ArrayPrototypeEntries, CodeStubAssembler) {
   TNode<Context> context = CAST(Parameter(Descriptor::kContext));
   TNode<Object> receiver = CAST(Parameter(Descriptor::kReceiver));
-  Return(CreateArrayIterator(context, ToObject(context, receiver),
+  Return(CreateArrayIterator(context, ToObject_Inline(context, receiver),
                              IterationKind::kEntries));
 }
 
@@ -3490,7 +3484,7 @@ TF_BUILTIN(ArrayPrototypeEntries, CodeStubAssembler) {
 TF_BUILTIN(ArrayPrototypeKeys, CodeStubAssembler) {
   TNode<Context> context = CAST(Parameter(Descriptor::kContext));
   TNode<Object> receiver = CAST(Parameter(Descriptor::kReceiver));
-  Return(CreateArrayIterator(context, ToObject(context, receiver),
+  Return(CreateArrayIterator(context, ToObject_Inline(context, receiver),
                              IterationKind::kKeys));
 }
 
@@ -3734,7 +3728,7 @@ TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
            &allocate_iterator_result);
 
     TNode<FixedArray> elements =
-        AllocateFixedArray(PACKED_ELEMENTS, IntPtrConstant(2));
+        CAST(AllocateFixedArray(PACKED_ELEMENTS, IntPtrConstant(2)));
     StoreFixedArrayElement(elements, 0, index, SKIP_WRITE_BARRIER);
     StoreFixedArrayElement(elements, 1, var_value.value(), SKIP_WRITE_BARRIER);
 
@@ -3818,7 +3812,7 @@ class ArrayFlattenAssembler : public CodeStubAssembler {
       CSA_ASSERT(this,
                  SmiGreaterThanOrEqual(CAST(source_index), SmiConstant(0)));
       Node* const exists =
-          HasProperty(source, source_index, context, kHasProperty);
+          HasProperty(context, source, source_index, kHasProperty);
 
       // c. If exists is true, then
       Label next(this);
@@ -3960,7 +3954,7 @@ TF_BUILTIN(ArrayPrototypeFlat, CodeStubAssembler) {
   Node* const depth = args.GetOptionalArgumentValue(0);
 
   // 1. Let O be ? ToObject(this value).
-  Node* const o = ToObject(context, receiver);
+  Node* const o = ToObject_Inline(CAST(context), CAST(receiver));
 
   // 2. Let sourceLen be ? ToLength(? Get(O, "length")).
   Node* const source_length =
@@ -4003,7 +3997,7 @@ TF_BUILTIN(ArrayPrototypeFlatMap, CodeStubAssembler) {
   Node* const mapper_function = args.GetOptionalArgumentValue(0);
 
   // 1. Let O be ? ToObject(this value).
-  Node* const o = ToObject(context, receiver);
+  Node* const o = ToObject_Inline(CAST(context), CAST(receiver));
 
   // 2. Let sourceLen be ? ToLength(? Get(O, "length")).
   Node* const source_length =

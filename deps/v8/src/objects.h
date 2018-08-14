@@ -838,6 +838,7 @@ class ZoneForwardList;
   V(JSProxy)                                   \
   V(JSReceiver)                                \
   V(JSRegExp)                                  \
+  V(JSRegExpResult)                            \
   V(JSRegExpStringIterator)                    \
   V(JSSet)                                     \
   V(JSSetIterator)                             \
@@ -987,6 +988,7 @@ class ZoneForwardList;
   V(JSModuleNamespace, JS_MODULE_NAMESPACE_TYPE)                       \
   V(JSPromise, JS_PROMISE_TYPE)                                        \
   V(JSRegExp, JS_REGEXP_TYPE)                                          \
+  V(JSRegExpResult, JS_ARRAY_TYPE)                                     \
   V(JSRegExpStringIterator, JS_REGEXP_STRING_ITERATOR_TYPE)            \
   V(JSSet, JS_SET_TYPE)                                                \
   V(JSStringIterator, JS_STRING_ITERATOR_TYPE)                         \
@@ -2520,7 +2522,12 @@ class JSObject: public JSReceiver {
   inline Object* GetEmbedderField(int index);
   inline void SetEmbedderField(int index, Object* value);
   inline void SetEmbedderField(int index, Smi* value);
-  bool WasConstructedFromApiFunction();
+
+  // Returns true when the object is potentially a wrapper that gets special
+  // garbage collection treatment.
+  // TODO(mlippautz): Make check exact and replace the pattern match in
+  // Heap::TracePossibleWrapper.
+  bool IsApiWrapper();
 
   // Returns a new map with all transitions dropped from the object's current
   // map and the ElementsKind set.
