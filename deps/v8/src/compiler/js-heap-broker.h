@@ -25,6 +25,7 @@ enum class OddballType : uint8_t {
   kOther  // Oddball, but none of the above.
 };
 
+// TODO(neis): Get rid of the HeapObjectType class.
 class HeapObjectType {
  public:
   enum Flag : uint8_t { kUndetectable = 1 << 0, kCallable = 1 << 1 };
@@ -291,7 +292,7 @@ class MapRef : public HeapObjectRef {
   ObjectRef constructor_or_backpointer() const;
   ElementsKind elements_kind() const;
 
-  MapRef AsElementsKind(ElementsKind kind) const;
+  base::Optional<MapRef> AsElementsKind(ElementsKind kind) const;
 
   bool is_stable() const;
   bool has_prototype_slot() const;
@@ -370,7 +371,7 @@ class StringRef : public NameRef {
 
   int length() const;
   uint16_t GetFirstChar();
-  double ToNumber();
+  base::Optional<double> ToNumber();
 };
 
 class ModuleRef : public HeapObjectRef {
@@ -427,6 +428,8 @@ class V8_EXPORT_PRIVATE JSHeapBroker : public NON_EXPORTED_BASE(ZoneObject) {
   ObjectData* GetOrCreateData(Handle<Object>);
   void AddData(Handle<Object> object, ObjectData* data);
 
+  void Trace(const char* format, ...) const;
+
  private:
   friend class HeapObjectRef;
   friend class ObjectRef;
@@ -439,6 +442,18 @@ class V8_EXPORT_PRIVATE JSHeapBroker : public NON_EXPORTED_BASE(ZoneObject) {
   ZoneUnorderedMap<Address, ObjectData*> refs_;
   BrokerMode mode_;
 };
+
+#define ASSIGN_RETURN_NO_CHANGE_IF_DATA_MISSING(something_var,          \
+                                                optionally_something)   \
+  auto optionally_something_ = optionally_something;                    \
+  if (!optionally_something_)                                           \
+    return NoChangeBecauseOfMissingData(js_heap_broker(), __FUNCTION__, \
+                                        __LINE__);                      \
+  something_var = *optionally_something_;
+
+class Reduction;
+Reduction NoChangeBecauseOfMissingData(JSHeapBroker* broker,
+                                       const char* function, int line);
 
 }  // namespace compiler
 }  // namespace internal

@@ -228,31 +228,16 @@ RUNTIME_FUNCTION(Runtime_CreateDateTimeFormat) {
   return *local_object;
 }
 
-RUNTIME_FUNCTION(Runtime_InternalDateFormat) {
+RUNTIME_FUNCTION(Runtime_FormatDate) {
   HandleScope scope(isolate);
 
   DCHECK_EQ(2, args.length());
 
   CONVERT_ARG_HANDLE_CHECKED(JSObject, date_format_holder, 0);
-  CONVERT_NUMBER_ARG_HANDLE_CHECKED(date, 1);
-
-  double date_value = DateCache::TimeClip(date->Number());
-  if (std::isnan(date_value)) {
-    THROW_NEW_ERROR_RETURN_FAILURE(
-        isolate, NewRangeError(MessageTemplate::kInvalidTimeValue));
-  }
-
-  icu::SimpleDateFormat* date_format =
-      DateFormat::UnpackDateFormat(date_format_holder);
-  CHECK_NOT_NULL(date_format);
-
-  icu::UnicodeString result;
-  date_format->format(date_value, result);
+  CONVERT_ARG_HANDLE_CHECKED(Object, date, 1);
 
   RETURN_RESULT_OR_FAILURE(
-      isolate, isolate->factory()->NewStringFromTwoByte(Vector<const uint16_t>(
-                   reinterpret_cast<const uint16_t*>(result.getBuffer()),
-                   result.length())));
+      isolate, DateFormat::DateTimeFormat(isolate, date_format_holder, date));
 }
 
 RUNTIME_FUNCTION(Runtime_CreateNumberFormat) {
@@ -272,18 +257,6 @@ RUNTIME_FUNCTION(Runtime_CurrencyDigits) {
   DCHECK_EQ(1, args.length());
   CONVERT_ARG_HANDLE_CHECKED(String, currency, 0);
   return *Intl::CurrencyDigits(isolate, currency);
-}
-
-RUNTIME_FUNCTION(Runtime_InternalCompare) {
-  HandleScope scope(isolate);
-
-  DCHECK_EQ(3, args.length());
-
-  CONVERT_ARG_HANDLE_CHECKED(JSCollator, collator, 0);
-  CONVERT_ARG_HANDLE_CHECKED(String, string1, 1);
-  CONVERT_ARG_HANDLE_CHECKED(String, string2, 2);
-
-  return *Intl::InternalCompare(isolate, collator, string1, string2);
 }
 
 RUNTIME_FUNCTION(Runtime_CollatorResolvedOptions) {
@@ -560,6 +533,19 @@ RUNTIME_FUNCTION(Runtime_IntlUnwrapReceiver) {
       isolate, Intl::UnwrapReceiver(isolate, receiver, constructor,
                                     Intl::TypeFromInt(type_int), method,
                                     check_legacy_constructor));
+}
+
+RUNTIME_FUNCTION(Runtime_SupportedLocalesOf) {
+  HandleScope scope(isolate);
+
+  DCHECK_EQ(args.length(), 3);
+
+  CONVERT_ARG_HANDLE_CHECKED(String, service, 0);
+  CONVERT_ARG_HANDLE_CHECKED(Object, locales, 1);
+  CONVERT_ARG_HANDLE_CHECKED(Object, options, 2);
+
+  RETURN_RESULT_OR_FAILURE(
+      isolate, Intl::SupportedLocalesOf(isolate, service, locales, options));
 }
 
 }  // namespace internal

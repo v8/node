@@ -49,6 +49,17 @@ class DateFormat {
   // holds the pointer gets garbage collected.
   static void DeleteDateFormat(const v8::WeakCallbackInfo<void>& data);
 
+  // ecma402/#sec-formatdatetime
+  // FormatDateTime( dateTimeFormat, x )
+  V8_WARN_UNUSED_RESULT static MaybeHandle<String> FormatDateTime(
+      Isolate* isolate, Handle<JSObject> date_time_format_holder, double x);
+
+  // ecma402/#sec-datetime-format-functions
+  // DateTime Format Functions
+  V8_WARN_UNUSED_RESULT static MaybeHandle<String> DateTimeFormat(
+      Isolate* isolate, Handle<JSObject> date_time_format_holder,
+      Handle<Object> date);
+
   // Layout description.
   static const int kSimpleDateFormat = JSObject::kHeaderSize;
   static const int kSize = kSimpleDateFormat + kPointerSize;
@@ -168,6 +179,8 @@ class Intl {
   static bool IsObjectOfType(Isolate* isolate, Handle<Object> object,
                              Intl::Type expected_type);
 
+  static IcuService StringToIcuService(Handle<String> service);
+
   // Gets the ICU locales for a given service. If there is a locale with a
   // script tag then the locales also include a locale without the script; eg,
   // pa_Guru_IN (language=Panjabi, script=Gurmukhi, country-India) would include
@@ -176,6 +189,11 @@ class Intl {
 
   static V8_WARN_UNUSED_RESULT MaybeHandle<JSObject> AvailableLocalesOf(
       Isolate* isolate, Handle<String> service);
+
+  static MaybeHandle<JSObject> SupportedLocalesOf(Isolate* isolate,
+                                                  Handle<String> service,
+                                                  Handle<Object> locales_in,
+                                                  Handle<Object> options_in);
 
   static std::string DefaultLocale(Isolate* isolate);
 
@@ -298,7 +316,7 @@ class Intl {
       Isolate* isolate, Handle<String> s1, Handle<String> s2,
       Handle<Object> locales, Handle<Object> options);
 
-  V8_WARN_UNUSED_RESULT static Handle<Object> InternalCompare(
+  V8_WARN_UNUSED_RESULT static Handle<Object> CompareStrings(
       Isolate* isolate, Handle<JSCollator> collator, Handle<String> s1,
       Handle<String> s2);
 

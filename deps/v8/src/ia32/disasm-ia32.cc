@@ -1751,6 +1751,7 @@ int DisassemblerIA32::InstructionDecode(v8::internal::Vector<char> out_buffer,
             data += 2;
           } else if (f0byte >= 0xC8 && f0byte <= 0xCF) {
             // bswap
+            data += 2;
             int reg = f0byte - 0xC8;
             AppendToBuffer("bswap %s", NameOfCPURegister(reg));
           } else if ((f0byte & 0xF0) == 0x80) {

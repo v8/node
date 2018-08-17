@@ -230,7 +230,8 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
   V(harmony_public_fields, "harmony public fields in class literals")      \
   V(harmony_private_fields, "harmony private fields in class literals")    \
   V(harmony_numeric_separator, "harmony numeric separator between digits") \
-  V(harmony_string_matchall, "harmony String.prototype.matchAll")
+  V(harmony_string_matchall, "harmony String.prototype.matchAll")          \
+  V(harmony_global, "harmony global")
 
 // Features that are shipping (turned on by default, but internal flag remains).
 #define HARMONY_SHIPPING(V)                                              \
@@ -622,6 +623,7 @@ DEFINE_BOOL(wasm_shared_engine, true,
 DEFINE_IMPLICATION(future, wasm_shared_engine)
 DEFINE_BOOL(wasm_shared_code, false,
             "shares code underlying a wasm module when it is transferred")
+DEFINE_IMPLICATION(future, wasm_shared_code)
 DEFINE_BOOL(wasm_trap_handler, true,
             "use signal handlers to catch out of bounds memory access in wasm"
             " (currently Linux x86_64 only)")
@@ -834,8 +836,6 @@ DEFINE_BOOL(enable_popcnt, true,
 DEFINE_STRING(arm_arch, ARM_ARCH_DEFAULT,
               "generate instructions for the selected ARM architecture if "
               "available: armv6, armv7, armv7+sudiv or armv8")
-DEFINE_BOOL(enable_vldr_imm, false,
-            "enable use of constant pools for double immediate (ARM only)")
 DEFINE_BOOL(force_long_branches, false,
             "force all emitted branches to be in long mode (MIPS/PPC only)")
 DEFINE_STRING(mcpu, "auto", "enable optimization for specific cpu")
@@ -1258,9 +1258,8 @@ DEFINE_BOOL(log_function_events, false,
 DEFINE_BOOL(prof, false,
             "Log statistical profiling information (implies --log-code).")
 
-DEFINE_BOOL(detailed_line_info, false,
+DEFINE_BOOL(detailed_line_info, true,
             "Always generate detailed line information for CPU profiling.")
-DEFINE_IMPLICATION(future, detailed_line_info)
 
 #if defined(ANDROID)
 // Phones and tablets have processors that are much slower than desktop

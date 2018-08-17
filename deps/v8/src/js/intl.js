@@ -227,89 +227,6 @@ function GetTimezoneNameLocationPartRE() {
 
 
 /**
- * Returns an intersection of locales and service supported locales.
- * Parameter locales is treated as a priority list.
- */
-function supportedLocalesOf(service, locales, options) {
-  if (IS_NULL(%regexp_internal_match(GetServiceRE(), service))) {
-    throw %make_error(kWrongServiceType, service);
-  }
-
-  // Provide defaults if matcher was not specified.
-  if (IS_UNDEFINED(options)) {
-    options = {__proto__: null};
-  } else {
-    options = TO_OBJECT(options);
-  }
-
-  var matcher = options.localeMatcher;
-  if (!IS_UNDEFINED(matcher)) {
-    matcher = TO_STRING(matcher);
-    if (matcher !== 'lookup' && matcher !== 'best fit') {
-      throw %make_range_error(kLocaleMatcher, matcher);
-    }
-  } else {
-    matcher = 'best fit';
-  }
-
-  var requestedLocales = initializeLocaleList(locales);
-
-  var availableLocales = getAvailableLocalesOf(service);
-
-  // Use either best fit or lookup algorithm to match locales.
-  if (matcher === 'best fit') {
-    return initializeLocaleList(bestFitSupportedLocalesOf(
-        requestedLocales, availableLocales));
-  }
-
-  return initializeLocaleList(lookupSupportedLocalesOf(
-      requestedLocales, availableLocales));
-}
-
-
-/**
- * Returns the subset of the provided BCP 47 language priority list for which
- * this service has a matching locale when using the BCP 47 Lookup algorithm.
- * Locales appear in the same order in the returned list as in the input list.
- */
-function lookupSupportedLocalesOf(requestedLocales, availableLocales) {
-  var matchedLocales = new InternalArray();
-  for (var i = 0; i < requestedLocales.length; ++i) {
-    // Remove -u- extension.
-    var locale = %RegExpInternalReplace(
-        GetUnicodeExtensionRE(), requestedLocales[i], '');
-    do {
-      if (!IS_UNDEFINED(availableLocales[locale])) {
-        // Push requested locale not the resolved one.
-        %_Call(ArrayPush, matchedLocales, requestedLocales[i]);
-        break;
-      }
-      // Truncate locale if possible, if not break.
-      var pos = %StringLastIndexOf(locale, '-');
-      if (pos === -1) {
-        break;
-      }
-      locale = %_Call(StringSubstring, locale, 0, pos);
-    } while (true);
-  }
-
-  return matchedLocales;
-}
-
-
-/**
- * Returns the subset of the provided BCP 47 language priority list for which
- * this service has a matching locale when using the implementation
- * dependent algorithm.
- * Locales appear in the same order in the returned list as in the input list.
- */
-function bestFitSupportedLocalesOf(requestedLocales, availableLocales) {
-  // TODO(cira): implement better best fit algorithm.
-  return lookupSupportedLocalesOf(requestedLocales, availableLocales);
-}
-
-
-/**
  * Returns a getOption function that extracts property value for given
  * options object. If property is missing it returns defaultValue. If value
  * is out of range for that property it throws RangeError.
@@ -751,27 +668,10 @@ DEFINE_METHOD(
 DEFINE_METHOD(
   GlobalIntlCollator,
   supportedLocalesOf(locales) {
-    return supportedLocalesOf('collator', locales, arguments[1]);
+    return %SupportedLocalesOf('collator', locales, arguments[1]);
   }
 );
 
-
-/**
- * When the compare method is called with two arguments x and y, it returns a
- * Number other than NaN that represents the result of a locale-sensitive
- * String comparison of x with y.
- * The result is intended to order String values in the sort order specified
- * by the effective locale and collation options computed during construction
- * of this Collator object, and will be negative, zero, or positive, depending
- * on whether x comes before y in the sort order, the Strings are equal under
- * the sort order, or x comes after y in the sort order, respectively.
- */
-function compare(collator, x, y) {
-  return %InternalCompare(collator, TO_STRING(x), TO_STRING(y));
-};
-
-
-AddBoundMethod(GlobalIntlCollator, 'compare', compare, 2, COLLATOR_TYPE, false);
 
 DEFINE_METHOD(
   GlobalIntlPluralRules.prototype,
@@ -783,7 +683,7 @@ DEFINE_METHOD(
 DEFINE_METHOD(
   GlobalIntlPluralRules,
   supportedLocalesOf(locales) {
-    return supportedLocalesOf('pluralrules', locales, arguments[1]);
+    return %SupportedLocalesOf('pluralrules', locales, arguments[1]);
   }
 );
 
@@ -987,7 +887,7 @@ DEFINE_METHOD(
 DEFINE_METHOD(
   GlobalIntlNumberFormat,
   supportedLocalesOf(locales) {
-    return supportedLocalesOf('numberformat', locales, arguments[1]);
+    return %SupportedLocalesOf('numberformat', locales, arguments[1]);
   }
 );
 
@@ -1351,7 +1251,7 @@ DEFINE_METHOD(
 DEFINE_METHOD(
   GlobalIntlDateTimeFormat,
   supportedLocalesOf(locales) {
-    return supportedLocalesOf('dateformat', locales, arguments[1]);
+    return %SupportedLocalesOf('dateformat', locales, arguments[1]);
   }
 );
 
@@ -1362,14 +1262,7 @@ DEFINE_METHOD(
  * DateTimeFormat.
  */
 function formatDate(formatter, dateValue) {
-  var dateMs;
-  if (IS_UNDEFINED(dateValue)) {
-    dateMs = %DateCurrentTime();
-  } else {
-    dateMs = TO_NUMBER(dateValue);
-  }
-
-  return %InternalDateFormat(formatter, dateMs);
+  return %FormatDate(formatter, dateValue);
 }
 
 // Length is 1 as specified in ECMA 402 v2+
@@ -1512,7 +1405,7 @@ DEFINE_METHOD(
       throw %make_type_error(kOrdinaryFunctionCalledAsConstructor);
     }
 
-    return supportedLocalesOf('breakiterator', locales, arguments[1]);
+    return %SupportedLocalesOf('breakiterator', locales, arguments[1]);
   }
 );
 
@@ -1647,7 +1540,7 @@ function toLocaleDateTime(date, locales, options, required, defaults, service) {
   var dateFormat =
       cachedOrNewService(service, locales, options, internalOptions);
 
-  return formatDate(dateFormat, date);
+  return %FormatDate(dateFormat, date);
 }
 
 

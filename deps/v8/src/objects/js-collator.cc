@@ -172,9 +172,9 @@ Handle<JSObject> JSCollator::ResolvedOptions(Isolate* isolate,
 
 namespace {
 
-std::map<const char*, const char*> LookupUnicodeExtensions(
-    icu::Locale& icu_locale, std::set<const char*>& relevant_keys) {
-  std::map<const char*, const char*> extensions;
+std::map<std::string, std::string> LookupUnicodeExtensions(
+    const icu::Locale& icu_locale, const std::set<std::string>& relevant_keys) {
+  std::map<std::string, std::string> extensions;
 
   UErrorCode status = U_ZERO_ERROR;
   std::unique_ptr<icu::StringEnumeration> keywords(
@@ -212,7 +212,7 @@ std::map<const char*, const char*> LookupUnicodeExtensions(
     if (bcp47_key && (relevant_keys.find(bcp47_key) != relevant_keys.end())) {
       const char* bcp47_value = uloc_toUnicodeLocaleType(bcp47_key, value);
       extensions.insert(
-          std::pair<const char*, const char*>(bcp47_key, bcp47_value));
+          std::pair<std::string, std::string>(bcp47_key, bcp47_value));
     }
   }
 
@@ -223,9 +223,9 @@ void SetCaseFirstOption(icu::Collator* icu_collator, const char* value) {
   CHECK_NOT_NULL(icu_collator);
   CHECK_NOT_NULL(value);
   UErrorCode status = U_ZERO_ERROR;
-  if (strncmp(value, "upper", 5) == 0) {
+  if (strcmp(value, "upper") == 0) {
     icu_collator->setAttribute(UCOL_CASE_FIRST, UCOL_UPPER_FIRST, status);
-  } else if (strncmp(value, "lower", 5) == 0) {
+  } else if (strcmp(value, "lower") == 0) {
     icu_collator->setAttribute(UCOL_CASE_FIRST, UCOL_LOWER_FIRST, status);
   } else {
     icu_collator->setAttribute(UCOL_CASE_FIRST, UCOL_OFF, status);
@@ -271,7 +271,7 @@ MaybeHandle<JSCollator> JSCollator::InitializeCollator(
 
   if (found_usage.FromJust()) {
     DCHECK_NOT_NULL(usage_str.get());
-    if (strncmp(usage_str.get(), "search", 6) == 0) {
+    if (strcmp(usage_str.get(), "search") == 0) {
       usage = JSCollator::Usage::SEARCH;
     }
   }
@@ -323,7 +323,7 @@ MaybeHandle<JSCollator> JSCollator::InitializeCollator(
   // https://tc39.github.io/ecma402/#sec-intl-collator-internal-slots
   //
   // 16. Let relevantExtensionKeys be %Collator%.[[RelevantExtensionKeys]].
-  std::set<const char*> relevant_extension_keys{"co", "kn", "kf"};
+  std::set<std::string> relevant_extension_keys{"co", "kn", "kf"};
 
   // We don't pass the relevant_extension_keys to ResolveLocale here
   // as per the spec.
@@ -367,7 +367,7 @@ MaybeHandle<JSCollator> JSCollator::InitializeCollator(
       Intl::CreateICULocale(isolate, locale_with_extension);
   DCHECK(!icu_locale.isBogus());
 
-  std::map<const char*, const char*> extensions =
+  std::map<std::string, std::string> extensions =
       LookupUnicodeExtensions(icu_locale, relevant_extension_keys);
 
   // 19. Let collation be r.[[co]].
@@ -381,10 +381,10 @@ MaybeHandle<JSCollator> JSCollator::InitializeCollator(
   // The values "standard" and "search" must not be used as elements
   // in any [[SortLocaleData]][locale].co and
   // [[SearchLocaleData]][locale].co list.
-  if (extensions.find("co") != extensions.end()) {
-    const char* value = extensions.at("co");
-    if (strncmp(value, "search", 6) == 0 ||
-        strncmp(value, "standard", 8) == 0) {
+  auto co_extension_it = extensions.find("co");
+  if (co_extension_it != extensions.end()) {
+    const std::string& value = co_extension_it->second;
+    if ((value == "search") || (value == "standard")) {
       UErrorCode status = U_ZERO_ERROR;
       icu_locale.setKeywordValue("co", NULL, status);
       CHECK(U_SUCCESS(status));
@@ -426,14 +426,17 @@ MaybeHandle<JSCollator> JSCollator::InitializeCollator(
     icu_collator->setAttribute(UCOL_NUMERIC_COLLATION,
                                numeric ? UCOL_ON : UCOL_OFF, status);
     CHECK(U_SUCCESS(status));
-  } else if (extensions.find("kn") != extensions.end()) {
-    const char* value = extensions.at("kn");
+  } else {
+    auto kn_extension_it = extensions.find("kn");
+    if (kn_extension_it != extensions.end()) {
+      const std::string& value = kn_extension_it->second;
 
-    numeric = (strncmp(value, "true", 4) == 0);
+      numeric = (value == "true");
 
-    icu_collator->setAttribute(UCOL_NUMERIC_COLLATION,
-                               numeric ? UCOL_ON : UCOL_OFF, status);
-    CHECK(U_SUCCESS(status));
+      icu_collator->setAttribute(UCOL_NUMERIC_COLLATION,
+                                 numeric ? UCOL_ON : UCOL_OFF, status);
+      CHECK(U_SUCCESS(status));
+    }
   }
 
   // 23. If relevantExtensionKeys contains "kf", then
@@ -445,9 +448,12 @@ MaybeHandle<JSCollator> JSCollator::InitializeCollator(
   if (found_case_first.FromJust()) {
     const char* case_first_cstr = case_first_str.get();
     SetCaseFirstOption(icu_collator.get(), case_first_cstr);
-  } else if (extensions.find("kf") != extensions.end()) {
-    const char* value = extensions.at("kf");
-    SetCaseFirstOption(icu_collator.get(), value);
+  } else {
+    auto kf_extension_it = extensions.find("kf");
+    if (kf_extension_it != extensions.end()) {
+      const std::string& value = kf_extension_it->second;
+      SetCaseFirstOption(icu_collator.get(), value.c_str());
+    }
   }
 
   // Normalization is always on, by the spec. We are free to optimize
@@ -480,17 +486,17 @@ MaybeHandle<JSCollator> JSCollator::InitializeCollator(
     DCHECK_NOT_NULL(sensitivity_cstr);
 
     // 26. Set collator.[[Sensitivity]] to sensitivity.
-    if (strncmp(sensitivity_cstr, "base", 4) == 0) {
+    if (strcmp(sensitivity_cstr, "base") == 0) {
       icu_collator->setStrength(icu::Collator::PRIMARY);
-    } else if (strncmp(sensitivity_cstr, "accent", 6) == 0) {
+    } else if (strcmp(sensitivity_cstr, "accent") == 0) {
       icu_collator->setStrength(icu::Collator::SECONDARY);
-    } else if (strncmp(sensitivity_cstr, "case", 4) == 0) {
+    } else if (strcmp(sensitivity_cstr, "case") == 0) {
       icu_collator->setStrength(icu::Collator::PRIMARY);
       status = U_ZERO_ERROR;
       icu_collator->setAttribute(UCOL_CASE_LEVEL, UCOL_ON, status);
       CHECK(U_SUCCESS(status));
     } else {
-      DCHECK_EQ(0, strncmp(sensitivity_cstr, "variant", 7));
+      DCHECK_EQ(0, strcmp(sensitivity_cstr, "variant"));
       icu_collator->setStrength(icu::Collator::TERTIARY);
     }
   }

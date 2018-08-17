@@ -2493,30 +2493,22 @@ void Object::ShortPrint(std::ostream& os) { os << Brief(this); }
 
 void MaybeObject::ShortPrint(FILE* out) {
   OFStream os(out);
-  os << MaybeObjectBrief(this);
+  os << Brief(this);
 }
 
 void MaybeObject::ShortPrint(StringStream* accumulator) {
   std::ostringstream os;
-  os << MaybeObjectBrief(this);
+  os << Brief(this);
   accumulator->Add(os.str().c_str());
 }
 
-void MaybeObject::ShortPrint(std::ostream& os) { os << MaybeObjectBrief(this); }
+void MaybeObject::ShortPrint(std::ostream& os) { os << Brief(this); }
+
+Brief::Brief(const Object* v)
+    : value(MaybeObject::FromObject(const_cast<Object*>(v))) {}
 
 std::ostream& operator<<(std::ostream& os, const Brief& v) {
-  if (v.value->IsSmi()) {
-    Smi::cast(v.value)->SmiPrint(os);
-  } else {
-    // TODO(svenpanne) Const-correct HeapObjectShortPrint!
-    HeapObject* obj = const_cast<HeapObject*>(HeapObject::cast(v.value));
-    obj->HeapObjectShortPrint(os);
-  }
-  return os;
-}
-
-std::ostream& operator<<(std::ostream& os, const MaybeObjectBrief& v) {
-  // TODO(marja): const-correct this the same way as the Object* version.
+  // TODO(marja): const-correct HeapObjectShortPrint.
   MaybeObject* maybe_object = const_cast<MaybeObject*>(v.value);
   Smi* smi;
   HeapObject* heap_object;
@@ -3101,9 +3093,6 @@ VisitorId Map::GetVisitorId(Map* map) {
     case PROPERTY_CELL_TYPE:
       return kVisitPropertyCell;
 
-    case WEAK_CELL_TYPE:
-      return kVisitWeakCell;
-
     case TRANSITION_ARRAY_TYPE:
       return kVisitTransitionArray;
 
@@ -3609,15 +3598,6 @@ void HeapObject::HeapObjectShortPrint(std::ostream& os) {  // NOLINT
       HeapStringAllocator allocator;
       StringStream accumulator(&allocator);
       cell->value()->ShortPrint(&accumulator);
-      os << accumulator.ToCString().get();
-      os << '>';
-      break;
-    }
-    case WEAK_CELL_TYPE: {
-      os << "<WeakCell value= ";
-      HeapStringAllocator allocator;
-      StringStream accumulator(&allocator);
-      WeakCell::cast(this)->value()->ShortPrint(&accumulator);
       os << accumulator.ToCString().get();
       os << '>';
       break;
@@ -7845,41 +7825,42 @@ Maybe<bool> GetPropertyDescriptorWithInterceptor(LookupIterator* it,
     }
   }
 
-  if (it->state() == LookupIterator::INTERCEPTOR) {
-    Isolate* isolate = it->isolate();
-    Handle<InterceptorInfo> interceptor = it->GetInterceptor();
-    if (!interceptor->descriptor()->IsUndefined(isolate)) {
-      Handle<Object> result;
-      Handle<JSObject> holder = it->GetHolder<JSObject>();
+  if (it->state() != LookupIterator::INTERCEPTOR) return Just(false);
 
-      Handle<Object> receiver = it->GetReceiver();
-      if (!receiver->IsJSReceiver()) {
-        ASSIGN_RETURN_ON_EXCEPTION_VALUE(
-            isolate, receiver, Object::ConvertReceiver(isolate, receiver),
-            Nothing<bool>());
-      }
+  Isolate* isolate = it->isolate();
+  Handle<InterceptorInfo> interceptor = it->GetInterceptor();
+  if (interceptor->descriptor()->IsUndefined(isolate)) return Just(false);
 
-      PropertyCallbackArguments args(isolate, interceptor->data(), *receiver,
-                                     *holder, kDontThrow);
-      if (it->IsElement()) {
-        result = args.CallIndexedDescriptor(interceptor, it->index());
-      } else {
-        result = args.CallNamedDescriptor(interceptor, it->name());
-      }
-      if (!result.is_null()) {
-        // Request successfully intercepted, try to set the property
-        // descriptor.
-        Utils::ApiCheck(
-            PropertyDescriptor::ToPropertyDescriptor(isolate, result, desc),
-            it->IsElement() ? "v8::IndexedPropertyDescriptorCallback"
-                            : "v8::NamedPropertyDescriptorCallback",
-            "Invalid property descriptor.");
+  Handle<Object> result;
+  Handle<JSObject> holder = it->GetHolder<JSObject>();
 
-        return Just(true);
-      }
-      it->Next();
-    }
+  Handle<Object> receiver = it->GetReceiver();
+  if (!receiver->IsJSReceiver()) {
+    ASSIGN_RETURN_ON_EXCEPTION_VALUE(isolate, receiver,
+                                     Object::ConvertReceiver(isolate, receiver),
+                                     Nothing<bool>());
   }
+
+  PropertyCallbackArguments args(isolate, interceptor->data(), *receiver,
+                                 *holder, kDontThrow);
+  if (it->IsElement()) {
+    result = args.CallIndexedDescriptor(interceptor, it->index());
+  } else {
+    result = args.CallNamedDescriptor(interceptor, it->name());
+  }
+  if (!result.is_null()) {
+    // Request successfully intercepted, try to set the property
+    // descriptor.
+    Utils::ApiCheck(
+        PropertyDescriptor::ToPropertyDescriptor(isolate, result, desc),
+        it->IsElement() ? "v8::IndexedPropertyDescriptorCallback"
+                        : "v8::NamedPropertyDescriptorCallback",
+        "Invalid property descriptor.");
+
+    return Just(true);
+  }
+
+  it->Next();
   return Just(false);
 }
 }  // namespace
@@ -13152,7 +13133,6 @@ bool CanSubclassHaveInobjectProperties(InstanceType instance_type) {
     case PROPERTY_CELL_TYPE:
     case SHARED_FUNCTION_INFO_TYPE:
     case SYMBOL_TYPE:
-    case WEAK_CELL_TYPE:
     case ALLOCATION_SITE_TYPE:
 
 #define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) \

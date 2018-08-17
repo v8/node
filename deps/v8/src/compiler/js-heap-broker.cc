@@ -4,6 +4,7 @@
 
 #include "src/compiler/js-heap-broker.h"
 
+#include "src/compiler/graph-reducer.h"
 #include "src/objects-inl.h"
 #include "src/objects/js-array-inl.h"
 #include "src/objects/js-regexp-inl.h"
@@ -73,17 +74,11 @@ class JSObjectData : public HeapObjectData {
 class JSFunctionData : public JSObjectData {
  public:
   ObjectData* const global_proxy;
-  ObjectData* const prototype_or_initial_map;
+  ObjectData* const initial_map;  // Can be nullptr.
   ObjectData* const shared;
 
   JSFunctionData(JSHeapBroker* broker_, Handle<JSFunction> object_,
-                 HeapObjectType type_)
-      : JSObjectData(broker_, object_, type_),
-        global_proxy(GET_OR_CREATE(global_proxy)),
-        prototype_or_initial_map(object_->map()->has_prototype_slot()
-                                     ? GET_OR_CREATE(prototype_or_initial_map)
-                                     : nullptr),
-        shared(GET_OR_CREATE(shared)) {}
+                 HeapObjectType type_);
 };
 
 class JSRegExpData : public JSObjectData {};
@@ -98,6 +93,7 @@ class ContextData : public HeapObjectData {
 };
 
 #define NATIVE_CONTEXT_DATA(V)  \
+  V(array_function)             \
   V(fast_aliased_arguments_map) \
   V(initial_array_iterator_map) \
   V(iterator_result_map)        \
@@ -142,13 +138,18 @@ class StringData : public NameData {
         length(object->length()),
         first_char(length > 0 ? object->Get(0) : 0) {
     int flags = ALLOW_HEX | ALLOW_OCTAL | ALLOW_BINARY;
-    to_number = StringToDouble(
-        broker->isolate(), broker->isolate()->unicode_cache(), object, flags);
+    if (length <= kMaxLengthForDoubleConversion) {
+      to_number = StringToDouble(
+          broker->isolate(), broker->isolate()->unicode_cache(), object, flags);
+    }
   }
 
-  int length;
-  uint16_t first_char;
-  double to_number;
+  int const length;
+  uint16_t const first_char;
+  base::Optional<double> to_number;
+
+ private:
+  static constexpr int kMaxLengthForDoubleConversion = 23;
 };
 
 class InternalizedStringData : public StringData {
@@ -159,7 +160,67 @@ class InternalizedStringData : public StringData {
 class ScriptContextTableData : public HeapObjectData {};
 class FeedbackVectorData : public HeapObjectData {};
 class AllocationSiteData : public HeapObjectData {};
-class MapData : public HeapObjectData {};
+
+class MapData : public HeapObjectData {
+ public:
+  InstanceType const instance_type;
+  int const instance_size;
+  byte const bit_field;
+  byte const bit_field2;
+  uint32_t const bit_field3;
+
+  MapData(JSHeapBroker* broker_, Handle<Map> object_, HeapObjectType type_);
+
+  // Extra information.
+  void SerializeElementsKindGeneralizations();
+  const ZoneVector<MapData*>& elements_kind_generalizations() {
+    return elements_kind_generalizations_;
+  }
+
+ private:
+  ZoneVector<MapData*> elements_kind_generalizations_;
+};
+
+MapData::MapData(JSHeapBroker* broker_, Handle<Map> object_,
+                 HeapObjectType type_)
+    : HeapObjectData(broker_, object_, type_),
+      instance_type(object_->instance_type()),
+      instance_size(object_->instance_size()),
+      bit_field(object_->bit_field()),
+      bit_field2(object_->bit_field2()),
+      bit_field3(object_->bit_field3()),
+      elements_kind_generalizations_(broker->zone()) {}
+
+JSFunctionData::JSFunctionData(JSHeapBroker* broker_,
+                               Handle<JSFunction> object_, HeapObjectType type_)
+    : JSObjectData(broker_, object_, type_),
+      global_proxy(GET_OR_CREATE(global_proxy)),
+      initial_map(object_->has_prototype_slot() && object_->has_initial_map()
+                      ? GET_OR_CREATE(initial_map)
+                      : nullptr),
+      shared(GET_OR_CREATE(shared)) {
+  if (initial_map != nullptr &&
+      initial_map->AsMap()->instance_type == JS_ARRAY_TYPE) {
+    initial_map->AsMap()->SerializeElementsKindGeneralizations();
+  }
+}
+
+void MapData::SerializeElementsKindGeneralizations() {
+  broker->Trace("Computing ElementsKind generalizations of %p.\n", *object);
+  DCHECK_EQ(instance_type, JS_ARRAY_TYPE);
+  MapRef self(this);
+  ElementsKind from_kind = self.elements_kind();
+  for (int i = FIRST_FAST_ELEMENTS_KIND; i <= LAST_FAST_ELEMENTS_KIND; i++) {
+    ElementsKind to_kind = static_cast<ElementsKind>(i);
+    if (IsMoreGeneralElementsKindTransition(from_kind, to_kind)) {
+      Handle<Map> target =
+          Map::AsElementsKind(broker->isolate(), self.object<Map>(), to_kind);
+      elements_kind_generalizations_.push_back(
+          broker->GetOrCreateData(target)->AsMap());
+    }
+  }
+}
+
 class FixedArrayBaseData : public HeapObjectData {};
 class FixedArrayData : public FixedArrayBaseData {};
 class FixedDoubleArrayData : public FixedArrayBaseData {};
@@ -204,12 +265,16 @@ HeapObjectData* HeapObjectData::Serialize(JSHeapBroker* broker,
   HeapObjectType type = broker->HeapObjectTypeFromMap(map);
 
   HeapObjectData* result;
+  // TODO(neis): Do a switch on instance type here.
   if (object->IsJSFunction()) {
     result = new (broker->zone())
         JSFunctionData(broker, Handle<JSFunction>::cast(object), type);
   } else if (object->IsNativeContext()) {
     result = new (broker->zone())
         NativeContextData(broker, Handle<Context>::cast(object), type);
+  } else if (object->IsMap()) {
+    result =
+        new (broker->zone()) MapData(broker, Handle<Map>::cast(object), type);
   } else if (object->IsInternalizedString()) {
     result = new (broker->zone())
         InternalizedStringData(broker, Handle<String>::cast(object), type);
@@ -258,8 +323,16 @@ JSHeapBroker::JSHeapBroker(Isolate* isolate, Zone* zone)
       zone_(zone),
       refs_(zone),
       mode_(FLAG_concurrent_compiler_frontend ? kSerializing : kDisabled) {
+  Trace("%s", "Constructing heap broker.\n");
+}
+
+void JSHeapBroker::Trace(const char* format, ...) const {
   if (FLAG_trace_heap_broker) {
-    PrintF("[%p] Constructing heap broker.\n", this);
+    PrintF("[%p] ", this);
+    va_list arguments;
+    va_start(arguments, format);
+    base::OS::VPrint(format, arguments);
+    va_end(arguments);
   }
 }
 
@@ -269,9 +342,7 @@ bool JSHeapBroker::SerializingAllowed() const {
 }
 
 void JSHeapBroker::SerializeStandardObjects() {
-  if (FLAG_trace_heap_broker) {
-    PrintF("[%p] Serializing standard objects.\n", this);
-  }
+  Trace("Serializing standard objects.\n");
 
   Builtins* const b = isolate()->builtins();
   Factory* const f = isolate()->factory();
@@ -322,6 +393,8 @@ void JSHeapBroker::SerializeStandardObjects() {
       GetOrCreateData(b->builtin_handle(id));
     }
   }
+
+  Trace("Finished serializing standard objects.\n");
 }
 
 HeapObjectType JSHeapBroker::HeapObjectTypeFromMap(Map* map) const {
@@ -373,9 +446,8 @@ ObjectData* JSHeapBroker::GetOrCreateData(Handle<Object> object) {
 }
 
 void JSHeapBroker::AddData(Handle<Object> object, ObjectData* data) {
+  Trace("Creating data %p for handle %" V8PRIuPTR " (", data, object.address());
   if (FLAG_trace_heap_broker) {
-    PrintF("[%p] Creating data %p for handle %" V8PRIuPTR " (", this, data,
-           object.address());
     object->ShortPrint();
     PrintF(")\n");
   }
@@ -431,13 +503,23 @@ void JSFunctionRef::EnsureHasInitialMap() const {
   JSFunction::EnsureHasInitialMap(object<JSFunction>());
 }
 
-// TODO(mslekova): Pre-compute these on the main thread.
-MapRef MapRef::AsElementsKind(ElementsKind kind) const {
-  AllowHandleAllocation handle_allocation;
-  AllowHeapAllocation heap_allocation;
-  AllowHandleDereference allow_handle_dereference;
-  return MapRef(broker(),
-                Map::AsElementsKind(broker()->isolate(), object<Map>(), kind));
+base::Optional<MapRef> MapRef::AsElementsKind(ElementsKind kind) const {
+  if (broker()->mode() == JSHeapBroker::kDisabled) {
+    AllowHandleAllocation handle_allocation;
+    AllowHeapAllocation heap_allocation;
+    AllowHandleDereference allow_handle_dereference;
+    return MapRef(broker(), Map::AsElementsKind(broker()->isolate(),
+                                                object<Map>(), kind));
+  } else {
+    if (kind == elements_kind()) return *this;
+    const ZoneVector<MapData*>& elements_kind_generalizations =
+        data()->AsMap()->elements_kind_generalizations();
+    for (auto data : elements_kind_generalizations) {
+      MapRef map(data);
+      if (map.elements_kind() == kind) return map;
+    }
+    return base::Optional<MapRef>();
+  }
 }
 
 int JSFunctionRef::InitialMapInstanceSizeWithMinSlack() const {
@@ -677,7 +759,7 @@ uint16_t StringRef::GetFirstChar() {
   }
 }
 
-double StringRef::ToNumber() {
+base::Optional<double> StringRef::ToNumber() {
   if (broker()->mode() == JSHeapBroker::kDisabled) {
     AllowHandleDereference allow_handle_dereference;
     AllowHandleAllocation allow_handle_allocation;
@@ -718,44 +800,65 @@ int SharedFunctionInfoRef::GetBytecodeArrayRegisterCount() const {
   return object<SharedFunctionInfo>()->GetBytecodeArray()->register_count();
 }
 
+#define IF_BROKER_DISABLED_ACCESS_HANDLE_C(holder, name) \
+  if (broker()->mode() == JSHeapBroker::kDisabled) {     \
+    AllowHandleAllocation handle_allocation;             \
+    AllowHandleDereference allow_handle_dereference;     \
+    return object<holder>()->name();                     \
+  }
+
 // Macros for definining a const getter that, depending on the broker mode,
 // either looks into the handle or into the serialized data. The first one is
 // used for the rare case of a XYZRef class that does not have a corresponding
 // XYZ class in objects.h. The second one is used otherwise.
-#define BIMODAL_ACCESSOR_(holder, v8class, result, method)                     \
-  result##Ref holder##Ref::method() const {                                    \
-    if (broker()->mode() == JSHeapBroker::kDisabled) {                         \
-      AllowHandleAllocation handle_allocation;                                 \
-      AllowHandleDereference allow_handle_dereference;                         \
-      return result##Ref(                                                      \
-          broker(), handle(object<v8class>()->method(), broker()->isolate())); \
-    } else {                                                                   \
-      return result##Ref(data()->As##holder()->method);                        \
-    }                                                                          \
+#define BIMODAL_ACCESSOR_(holder, v8class, result, name)                     \
+  result##Ref holder##Ref::name() const {                                    \
+    if (broker()->mode() == JSHeapBroker::kDisabled) {                       \
+      AllowHandleAllocation handle_allocation;                               \
+      AllowHandleDereference allow_handle_dereference;                       \
+      return result##Ref(                                                    \
+          broker(), handle(object<v8class>()->name(), broker()->isolate())); \
+    } else {                                                                 \
+      return result##Ref(data()->As##holder()->name);                        \
+    }                                                                        \
   }
-#define BIMODAL_ACCESSOR(holder, result, method) \
-  BIMODAL_ACCESSOR_(holder, holder, result, method)
+#define BIMODAL_ACCESSOR(holder, result, name) \
+  BIMODAL_ACCESSOR_(holder, holder, result, name)
+
+// Like HANDLE_ACCESSOR except that the result type is not an XYZRef.
+#define BIMODAL_ACCESSOR_C(holder, result, name)      \
+  result holder##Ref::name() const {                  \
+    IF_BROKER_DISABLED_ACCESS_HANDLE_C(holder, name); \
+    return data()->As##holder()->name;                \
+  }
+
+// Like HANDLE_ACCESSOR_C but for BitFields.
+#define BIMODAL_ACCESSOR_B(holder, field, name, BitField)  \
+  typename BitField::FieldType holder##Ref::name() const { \
+    IF_BROKER_DISABLED_ACCESS_HANDLE_C(holder, name);      \
+    return BitField::decode(data()->As##holder()->field);  \
+  }
 
 // Macros for definining a const getter that always looks into the handle.
 // (These will go away once we serialize everything.) The first one is used for
 // the rare case of a XYZRef class that does not have a corresponding XYZ class
 // in objects.h. The second one is used otherwise.
-#define HANDLE_ACCESSOR_(holder, v8class, result, method)                    \
-  result##Ref holder##Ref::method() const {                                  \
-    AllowHandleAllocation handle_allocation;                                 \
-    AllowHandleDereference allow_handle_dereference;                         \
-    return result##Ref(                                                      \
-        broker(), handle(object<v8class>()->method(), broker()->isolate())); \
+#define HANDLE_ACCESSOR_(holder, v8class, result, name)                    \
+  result##Ref holder##Ref::name() const {                                  \
+    AllowHandleAllocation handle_allocation;                               \
+    AllowHandleDereference allow_handle_dereference;                       \
+    return result##Ref(                                                    \
+        broker(), handle(object<v8class>()->name(), broker()->isolate())); \
   }
-#define HANDLE_ACCESSOR(holder, result, method) \
-  HANDLE_ACCESSOR_(holder, holder, result, method)
+#define HANDLE_ACCESSOR(holder, result, name) \
+  HANDLE_ACCESSOR_(holder, holder, result, name)
 
 // Like HANDLE_ACCESSOR except that the result type is not an XYZRef.
-#define HANDLE_ACCESSOR_C(holder, result, method)    \
-  result holder##Ref::method() const {               \
+#define HANDLE_ACCESSOR_C(holder, result, name)      \
+  result holder##Ref::name() const {                 \
     AllowHandleAllocation handle_allocation;         \
     AllowHandleDereference allow_handle_dereference; \
-    return object<holder>()->method();               \
+    return object<holder>()->name();                 \
   }
 
 HANDLE_ACCESSOR(AllocationSite, JSObject, boilerplate)
@@ -776,10 +879,9 @@ HANDLE_ACCESSOR_C(HeapNumber, double, value)
 HANDLE_ACCESSOR_C(JSArray, ElementsKind, GetElementsKind)
 HANDLE_ACCESSOR(JSArray, Object, length)
 
-HANDLE_ACCESSOR_C(JSFunction, bool, has_initial_map)
+BIMODAL_ACCESSOR(JSFunction, Map, initial_map)
 HANDLE_ACCESSOR_C(JSFunction, bool, IsConstructor)
 HANDLE_ACCESSOR(JSFunction, JSGlobalProxy, global_proxy)
-HANDLE_ACCESSOR(JSFunction, Map, initial_map)
 HANDLE_ACCESSOR(JSFunction, SharedFunctionInfo, shared)
 
 HANDLE_ACCESSOR_C(JSObject, ElementsKind, GetElementsKind)
@@ -791,19 +893,19 @@ HANDLE_ACCESSOR(JSRegExp, Object, last_index)
 HANDLE_ACCESSOR(JSRegExp, Object, raw_properties_or_hash)
 HANDLE_ACCESSOR(JSRegExp, Object, source)
 
+BIMODAL_ACCESSOR_B(Map, bit_field2, elements_kind, Map::ElementsKindBits)
+BIMODAL_ACCESSOR_B(Map, bit_field3, is_deprecated, Map::IsDeprecatedBit)
+BIMODAL_ACCESSOR_B(Map, bit_field3, is_dictionary_map, Map::IsDictionaryMapBit)
+BIMODAL_ACCESSOR_B(Map, bit_field, has_prototype_slot, Map::HasPrototypeSlotBit)
+BIMODAL_ACCESSOR_C(Map, int, instance_size)
 HANDLE_ACCESSOR_C(Map, bool, CanBeDeprecated)
 HANDLE_ACCESSOR_C(Map, bool, CanTransition)
-HANDLE_ACCESSOR_C(Map, bool, has_prototype_slot)
-HANDLE_ACCESSOR_C(Map, bool, is_deprecated)
-HANDLE_ACCESSOR_C(Map, bool, is_dictionary_map)
 HANDLE_ACCESSOR_C(Map, bool, IsInobjectSlackTrackingInProgress)
 HANDLE_ACCESSOR_C(Map, bool, IsJSArrayMap)
 HANDLE_ACCESSOR_C(Map, bool, is_stable)
-HANDLE_ACCESSOR_C(Map, ElementsKind, elements_kind)
 HANDLE_ACCESSOR_C(Map, InstanceType, instance_type)
 HANDLE_ACCESSOR_C(Map, int, GetInObjectProperties)
 HANDLE_ACCESSOR_C(Map, int, GetInObjectPropertiesStartInWords)
-HANDLE_ACCESSOR_C(Map, int, instance_size)
 HANDLE_ACCESSOR_C(Map, int, NumberOfOwnDescriptors)
 HANDLE_ACCESSOR(Map, Object, constructor_or_backpointer)
 
@@ -843,6 +945,11 @@ HANDLE_ACCESSOR_C(SharedFunctionInfo, int, internal_formal_parameter_count)
 HANDLE_ACCESSOR_C(SharedFunctionInfo, LanguageMode, language_mode)
 
 // TODO(neis): Provide StringShape() on StringRef.
+
+bool JSFunctionRef::has_initial_map() const {
+  IF_BROKER_DISABLED_ACCESS_HANDLE_C(JSFunction, has_initial_map);
+  return data()->AsJSFunction()->initial_map != nullptr;
+}
 
 bool JSFunctionRef::HasBuiltinFunctionId() const {
   AllowHandleDereference allow_handle_dereference;
@@ -949,12 +1056,24 @@ JSHeapBroker* ObjectRef::broker() const { return data_->broker; }
 
 ObjectData* ObjectRef::data() const { return data_; }
 
+Reduction NoChangeBecauseOfMissingData(JSHeapBroker* broker,
+                                       const char* function, int line) {
+  if (FLAG_trace_heap_broker) {
+    PrintF("[%p] Skipping optimization in %s at line %d due to missing data\n",
+           broker, function, line);
+  }
+  return AdvancedReducer::NoChange();
+}
+
 #undef BIMODAL_ACCESSOR
 #undef BIMODAL_ACCESSOR_
+#undef BIMODAL_ACCESSOR_B
+#undef BIMODAL_ACCESSOR_C
 #undef GET_OR_CREATE
 #undef HANDLE_ACCESSOR
 #undef HANDLE_ACCESSOR_
 #undef HANDLE_ACCESSOR_C
+#undef IF_BROKER_DISABLED_ACCESS_HANDLE_C
 #undef NATIVE_CONTEXT_DATA
 
 }  // namespace compiler

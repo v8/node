@@ -1740,8 +1740,6 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                           1, false);
     SimpleInstallFunction(isolate_, proto, "slice",
                           Builtins::kArrayPrototypeSlice, 2, false);
-    SimpleInstallFunction(isolate_, proto, "sort",
-                          Builtins::kArrayPrototypeSort, 1, false);
     if (FLAG_enable_experimental_builtins) {
       SimpleInstallFunction(isolate_, proto, "splice",
                             Builtins::kArraySpliceTorque, 2, false);
@@ -2954,6 +2952,17 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
           isolate_, prototype, factory->to_string_tag_symbol(),
           factory->Object_string(),
           static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+
+      SimpleInstallGetter(isolate_, prototype,
+                          factory->InternalizeUtf8String("compare"),
+                          Builtins::kCollatorPrototypeCompare, false);
+
+      {
+        Handle<SharedFunctionInfo> info = SimpleCreateBuiltinSharedFunctionInfo(
+            isolate_, Builtins::kCollatorInternalCompare,
+            factory->empty_string(), 2);
+        native_context()->set_collator_internal_compare_shared_fun(*info);
+      }
     }
 
     {
@@ -4234,6 +4243,17 @@ EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_import_meta)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_numeric_separator)
 
 #undef EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE
+
+void Genesis::InitializeGlobal_harmony_global() {
+  if (!FLAG_harmony_global) return;
+
+  Factory* factory = isolate()->factory();
+  Handle<JSGlobalObject> global(native_context()->global_object(), isolate());
+  Handle<JSGlobalProxy> global_proxy(native_context()->global_proxy(),
+                                     isolate());
+  JSObject::AddProperty(isolate_, global, factory->globalThis_string(),
+                        global_proxy, DONT_ENUM);
+}
 
 void Genesis::InitializeGlobal_harmony_sharedarraybuffer() {
   if (!FLAG_harmony_sharedarraybuffer) return;
