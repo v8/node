@@ -23,6 +23,7 @@
 #include "src/ic/call-optimization.h"
 #include "src/objects-inl.h"
 #include "src/objects/arguments-inl.h"
+#include "src/objects/js-array-buffer-inl.h"
 #include "src/objects/js-array-inl.h"
 #include "src/vector-slot-pair.h"
 
@@ -977,7 +978,6 @@ bool CanInlineArrayIteratingBuiltin(Isolate* isolate,
                                      isolate);
   return receiver_map->instance_type() == JS_ARRAY_TYPE &&
          IsFastElementsKind(receiver_map->elements_kind()) &&
-         (!receiver_map->is_prototype_map() || receiver_map->is_stable()) &&
          isolate->IsNoElementsProtectorIntact() &&
          isolate->IsAnyInitialArrayPrototype(receiver_prototype);
 }
@@ -1992,11 +1992,6 @@ Reduction JSCallReducer::ReduceArrayFind(Node* node, ArrayFindVariant variant,
 
   const ElementsKind kind = receiver_maps[0]->elements_kind();
 
-  // TODO(pwong): Handle holey double elements kinds.
-  if (IsDoubleElementsKind(kind) && IsHoleyElementsKind(kind)) {
-    return NoChange();
-  }
-
   for (Handle<Map> receiver_map : receiver_maps) {
     if (!CanInlineArrayIteratingBuiltin(isolate(), receiver_map))
       return NoChange();
@@ -2082,12 +2077,15 @@ Reduction JSCallReducer::ReduceArrayFind(Node* node, ArrayFindVariant variant,
       graph()->NewNode(simplified()->NumberAdd(), k, jsgraph()->OneConstant());
 
   // Replace holes with undefined.
-  if (IsHoleyElementsKind(kind)) {
-    element = graph()->NewNode(
-        common()->Select(MachineRepresentation::kTagged, BranchHint::kFalse),
-        graph()->NewNode(simplified()->ReferenceEqual(), element,
-                         jsgraph()->TheHoleConstant()),
-        jsgraph()->UndefinedConstant(), element);
+  if (kind == HOLEY_DOUBLE_ELEMENTS) {
+    // TODO(7409): avoid deopt if not all uses of value are truncated.
+    CheckFloat64HoleMode mode = CheckFloat64HoleMode::kAllowReturnHole;
+    element = effect =
+        graph()->NewNode(simplified()->CheckFloat64Hole(mode, p.feedback()),
+                         element, effect, control);
+  } else if (IsHoleyElementsKind(kind)) {
+    element =
+        graph()->NewNode(simplified()->ConvertTaggedHoleToUndefined(), element);
   }
 
   Node* if_found_return_value =
@@ -4319,7 +4317,7 @@ Reduction JSCallReducer::ReduceSoftDeoptimize(Node* node,
 
 namespace {
 
-// TODO(turbofan): This was copied from Crankshaft, might be too restrictive.
+// TODO(turbofan): This was copied from old compiler, might be too restrictive.
 bool IsReadOnlyLengthDescriptor(Isolate* isolate, Handle<Map> jsarray_map) {
   DCHECK(!jsarray_map->is_dictionary_map());
   Handle<Name> length_string = isolate->factory()->length_string();
@@ -4329,7 +4327,7 @@ bool IsReadOnlyLengthDescriptor(Isolate* isolate, Handle<Map> jsarray_map) {
   return descriptors->GetDetails(number).IsReadOnly();
 }
 
-// TODO(turbofan): This was copied from Crankshaft, might be too restrictive.
+// TODO(turbofan): This was copied from old compiler, might be too restrictive.
 bool CanInlineArrayResizeOperation(Isolate* isolate, Handle<Map> receiver_map) {
   if (!receiver_map->prototype()->IsJSArray()) return false;
   Handle<JSArray> receiver_prototype(JSArray::cast(receiver_map->prototype()),
@@ -4975,17 +4973,13 @@ Reduction JSCallReducer::ReduceArrayIteratorPrototypeNext(Node* node) {
         PropertyCellRef(js_heap_broker(), factory()->no_elements_protector()));
   }
 
-  // Load the (current) {iterated_object} from the {iterator}; this might be
-  // either undefined or the JSReceiver that was passed to the JSArrayIterator
-  // creation.
+  // Load the (current) {iterated_object} from the {iterator}.
   Node* iterated_object = effect =
       graph()->NewNode(simplified()->LoadField(
                            AccessBuilder::ForJSArrayIteratorIteratedObject()),
                        iterator, effect, control);
 
-  // Ensure that the {iterated_object} map didn't change. This also rules
-  // out the undefined that we put as a termination marker into the
-  // iterator.[[IteratedObject]] field once we reach the end.
+  // Ensure that the {iterated_object} map didn't change.
   effect = graph()->NewNode(
       simplified()->CheckMaps(CheckMapsFlag::kNone, iterated_object_maps,
                               p.feedback()),
@@ -5030,6 +5024,16 @@ Reduction JSCallReducer::ReduceArrayIteratorPrototypeNext(Node* node) {
   Node* index = effect = graph()->NewNode(simplified()->LoadField(index_access),
                                           iterator, effect, control);
 
+  // Load the elements of the {iterated_object}. While it feels
+  // counter-intuitive to place the elements pointer load before
+  // the condition below, as it might not be needed (if the {index}
+  // is out of bounds for the {iterated_object}), it's better this
+  // way as it allows the LoadElimination to eliminate redundant
+  // reloads of the elements pointer.
+  Node* elements = effect = graph()->NewNode(
+      simplified()->LoadField(AccessBuilder::ForJSObjectElements()),
+      iterated_object, effect, control);
+
   // Load the length of the {iterated_object}. Due to the map checks we
   // already know something about the length here, which we can leverage
   // to generate Word32 operations below without additional checking.
@@ -5063,10 +5067,6 @@ Reduction JSCallReducer::ReduceArrayIteratorPrototypeNext(Node* node) {
     } else {
       DCHECK(iteration_kind == IterationKind::kEntries ||
              iteration_kind == IterationKind::kValues);
-
-      Node* elements = etrue = graph()->NewNode(
-          simplified()->LoadField(AccessBuilder::ForJSObjectElements()),
-          iterated_object, etrue, if_true);
 
       if (IsFixedTypedArrayElementsKind(elements_kind)) {
         Node* base_ptr = etrue = graph()->NewNode(
@@ -5113,7 +5113,8 @@ Reduction JSCallReducer::ReduceArrayIteratorPrototypeNext(Node* node) {
           // TODO(6587): avoid deopt if not all uses of value are truncated.
           CheckFloat64HoleMode mode = CheckFloat64HoleMode::kAllowReturnHole;
           value_true = etrue = graph()->NewNode(
-              simplified()->CheckFloat64Hole(mode), value_true, etrue, if_true);
+              simplified()->CheckFloat64Hole(mode, p.feedback()), value_true,
+              etrue, if_true);
         }
       }
 
@@ -5143,10 +5144,22 @@ Reduction JSCallReducer::ReduceArrayIteratorPrototypeNext(Node* node) {
     // iterator.[[NextIndex]] >= array.length, stop iterating.
     done_false = jsgraph()->TrueConstant();
     value_false = jsgraph()->UndefinedConstant();
-    efalse =
-        graph()->NewNode(simplified()->StoreField(
-                             AccessBuilder::ForJSArrayIteratorIteratedObject()),
-                         iterator, value_false, efalse, if_false);
+
+    if (!IsFixedTypedArrayElementsKind(elements_kind)) {
+      // Mark the {iterator} as exhausted by setting the [[NextIndex]] to a
+      // value that will never pass the length check again (aka the maximum
+      // value possible for the specific iterated object). Note that this is
+      // different from what the specification says, which is changing the
+      // [[IteratedObject]] field to undefined, but that makes it difficult
+      // to eliminate the map checks and "length" accesses in for..of loops.
+      //
+      // This is not necessary for JSTypedArray's, since the length of those
+      // cannot change later and so if we were ever out of bounds for them
+      // we will stay out-of-bounds forever.
+      Node* end_index = jsgraph()->Constant(index_access.type.Max());
+      efalse = graph()->NewNode(simplified()->StoreField(index_access),
+                                iterator, end_index, efalse, if_false);
+    }
   }
 
   control = graph()->NewNode(common()->Merge(2), if_true, if_false);
@@ -5441,7 +5454,6 @@ Reduction JSCallReducer::ReduceStringPrototypeConcat(
   }
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
-  Node* context = NodeProperties::GetContextInput(node);
   Node* receiver = effect =
       graph()->NewNode(simplified()->CheckString(p.feedback()),
                        NodeProperties::GetValueInput(node, 1), effect, control);
@@ -5450,26 +5462,17 @@ Reduction JSCallReducer::ReduceStringPrototypeConcat(
     ReplaceWithValue(node, receiver, effect, control);
     return Replace(receiver);
   }
+
+  if (!isolate()->IsStringLengthOverflowIntact()) {
+    return NoChange();
+  }
+
   Node* argument = effect =
       graph()->NewNode(simplified()->CheckString(p.feedback()),
                        NodeProperties::GetValueInput(node, 2), effect, control);
 
-  Callable const callable =
-      CodeFactory::StringAdd(isolate(), STRING_ADD_CHECK_NONE, NOT_TENURED);
-  auto call_descriptor =
-      Linkage::GetStubCallDescriptor(graph()->zone(), callable.descriptor(), 0,
-                                     CallDescriptor::kNeedsFrameState,
-                                     Operator::kNoDeopt | Operator::kNoWrite);
-
-  // TODO(turbofan): Massage the FrameState of the {node} here once we
-  // have an artificial builtin frame type, so that it looks like the
-  // exception from StringAdd overflow came from String.prototype.concat
-  // builtin instead of the calling function.
-  Node* outer_frame_state = NodeProperties::GetFrameStateInput(node);
-
-  Node* value = effect = control = graph()->NewNode(
-      common()->Call(call_descriptor), jsgraph()->HeapConstant(callable.code()),
-      receiver, argument, context, outer_frame_state, effect, control);
+  Node* value = effect = graph()->NewNode(simplified()->CheckStringAdd(),
+                                          receiver, argument, effect, control);
 
   ReplaceWithValue(node, value, effect, control);
   return Replace(value);
@@ -6756,11 +6759,11 @@ uint32_t ExternalArrayElementSize(const ExternalArrayType element_type) {
 
 Reduction JSCallReducer::ReduceDataViewPrototypeGet(
     Node* node, ExternalArrayType element_type) {
+  uint32_t const element_size = ExternalArrayElementSize(element_type);
+  CallParameters const& p = CallParametersOf(node->op());
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
   Node* receiver = NodeProperties::GetValueInput(node, 1);
-
-  CallParameters const& p = CallParametersOf(node->op());
 
   if (p.speculation_mode() == SpeculationMode::kDisallowSpeculation) {
     return NoChange();
@@ -6777,20 +6780,68 @@ Reduction JSCallReducer::ReduceDataViewPrototypeGet(
   // Only do stuff if the {receiver} is really a DataView.
   if (NodeProperties::HasInstanceTypeWitness(isolate(), receiver, effect,
                                              JS_DATA_VIEW_TYPE)) {
-    // Check that the {offset} is a positive Smi.
-    offset = effect = graph()->NewNode(simplified()->CheckSmi(p.feedback()),
-                                       offset, effect, control);
+    // Check that the {offset} is within range for the {receiver}.
+    HeapObjectMatcher m(receiver);
+    if (m.HasValue()) {
+      // We only deal with DataViews here whose [[ByteLength]] is at least
+      // {element_size} and less than 2^31-{element_size}.
+      Handle<JSDataView> dataview = Handle<JSDataView>::cast(m.Value());
+      if (dataview->byte_length()->Number() < element_size ||
+          dataview->byte_length()->Number() - element_size > kMaxInt) {
+        return NoChange();
+      }
 
-    Node* is_positive = graph()->NewNode(simplified()->NumberLessThanOrEqual(),
-                                         jsgraph()->ZeroConstant(), offset);
+      // The {receiver}s [[ByteOffset]] must be within Unsigned31 range.
+      if (dataview->byte_offset()->Number() > kMaxInt) {
+        return NoChange();
+      }
 
-    effect = graph()->NewNode(
-        simplified()->CheckIf(DeoptimizeReason::kOutOfBounds, p.feedback()),
-        is_positive, effect, control);
+      // Check that the {offset} is within range of the {byte_length}.
+      Node* byte_length = jsgraph()->Constant(
+          dataview->byte_length()->Number() - (element_size - 1));
+      offset = effect =
+          graph()->NewNode(simplified()->CheckBounds(p.feedback()), offset,
+                           byte_length, effect, control);
 
-    // Tell the typer that we're a positive Smi, so we'll fit in Int32 math.
-    offset = effect = graph()->NewNode(
-        common()->TypeGuard(Type::UnsignedSmall()), offset, effect, control);
+      // Add the [[ByteOffset]] to compute the effective offset.
+      Node* byte_offset =
+          jsgraph()->Constant(dataview->byte_offset()->Number());
+      offset = graph()->NewNode(simplified()->NumberAdd(), offset, byte_offset);
+    } else {
+      // We only deal with DataViews here that have Smi [[ByteLength]]s.
+      Node* byte_length = effect =
+          graph()->NewNode(simplified()->LoadField(
+                               AccessBuilder::ForJSArrayBufferViewByteLength()),
+                           receiver, effect, control);
+      byte_length = effect = graph()->NewNode(
+          simplified()->CheckSmi(p.feedback()), byte_length, effect, control);
+
+      // Check that the {offset} is within range of the {byte_length}.
+      offset = effect =
+          graph()->NewNode(simplified()->CheckBounds(p.feedback()), offset,
+                           byte_length, effect, control);
+
+      if (element_size > 0) {
+        // For non-byte accesses we also need to check that the {offset}
+        // plus the {element_size}-1 fits within the given {byte_length}.
+        Node* end_offset =
+            graph()->NewNode(simplified()->NumberAdd(), offset,
+                             jsgraph()->Constant(element_size - 1));
+        effect = graph()->NewNode(simplified()->CheckBounds(p.feedback()),
+                                  end_offset, byte_length, effect, control);
+      }
+
+      // The {receiver}s [[ByteOffset]] also needs to be a (positive) Smi.
+      Node* byte_offset = effect =
+          graph()->NewNode(simplified()->LoadField(
+                               AccessBuilder::ForJSArrayBufferViewByteOffset()),
+                           receiver, effect, control);
+      byte_offset = effect = graph()->NewNode(
+          simplified()->CheckSmi(p.feedback()), byte_offset, effect, control);
+
+      // Compute the buffer index at which we'll read.
+      offset = graph()->NewNode(simplified()->NumberAdd(), offset, byte_offset);
+    }
 
     // Coerce {is_little_endian} to boolean.
     is_little_endian =
@@ -6818,57 +6869,15 @@ Reduction JSCallReducer::ReduceDataViewPrototypeGet(
           check_neutered, effect, control);
     }
 
-    // Get the byte offset and byte length of the {receiver},
-    // and deopt if they aren't Smis.
-    Node* byte_offset = effect =
-        graph()->NewNode(simplified()->LoadField(
-                             AccessBuilder::ForJSArrayBufferViewByteOffset()),
-                         receiver, effect, control);
-
-    byte_offset = effect = graph()->NewNode(
-        simplified()->CheckSmi(p.feedback()), byte_offset, effect, control);
-
-    Node* byte_length = effect =
-        graph()->NewNode(simplified()->LoadField(
-                             AccessBuilder::ForJSArrayBufferViewByteLength()),
-                         receiver, effect, control);
-
-    byte_length = effect = graph()->NewNode(
-        simplified()->CheckSmi(p.feedback()), byte_length, effect, control);
-
-    // The end offset is the offset plus the element size
-    // of the type that we want to load.
-    uint32_t element_size = ExternalArrayElementSize(element_type);
-
-    Node* end_offset = graph()->NewNode(simplified()->NumberAdd(), offset,
-                                        jsgraph()->Constant(element_size));
-
-    // Also deopt if this is not a Smi to avoid Float64 math.
-    end_offset = effect = graph()->NewNode(simplified()->CheckSmi(p.feedback()),
-                                           end_offset, effect, control);
-
-    // We need to check that {end_offset} <= {byte_length}.
-    Node* check_bounds = graph()->NewNode(simplified()->NumberLessThanOrEqual(),
-                                          end_offset, byte_length);
-
-    // Also deopt and let the unoptimized code throw in this case.
-    effect = graph()->NewNode(
-        simplified()->CheckIf(DeoptimizeReason::kOutOfBounds, p.feedback()),
-        check_bounds, effect, control);
-
     // Get the buffer's backing store.
     Node* backing_store = effect = graph()->NewNode(
         simplified()->LoadField(AccessBuilder::ForJSArrayBufferBackingStore()),
         buffer, effect, control);
 
-    // Compute the buffer index at which we'll read.
-    Node* buffer_index =
-        graph()->NewNode(simplified()->NumberAdd(), offset, byte_offset);
-
     // Perform the load.
     Node* value = effect = graph()->NewNode(
         simplified()->LoadDataViewElement(element_type), buffer, backing_store,
-        buffer_index, is_little_endian, effect, control);
+        offset, is_little_endian, effect, control);
 
     // Continue on the regular path.
     ReplaceWithValue(node, value, effect, control);
@@ -6880,11 +6889,11 @@ Reduction JSCallReducer::ReduceDataViewPrototypeGet(
 
 Reduction JSCallReducer::ReduceDataViewPrototypeSet(
     Node* node, ExternalArrayType element_type) {
+  uint32_t const element_size = ExternalArrayElementSize(element_type);
+  CallParameters const& p = CallParametersOf(node->op());
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
   Node* receiver = NodeProperties::GetValueInput(node, 1);
-
-  CallParameters const& p = CallParametersOf(node->op());
 
   if (p.speculation_mode() == SpeculationMode::kDisallowSpeculation) {
     return NoChange();
@@ -6905,20 +6914,68 @@ Reduction JSCallReducer::ReduceDataViewPrototypeSet(
   // Only do stuff if the {receiver} is really a DataView.
   if (NodeProperties::HasInstanceTypeWitness(isolate(), receiver, effect,
                                              JS_DATA_VIEW_TYPE)) {
-    // Check that the {offset} is a positive Smi.
-    offset = effect = graph()->NewNode(simplified()->CheckSmi(p.feedback()),
-                                       offset, effect, control);
+    // Check that the {offset} is within range for the {receiver}.
+    HeapObjectMatcher m(receiver);
+    if (m.HasValue()) {
+      // We only deal with DataViews here whose [[ByteLength]] is at least
+      // {element_size} and less than 2^31-{element_size}.
+      Handle<JSDataView> dataview = Handle<JSDataView>::cast(m.Value());
+      if (dataview->byte_length()->Number() < element_size ||
+          dataview->byte_length()->Number() - element_size > kMaxInt) {
+        return NoChange();
+      }
 
-    Node* is_positive = graph()->NewNode(simplified()->NumberLessThanOrEqual(),
-                                         jsgraph()->ZeroConstant(), offset);
+      // The {receiver}s [[ByteOffset]] must be within Unsigned31 range.
+      if (dataview->byte_offset()->Number() > kMaxInt) {
+        return NoChange();
+      }
 
-    effect = graph()->NewNode(
-        simplified()->CheckIf(DeoptimizeReason::kOutOfBounds, p.feedback()),
-        is_positive, effect, control);
+      // Check that the {offset} is within range of the {byte_length}.
+      Node* byte_length = jsgraph()->Constant(
+          dataview->byte_length()->Number() - (element_size - 1));
+      offset = effect =
+          graph()->NewNode(simplified()->CheckBounds(p.feedback()), offset,
+                           byte_length, effect, control);
 
-    // Tell the typer that we're a positive Smi, so we'll fit in Int32 math.
-    offset = effect = graph()->NewNode(
-        common()->TypeGuard(Type::UnsignedSmall()), offset, effect, control);
+      // Add the [[ByteOffset]] to compute the effective offset.
+      Node* byte_offset =
+          jsgraph()->Constant(dataview->byte_offset()->Number());
+      offset = graph()->NewNode(simplified()->NumberAdd(), offset, byte_offset);
+    } else {
+      // We only deal with DataViews here that have Smi [[ByteLength]]s.
+      Node* byte_length = effect =
+          graph()->NewNode(simplified()->LoadField(
+                               AccessBuilder::ForJSArrayBufferViewByteLength()),
+                           receiver, effect, control);
+      byte_length = effect = graph()->NewNode(
+          simplified()->CheckSmi(p.feedback()), byte_length, effect, control);
+
+      // Check that the {offset} is within range of the {byte_length}.
+      offset = effect =
+          graph()->NewNode(simplified()->CheckBounds(p.feedback()), offset,
+                           byte_length, effect, control);
+
+      if (element_size > 0) {
+        // For non-byte accesses we also need to check that the {offset}
+        // plus the {element_size}-1 fits within the given {byte_length}.
+        Node* end_offset =
+            graph()->NewNode(simplified()->NumberAdd(), offset,
+                             jsgraph()->Constant(element_size - 1));
+        effect = graph()->NewNode(simplified()->CheckBounds(p.feedback()),
+                                  end_offset, byte_length, effect, control);
+      }
+
+      // The {receiver}s [[ByteOffset]] also needs to be a (positive) Smi.
+      Node* byte_offset = effect =
+          graph()->NewNode(simplified()->LoadField(
+                               AccessBuilder::ForJSArrayBufferViewByteOffset()),
+                           receiver, effect, control);
+      byte_offset = effect = graph()->NewNode(
+          simplified()->CheckSmi(p.feedback()), byte_offset, effect, control);
+
+      // Compute the buffer index at which we'll read.
+      offset = graph()->NewNode(simplified()->NumberAdd(), offset, byte_offset);
+    }
 
     // Coerce {is_little_endian} to boolean.
     is_little_endian =
@@ -6952,56 +7009,14 @@ Reduction JSCallReducer::ReduceDataViewPrototypeSet(
           check_neutered, effect, control);
     }
 
-    // Get the byte offset and byte length of the {receiver},
-    // and deopt if they aren't Smis.
-    Node* byte_offset = effect =
-        graph()->NewNode(simplified()->LoadField(
-                             AccessBuilder::ForJSArrayBufferViewByteOffset()),
-                         receiver, effect, control);
-
-    byte_offset = effect = graph()->NewNode(
-        simplified()->CheckSmi(p.feedback()), byte_offset, effect, control);
-
-    Node* byte_length = effect =
-        graph()->NewNode(simplified()->LoadField(
-                             AccessBuilder::ForJSArrayBufferViewByteLength()),
-                         receiver, effect, control);
-
-    byte_length = effect = graph()->NewNode(
-        simplified()->CheckSmi(p.feedback()), byte_length, effect, control);
-
-    // The end offset is the offset plus the element size
-    // of the type that we want to store.
-    uint32_t element_size = ExternalArrayElementSize(element_type);
-
-    Node* end_offset = graph()->NewNode(simplified()->NumberAdd(), offset,
-                                        jsgraph()->Constant(element_size));
-
-    // Also deopt if this is not a Smi to avoid Float64 math.
-    end_offset = effect = graph()->NewNode(simplified()->CheckSmi(p.feedback()),
-                                           end_offset, effect, control);
-
-    // We need to check that {end_offset} <= {byte_length}.
-    Node* check_bounds = graph()->NewNode(simplified()->NumberLessThanOrEqual(),
-                                          end_offset, byte_length);
-
-    // Also deopt and let the unoptimized code throw in this case.
-    effect = graph()->NewNode(
-        simplified()->CheckIf(DeoptimizeReason::kOutOfBounds, p.feedback()),
-        check_bounds, effect, control);
-
     // Get the buffer's backing store.
     Node* backing_store = effect = graph()->NewNode(
         simplified()->LoadField(AccessBuilder::ForJSArrayBufferBackingStore()),
         buffer, effect, control);
 
-    // Compute the buffer index at which we'll write.
-    Node* buffer_index =
-        graph()->NewNode(simplified()->NumberAdd(), offset, byte_offset);
-
     // Perform the store.
     effect = graph()->NewNode(simplified()->StoreDataViewElement(element_type),
-                              buffer, backing_store, buffer_index, value,
+                              buffer, backing_store, offset, value,
                               is_little_endian, effect, control);
 
     Node* value = jsgraph()->UndefinedConstant();
@@ -7217,39 +7232,30 @@ Reduction JSCallReducer::ReduceRegExpPrototypeTest(Node* node) {
 Reduction JSCallReducer::ReduceNumberConstructor(Node* node) {
   DCHECK_EQ(IrOpcode::kJSCall, node->opcode());
   CallParameters const& p = CallParametersOf(node->op());
+  Node* target = NodeProperties::GetValueInput(node, 0);
+  Node* receiver = NodeProperties::GetValueInput(node, 1);
+  Node* value = p.arity() < 3 ? jsgraph()->ZeroConstant()
+                              : NodeProperties::GetValueInput(node, 2);
+  Node* context = NodeProperties::GetContextInput(node);
+  Node* frame_state = NodeProperties::GetFrameStateInput(node);
 
-  if (p.arity() <= 2) {
-    ReplaceWithValue(node, jsgraph()->ZeroConstant());
-  }
+  // Create the artificial frame state in the middle of the Number constructor.
+  Handle<SharedFunctionInfo> shared_info(
+      handle(native_context()->number_function()->shared(), isolate()));
+  Node* stack_parameters[] = {receiver};
+  int stack_parameter_count = arraysize(stack_parameters);
+  Node* continuation_frame_state =
+      CreateJavaScriptBuiltinContinuationFrameState(
+          jsgraph(), shared_info,
+          Builtins::kGenericConstructorLazyDeoptContinuation, target, context,
+          stack_parameters, stack_parameter_count, frame_state,
+          ContinuationFrameStateMode::LAZY);
 
-  // We don't have a new.target argument, so we can convert to number,
-  // but must also convert BigInts.
-  if (p.arity() == 3) {
-    Node* target = NodeProperties::GetValueInput(node, 0);
-    Node* context = NodeProperties::GetContextInput(node);
-    Node* value = NodeProperties::GetValueInput(node, 2);
-    Node* outer_frame_state = NodeProperties::GetFrameStateInput(node);
-    Handle<SharedFunctionInfo> number_constructor(
-        handle(native_context()->number_function()->shared(), isolate()));
-
-    const std::vector<Node*> checkpoint_parameters({
-        jsgraph()->UndefinedConstant(), /* receiver */
-    });
-    int checkpoint_parameters_size =
-        static_cast<int>(checkpoint_parameters.size());
-
-    Node* frame_state = CreateJavaScriptBuiltinContinuationFrameState(
-        jsgraph(), number_constructor,
-        Builtins::kGenericConstructorLazyDeoptContinuation, target, context,
-        checkpoint_parameters.data(), checkpoint_parameters_size,
-        outer_frame_state, ContinuationFrameStateMode::LAZY);
-
-    NodeProperties::ReplaceValueInputs(node, value);
-    NodeProperties::ChangeOp(node, javascript()->ToNumberConvertBigInt());
-    NodeProperties::ReplaceFrameStateInput(node, frame_state);
-    return Changed(node);
-  }
-  return NoChange();
+  // Convert the {value} to a Number.
+  NodeProperties::ReplaceValueInputs(node, value);
+  NodeProperties::ChangeOp(node, javascript()->ToNumberConvertBigInt());
+  NodeProperties::ReplaceFrameStateInput(node, continuation_frame_state);
+  return Changed(node);
 }
 
 Graph* JSCallReducer::graph() const { return jsgraph()->graph(); }

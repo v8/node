@@ -38,8 +38,7 @@ IteratorRecord IteratorBuiltinsAssembler::GetIterator(Node* context,
 
   BIND(&if_not_callable);
   {
-    Node* ret = CallRuntime(Runtime::kThrowTypeError, context,
-                            SmiConstant(MessageTemplate::kNotIterable), object);
+    Node* ret = CallRuntime(Runtime::kThrowIteratorError, context, object);
     GotoIfException(ret, if_exception, exception);
     Unreachable();
   }
@@ -201,13 +200,10 @@ TNode<JSArray> IteratorBuiltinsAssembler::IterableToList(
 
   TVARIABLE(JSArray, created_list);
 
-  // This is a fast-path for ignoring the iterator.
-  // TODO(petermarshall): Port IterableToListCanBeElided to CSA.
-  Node* elided =
-      CallRuntime(Runtime::kIterableToListCanBeElided, context, iterable);
-  CSA_ASSERT(this, IsBoolean(elided));
-  Branch(IsTrue(elided), &fast_path, &slow_path);
+  Branch(IsFastJSArrayWithNoCustomIteration(iterable, context), &fast_path,
+         &slow_path);
 
+  // This is a fast-path for ignoring the iterator.
   BIND(&fast_path);
   {
     TNode<JSArray> input_array = CAST(iterable);

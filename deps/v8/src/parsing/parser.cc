@@ -412,7 +412,8 @@ Parser::Parser(ParseInfo* info)
                          info->runtime_call_stats(), info->logger(),
                          info->script().is_null() ? -1 : info->script()->id(),
                          info->is_module(), true),
-      scanner_(info->unicode_cache()),
+      scanner_(info->unicode_cache(), info->character_stream(),
+               info->is_module()),
       reusable_preparser_(nullptr),
       mode_(PARSE_EAGERLY),  // Lazy mode must be set explicitly.
       source_range_map_(info->source_range_map()),
@@ -457,22 +458,27 @@ Parser::Parser(ParseInfo* info)
   }
 }
 
-void Parser::DeserializeScopeChain(
-    Isolate* isolate, ParseInfo* info,
-    MaybeHandle<ScopeInfo> maybe_outer_scope_info) {
+void Parser::InitializeEmptyScopeChain(ParseInfo* info) {
+  DCHECK_NULL(original_scope_);
+  DCHECK_NULL(info->script_scope());
   // TODO(wingo): Add an outer SCRIPT_SCOPE corresponding to the native
   // context, which will have the "this" binding for script scopes.
   DeclarationScope* script_scope = NewScriptScope();
   info->set_script_scope(script_scope);
-  Scope* scope = script_scope;
+  original_scope_ = script_scope;
+}
+
+void Parser::DeserializeScopeChain(
+    Isolate* isolate, ParseInfo* info,
+    MaybeHandle<ScopeInfo> maybe_outer_scope_info) {
+  InitializeEmptyScopeChain(info);
   Handle<ScopeInfo> outer_scope_info;
   if (maybe_outer_scope_info.ToHandle(&outer_scope_info)) {
     DCHECK(ThreadId::Current().Equals(isolate->thread_id()));
-    scope = Scope::DeserializeScopeChain(
-        isolate, zone(), *outer_scope_info, script_scope, ast_value_factory(),
-        Scope::DeserializationMode::kScopesOnly);
+    original_scope_ = Scope::DeserializeScopeChain(
+        isolate, zone(), *outer_scope_info, info->script_scope(),
+        ast_value_factory(), Scope::DeserializationMode::kScopesOnly);
   }
-  original_scope_ = scope;
 }
 
 namespace {
@@ -507,9 +513,7 @@ FunctionLiteral* Parser::ParseProgram(Isolate* isolate, ParseInfo* info) {
   // Initialize parser state.
   DeserializeScopeChain(isolate, info, info->maybe_outer_scope_info());
 
-  auto stream =
-      static_cast<CharacterStream<uint16_t>*>(info->character_stream());
-  scanner_.Initialize(stream, info->is_module());
+  scanner_.Initialize();
   FunctionLiteral* result = DoParseProgram(isolate, info);
   MaybeResetCharacterStream(info, result);
 
@@ -703,9 +707,7 @@ FunctionLiteral* Parser::ParseFunction(Isolate* isolate, ParseInfo* info,
   // Initialize parser state.
   Handle<String> name(shared_info->Name(), isolate);
   info->set_function_name(ast_value_factory()->GetString(name));
-  auto stream =
-      static_cast<CharacterStream<uint16_t>*>(info->character_stream());
-  scanner_.Initialize(stream, info->is_module());
+  scanner_.Initialize();
 
   FunctionLiteral* result =
       DoParseFunction(isolate, info, info->function_name());
@@ -779,7 +781,7 @@ FunctionLiteral* Parser::DoParseFunction(Isolate* isolate, ParseInfo* info,
 
     if (IsArrowFunction(kind)) {
       if (IsAsyncFunction(kind)) {
-        DCHECK(!scanner()->HasAnyLineTerminatorAfterNext());
+        DCHECK(!scanner()->HasLineTerminatorAfterNext());
         if (!Check(Token::ASYNC)) {
           CHECK(stack_overflow());
           return nullptr;
@@ -1182,7 +1184,7 @@ Statement* Parser::ParseExportDefault(bool* ok) {
 
     case Token::ASYNC:
       if (PeekAhead() == Token::FUNCTION &&
-          !scanner()->HasAnyLineTerminatorAfterNext()) {
+          !scanner()->HasLineTerminatorAfterNext()) {
         Consume(Token::ASYNC);
         result = ParseAsyncFunctionDeclaration(&local_names, true, CHECK_OK);
         break;
@@ -1407,7 +1409,7 @@ Block* Parser::BuildInitializationBlock(
     DeclarationParsingResult* parsing_result,
     ZonePtrList<const AstRawString>* names, bool* ok) {
   Block* result = factory()->NewBlock(1, true);
-  for (auto declaration : parsing_result->declarations) {
+  for (const auto& declaration : parsing_result->declarations) {
     DeclareAndInitializeVariables(result, &(parsing_result->descriptor),
                                   &declaration, names, CHECK_OK);
   }
@@ -2668,19 +2670,16 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
     }
     if (V8_UNLIKELY(FLAG_runtime_stats)) {
       if (should_preparse) {
-        RuntimeCallCounterId counter_id =
-            parsing_on_main_thread_
-                ? RuntimeCallCounterId::kPreParseWithVariableResolution
-                : RuntimeCallCounterId::
-                      kPreParseBackgroundWithVariableResolution;
-        if (is_top_level) {
-          counter_id = parsing_on_main_thread_
-                           ? RuntimeCallCounterId::kPreParseNoVariableResolution
-                           : RuntimeCallCounterId::
-                                 kPreParseBackgroundNoVariableResolution;
-        }
+        const RuntimeCallCounterId counters[2][2] = {
+            {RuntimeCallCounterId::kPreParseBackgroundNoVariableResolution,
+             RuntimeCallCounterId::kPreParseNoVariableResolution},
+            {RuntimeCallCounterId::kPreParseBackgroundWithVariableResolution,
+             RuntimeCallCounterId::kPreParseWithVariableResolution}};
         if (runtime_call_stats_) {
-          runtime_call_stats_->CorrectCurrentCounterId(counter_id);
+          bool tracked_variables = PreParser::ShouldTrackUnresolvedVariables(
+              is_lazy_top_level_function);
+          runtime_call_stats_->CorrectCurrentCounterId(
+              counters[tracked_variables][parsing_on_main_thread_]);
         }
       }
     }
@@ -3451,9 +3450,7 @@ void Parser::ParseOnBackground(ParseInfo* info) {
   DCHECK_NULL(info->literal());
   FunctionLiteral* result = nullptr;
 
-  auto stream =
-      static_cast<CharacterStream<uint16_t>*>(info->character_stream());
-  scanner_.Initialize(stream, info->is_module());
+  scanner_.Initialize();
   DCHECK(info->maybe_outer_scope_info().is_null());
 
   DCHECK(original_scope_);

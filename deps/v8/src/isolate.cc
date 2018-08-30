@@ -41,6 +41,7 @@
 #include "src/messages.h"
 #include "src/objects/frame-array-inl.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/js-array-inl.h"
 #include "src/objects/module-inl.h"
 #include "src/objects/promise-inl.h"
 #include "src/profiler/tracing-cpu-profiler.h"
@@ -160,7 +161,6 @@ void ThreadLocalTop::Initialize(Isolate* isolate) {
 }
 
 void ThreadLocalTop::Free() {
-  wasm_caught_exception_ = nullptr;
   // Match unmatched PopPromise calls.
   while (promise_on_stack_) isolate_->PopPromise();
 }
@@ -251,7 +251,6 @@ void Isolate::IterateThread(ThreadVisitor* v, char* t) {
 void Isolate::Iterate(RootVisitor* v, ThreadLocalTop* thread) {
   // Visit the roots from the top for a given thread.
   v->VisitRootPointer(Root::kTop, nullptr, &thread->pending_exception_);
-  v->VisitRootPointer(Root::kTop, nullptr, &thread->wasm_caught_exception_);
   v->VisitRootPointer(Root::kTop, nullptr, &thread->pending_message_obj_);
   v->VisitRootPointer(Root::kTop, nullptr,
                       bit_cast<Object**>(&(thread->context_)));
@@ -1123,19 +1122,6 @@ void ReportBootstrappingException(Handle<Object> exception,
 #endif
 }
 
-bool Isolate::is_catchable_by_wasm(Object* exception) {
-  // TODO(titzer): thread WASM features here, or just remove this check?
-  if (!FLAG_experimental_wasm_eh) return false;
-  if (!is_catchable_by_javascript(exception) || !exception->IsJSError())
-    return false;
-  HandleScope scope(this);
-  Handle<Object> exception_handle(exception, this);
-  return JSReceiver::HasProperty(Handle<JSReceiver>::cast(exception_handle),
-                                 factory()->InternalizeUtf8String(
-                                     wasm::WasmException::kRuntimeIdStr))
-      .IsJust();
-}
-
 Object* Isolate::Throw(Object* raw_exception, MessageLocation* location) {
   DCHECK(!has_pending_exception());
 
@@ -1309,11 +1295,10 @@ Object* Isolate::UnwindAndFindHandler() {
           trap_handler::ClearThreadInWasm();
         }
 
-        if (!is_catchable_by_wasm(exception)) {
-          break;
-        }
-        int stack_slots = 0;  // Will contain stack slot count of frame.
+        // For WebAssembly frames we perform a lookup in the handler table.
+        if (!catchable_by_js) break;
         WasmCompiledFrame* wasm_frame = static_cast<WasmCompiledFrame*>(frame);
+        int stack_slots = 0;  // Will contain stack slot count of frame.
         int offset = wasm_frame->LookupExceptionHandlerInTable(&stack_slots);
         if (offset < 0) break;
         // Compute the stack pointer from the frame pointer. This ensures that
@@ -1323,10 +1308,10 @@ Object* Isolate::UnwindAndFindHandler() {
                             stack_slots * kPointerSize;
 
         // This is going to be handled by Wasm, so we need to set the TLS flag
-        // again.
+        // again. It was cleared above assuming the frame would be unwound.
         trap_handler::SetThreadInWasm();
 
-        set_wasm_caught_exception(exception);
+        // Gather information from the frame.
         wasm::WasmCode* wasm_code =
             wasm_engine()->code_manager()->LookupCode(frame->pc());
         return FoundHandler(nullptr, wasm_code->instruction_start(), offset,
@@ -2223,14 +2208,6 @@ bool Isolate::AreWasmThreadsEnabled(Handle<Context> context) {
   return FLAG_experimental_wasm_threads;
 }
 
-Handle<Context> Isolate::GetCallingNativeContext() {
-  JavaScriptFrameIterator it(this);
-  if (it.done()) return Handle<Context>::null();
-  JavaScriptFrame* frame = it.frame();
-  Context* context = Context::cast(frame->context());
-  return Handle<Context>(context->native_context(), this);
-}
-
 Handle<Context> Isolate::GetIncumbentContext() {
   JavaScriptFrameIterator it(this);
 
@@ -2615,13 +2592,13 @@ void Isolate::Deinit() {
 
   debug()->Unload();
 
+  wasm_engine()->DeleteCompileJobsOnIsolate(this);
+
   if (concurrent_recompilation_enabled()) {
     optimizing_compile_dispatcher_->Stop();
     delete optimizing_compile_dispatcher_;
     optimizing_compile_dispatcher_ = nullptr;
   }
-
-  wasm_engine()->DeleteCompileJobsOnIsolate(this);
 
   heap_.mark_compact_collector()->EnsureSweepingCompleted();
   heap_.memory_allocator()->unmapper()->EnsureUnmappingCompleted();
@@ -2883,6 +2860,19 @@ void CreateOffHeapTrampolines(Isolate* isolate) {
     }
   }
 }
+
+void PrintEmbeddedBuiltinCandidates(Isolate* isolate) {
+  CHECK(FLAG_print_embedded_builtin_candidates);
+  bool found_a_candidate = false;
+  for (int i = 0; i < Builtins::builtin_count; i++) {
+    if (Builtins::IsIsolateIndependent(i)) continue;
+    Code* builtin = isolate->heap()->builtin(i);
+    if (!builtin->IsIsolateIndependent(isolate)) continue;
+    if (!found_a_candidate) PrintF("Found embedded builtin candidates:\n");
+    found_a_candidate = true;
+    PrintF("  %s\n", Builtins::name(i));
+  }
+}
 }  // namespace
 
 void Isolate::PrepareEmbeddedBlobForSerialization() {
@@ -3044,6 +3034,9 @@ bool Isolate::Init(StartupDeserializer* des) {
   setup_delegate_ = nullptr;
 
   if (FLAG_print_builtin_size) PrintBuiltinSizes(this);
+  if (FLAG_print_embedded_builtin_candidates) {
+    PrintEmbeddedBuiltinCandidates(this);
+  }
 
   // Finish initialization of ThreadLocal after deserialization is done.
   clear_pending_exception();
@@ -3218,6 +3211,8 @@ void Isolate::DumpAndResetStats() {
   }
   if (V8_UNLIKELY(FLAG_runtime_stats ==
                   v8::tracing::TracingCategoryObserver::ENABLED_BY_NATIVE)) {
+    counters()->worker_thread_runtime_call_stats()->AddToMainTable(
+        counters()->runtime_call_stats());
     counters()->runtime_call_stats()->Print();
     counters()->runtime_call_stats()->Reset();
   }
@@ -3247,11 +3242,14 @@ bool Isolate::use_optimizer() {
          !is_precise_count_code_coverage() && !is_block_count_code_coverage();
 }
 
+bool Isolate::NeedsDetailedOptimizedCodeLineInfo() const {
+  return NeedsSourcePositionsForProfiling() || FLAG_detailed_line_info;
+}
+
 bool Isolate::NeedsSourcePositionsForProfiling() const {
   return FLAG_trace_deopt || FLAG_trace_turbo || FLAG_trace_turbo_graph ||
          FLAG_turbo_profiling || FLAG_perf_prof || is_profiling() ||
-         debug_->is_active() || logger_->is_logging() || FLAG_trace_maps ||
-         FLAG_detailed_line_info;
+         debug_->is_active() || logger_->is_logging() || FLAG_trace_maps;
 }
 
 void Isolate::SetFeedbackVectorsForProfilingTools(Object* value) {
@@ -3760,7 +3758,8 @@ MaybeHandle<JSPromise> NewRejectedPromise(Isolate* isolate,
 
 MaybeHandle<JSPromise> Isolate::RunHostImportModuleDynamicallyCallback(
     Handle<Script> referrer, Handle<Object> specifier) {
-  v8::Local<v8::Context> api_context = v8::Utils::ToLocal(native_context());
+  v8::Local<v8::Context> api_context =
+      v8::Utils::ToLocal(Handle<Context>(native_context()));
 
   if (host_import_module_dynamically_callback_ == nullptr) {
     Handle<Object> exception =
@@ -3799,7 +3798,8 @@ Handle<JSObject> Isolate::RunHostInitializeImportMetaObjectCallback(
   if (host_meta->IsTheHole(this)) {
     host_meta = factory()->NewJSObjectWithNullProto();
     if (host_initialize_import_meta_object_callback_ != nullptr) {
-      v8::Local<v8::Context> api_context = v8::Utils::ToLocal(native_context());
+      v8::Local<v8::Context> api_context =
+          v8::Utils::ToLocal(Handle<Context>(native_context()));
       host_initialize_import_meta_object_callback_(
           api_context, Utils::ToLocal(module),
           v8::Local<v8::Object>::Cast(v8::Utils::ToLocal(host_meta)));

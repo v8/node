@@ -20,6 +20,7 @@
 #include "src/feedback-vector.h"
 #include "src/field-index-inl.h"
 #include "src/isolate-inl.h"
+#include "src/objects/js-array-buffer-inl.h"
 #include "src/objects/js-array-inl.h"
 #include "src/objects/templates.h"
 #include "src/vector-slot-pair.h"
@@ -404,28 +405,24 @@ Reduction JSNativeContextSpecialization::ReduceJSOrdinaryHasInstance(
     return reduction.Changed() ? reduction : Changed(node);
   }
 
-  // Check if the {constructor} is a JSFunction.
+  // Optimize if we currently know the "prototype" property.
   if (m.Value()->IsJSFunction()) {
-    // Check if the {function} is a constructor and has an instance "prototype".
-    Handle<JSFunction> function = Handle<JSFunction>::cast(m.Value());
-    if (function->IsConstructor() && function->has_prototype_slot() &&
-        function->has_instance_prototype() &&
-        function->prototype()->IsJSReceiver()) {
-      // We need {function}'s initial map so that we can depend on it for the
-      // prototype constant-folding below.
-      if (!function->has_initial_map()) return NoChange();
-      MapRef initial_map = dependencies()->DependOnInitialMap(
-          JSFunctionRef(js_heap_broker(), function));
-      Node* prototype = jsgraph()->Constant(
-          handle(initial_map.object<Map>()->prototype(), isolate()));
-
-      // Lower the {node} to JSHasInPrototypeChain.
-      NodeProperties::ReplaceValueInput(node, object, 0);
-      NodeProperties::ReplaceValueInput(node, prototype, 1);
-      NodeProperties::ChangeOp(node, javascript()->HasInPrototypeChain());
-      Reduction const reduction = ReduceJSHasInPrototypeChain(node);
-      return reduction.Changed() ? reduction : Changed(node);
+    JSFunctionRef function = m.Ref(js_heap_broker()).AsJSFunction();
+    // TODO(neis): Remove the has_prototype_slot condition once the broker is
+    // always enabled.
+    if (!function.map().has_prototype_slot() || !function.has_prototype() ||
+        function.PrototypeRequiresRuntimeLookup()) {
+      return NoChange();
     }
+    ObjectRef prototype = dependencies()->DependOnPrototypeProperty(function);
+    Node* prototype_constant = jsgraph()->Constant(prototype);
+
+    // Lower the {node} to JSHasInPrototypeChain.
+    NodeProperties::ReplaceValueInput(node, object, 0);
+    NodeProperties::ReplaceValueInput(node, prototype_constant, 1);
+    NodeProperties::ChangeOp(node, javascript()->HasInPrototypeChain());
+    Reduction const reduction = ReduceJSHasInPrototypeChain(node);
+    return reduction.Changed() ? reduction : Changed(node);
   }
 
   return NoChange();
@@ -1102,21 +1099,17 @@ Reduction JSNativeContextSpecialization::ReduceJSLoadNamed(Node* node) {
     if (m.Value()->IsJSFunction() &&
         p.name().is_identical_to(factory()->prototype_string())) {
       // Optimize "prototype" property of functions.
-      Handle<JSFunction> function = Handle<JSFunction>::cast(m.Value());
-      if (!function->has_prototype_slot() || !function->has_initial_map()) {
+      JSFunctionRef function = m.Ref(js_heap_broker()).AsJSFunction();
+      // TODO(neis): Remove the has_prototype_slot condition once the broker is
+      // always enabled.
+      if (!function.map().has_prototype_slot() || !function.has_prototype() ||
+          function.PrototypeRequiresRuntimeLookup()) {
         return NoChange();
       }
-      if (!function->PrototypeRequiresRuntimeLookup()) {
-        // We need to add a code dependency on the initial map of the
-        // {function} in order to be notified about changes to the
-        // "prototype" of {function}.
-        dependencies()->DependOnInitialMap(
-            JSFunctionRef(js_heap_broker(), function));
-        Handle<Object> prototype(function->prototype(), isolate());
-        Node* value = jsgraph()->Constant(prototype);
-        ReplaceWithValue(node, value);
-        return Replace(value);
-      }
+      ObjectRef prototype = dependencies()->DependOnPrototypeProperty(function);
+      Node* value = jsgraph()->Constant(prototype);
+      ReplaceWithValue(node, value);
+      return Replace(value);
     } else if (m.Value()->IsString() &&
                p.name().is_identical_to(factory()->length_string())) {
       // Constant-fold "length" property on constant strings.
@@ -2537,10 +2530,10 @@ JSNativeContextSpecialization::BuildElementAccess(
           } else if (elements_kind == HOLEY_DOUBLE_ELEMENTS) {
             // Return the signaling NaN hole directly if all uses are
             // truncating.
-            vtrue = etrue =
-                graph()->NewNode(simplified()->CheckFloat64Hole(
-                                     CheckFloat64HoleMode::kAllowReturnHole),
-                                 vtrue, etrue, if_true);
+            vtrue = etrue = graph()->NewNode(
+                simplified()->CheckFloat64Hole(
+                    CheckFloat64HoleMode::kAllowReturnHole, VectorSlotPair()),
+                vtrue, etrue, if_true);
           }
         }
 
@@ -2588,7 +2581,8 @@ JSNativeContextSpecialization::BuildElementAccess(
             mode = CheckFloat64HoleMode::kAllowReturnHole;
           }
           value = effect = graph()->NewNode(
-              simplified()->CheckFloat64Hole(mode), value, effect, control);
+              simplified()->CheckFloat64Hole(mode, VectorSlotPair()), value,
+              effect, control);
         }
       }
     } else {

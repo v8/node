@@ -46,7 +46,7 @@ class Writer {
     DCHECK_GE(current_size(), sizeof(T));
     WriteUnalignedValue(reinterpret_cast<Address>(current_location()), value);
     pos_ += sizeof(T);
-    if (FLAG_wasm_trace_serialization) {
+    if (FLAG_trace_wasm_serialization) {
       StdoutStream{} << "wrote: " << (size_t)value << " sized: " << sizeof(T)
                      << std::endl;
     }
@@ -58,7 +58,7 @@ class Writer {
       memcpy(current_location(), v.start(), v.size());
       pos_ += v.size();
     }
-    if (FLAG_wasm_trace_serialization) {
+    if (FLAG_trace_wasm_serialization) {
       StdoutStream{} << "wrote vector of " << v.size() << " elements"
                      << std::endl;
     }
@@ -90,7 +90,7 @@ class Reader {
     T value =
         ReadUnalignedValue<T>(reinterpret_cast<Address>(current_location()));
     pos_ += sizeof(T);
-    if (FLAG_wasm_trace_serialization) {
+    if (FLAG_trace_wasm_serialization) {
       StdoutStream{} << "read: " << (size_t)value << " sized: " << sizeof(T)
                      << std::endl;
     }
@@ -103,7 +103,7 @@ class Reader {
       memcpy(v.start(), current_location(), v.size());
       pos_ += v.size();
     }
-    if (FLAG_wasm_trace_serialization) {
+    if (FLAG_trace_wasm_serialization) {
       StdoutStream{} << "read vector of " << v.size() << " elements"
                      << std::endl;
     }
@@ -146,7 +146,7 @@ void SetWasmCalleeTag(RelocInfo* rinfo, uint32_t tag) {
 #elif V8_TARGET_ARCH_ARM64
   Instruction* instr = reinterpret_cast<Instruction*>(rinfo->pc());
   if (instr->IsLdrLiteralX()) {
-    Memory::Address_at(rinfo->constant_pool_entry_address()) =
+    Memory<Address>(rinfo->constant_pool_entry_address()) =
         static_cast<Address>(tag);
   } else {
     DCHECK(instr->IsBranchAndLink() || instr->IsUnconditionalBranch());
@@ -172,7 +172,7 @@ uint32_t GetWasmCalleeTag(RelocInfo* rinfo) {
   Instruction* instr = reinterpret_cast<Instruction*>(rinfo->pc());
   if (instr->IsLdrLiteralX()) {
     return static_cast<uint32_t>(
-        Memory::Address_at(rinfo->constant_pool_entry_address()));
+        Memory<Address>(rinfo->constant_pool_entry_address()));
   } else {
     DCHECK(instr->IsBranchAndLink() || instr->IsUnconditionalBranch());
     return static_cast<uint32_t>(instr->ImmPCOffset() / kInstrSize);

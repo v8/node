@@ -167,7 +167,6 @@ static_assert(sizeof(Register) == sizeof(int),
               "Register can efficiently be passed by value");
 
 // r7: context register
-// r9: lithium scratch
 #define DECLARE_REGISTER(R) \
   constexpr Register R = Register::from_code<kRegCode_##R>();
 GENERAL_REGISTERS(DECLARE_REGISTER)
@@ -931,6 +930,9 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   void strexb(Register src1, Register src2, Register dst, Condition cond = al);
   void ldrexh(Register dst, Register src, Condition cond = al);
   void strexh(Register src1, Register src2, Register dst, Condition cond = al);
+  void ldrexd(Register dst1, Register dst2, Register src, Condition cond = al);
+  void strexd(Register res, Register src1, Register src2, Register dst,
+              Condition cond = al);
 
   // Preload instructions
   void pld(const MemOperand& address);

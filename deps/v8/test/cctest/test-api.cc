@@ -52,9 +52,9 @@
 #include "src/lookup.h"
 #include "src/objects-inl.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/js-array-buffer-inl.h"
 #include "src/objects/js-array-inl.h"
 #include "src/objects/js-promise-inl.h"
-#include "src/parsing/preparse-data.h"
 #include "src/profiler/cpu-profiler.h"
 #include "src/unicode-inl.h"
 #include "src/utils.h"
@@ -10617,7 +10617,7 @@ THREADED_TEST(GlobalObjectInstanceProperties) {
                          v8::FunctionTemplate::New(isolate,
                                                    InstanceFunctionCallback));
 
-  // The script to check how Crankshaft compiles missing global function
+  // The script to check how TurboFan compiles missing global function
   // invocations.  function g is not defined and should throw on call.
   const char* script =
       "function wrapper(call) {"
@@ -15154,7 +15154,7 @@ THREADED_TEST(TryCatchSourceInfoForEOSError) {
   CHECK(v8::Script::Compile(context.local(), v8_str("!\n")).IsEmpty());
   CHECK(try_catch.HasCaught());
   v8::Local<v8::Message> message = try_catch.Message();
-  CHECK_EQ(1, message->GetLineNumber(context.local()).FromJust());
+  CHECK_EQ(2, message->GetLineNumber(context.local()).FromJust());
   CHECK_EQ(0, message->GetStartColumn(context.local()).FromJust());
 }
 
@@ -19137,7 +19137,8 @@ TEST(GetHeapSpaceStatistics) {
   // Force allocation in LO_SPACE so that every space has non-zero size.
   v8::internal::Isolate* i_isolate =
       reinterpret_cast<v8::internal::Isolate*>(isolate);
-  (void)i_isolate->factory()->TryNewFixedArray(512 * 1024);
+  auto unused = i_isolate->factory()->TryNewFixedArray(512 * 1024);
+  USE(unused);
 
   isolate->GetHeapStatistics(&heap_statistics);
 
@@ -26423,7 +26424,7 @@ TEST(TurboAsmDisablesNeuter) {
       "  function load() { return MEM32[0] | 0; }"
       "  return { load: load };"
       "}"
-      "var buffer = new ArrayBuffer(1024);"
+      "var buffer = new ArrayBuffer(4096);"
       "var module = Module(this, {}, buffer);"
       "%OptimizeFunctionOnNextCall(module.load);"
       "module.load();"
@@ -26439,7 +26440,7 @@ TEST(TurboAsmDisablesNeuter) {
       "  function store() { MEM32[0] = 0; }"
       "  return { store: store };"
       "}"
-      "var buffer = new ArrayBuffer(1024);"
+      "var buffer = new ArrayBuffer(4096);"
       "var module = Module(this, {}, buffer);"
       "%OptimizeFunctionOnNextCall(module.store);"
       "module.store();"
@@ -28759,4 +28760,30 @@ TEST(TestSetWasmThreadsEnabledCallback) {
   wasm_threads_enabled_value = true;
   i::FLAG_experimental_wasm_threads = false;
   CHECK(i_isolate->AreWasmThreadsEnabled(i_context));
+}
+
+TEST(TestGetBuiltinsCodeRange) {
+  LocalContext env;
+  v8::Isolate* isolate = env->GetIsolate();
+  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
+
+  v8::MemoryRange builtins_range = isolate->GetBuiltinsCodeRange();
+
+  // Check that each off-heap builtin is within the builtins code range.
+  if (i::FLAG_embedded_builtins) {
+    for (int id = 0; id < i::Builtins::builtin_count; id++) {
+      if (!i::Builtins::IsIsolateIndependent(id)) continue;
+      i::Code* builtin = i_isolate->builtins()->builtin(id);
+      i::Address start = builtin->InstructionStart();
+      i::Address end = start + builtin->InstructionSize();
+
+      i::Address builtins_start =
+          reinterpret_cast<i::Address>(builtins_range.start);
+      CHECK(start >= builtins_start &&
+            end < builtins_start + builtins_range.length_in_bytes);
+    }
+  } else {
+    CHECK_EQ(nullptr, builtins_range.start);
+    CHECK_EQ(0, builtins_range.length_in_bytes);
+  }
 }

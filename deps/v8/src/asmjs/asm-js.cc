@@ -23,6 +23,7 @@
 
 #include "src/wasm/wasm-engine.h"
 #include "src/wasm/wasm-js.h"
+#include "src/wasm/wasm-limits.h"
 #include "src/wasm/wasm-module-builder.h"
 #include "src/wasm/wasm-objects-inl.h"
 #include "src/wasm/wasm-result.h"
@@ -234,13 +235,13 @@ UnoptimizedCompilationJob::Status AsmJsCompilationJob::ExecuteJobImpl() {
   Zone* compile_zone = compilation_info()->zone();
   Zone translate_zone(allocator_, ZONE_NAME);
 
-  ScannerStream* stream = parse_info()->character_stream();
+  Utf16CharacterStream* stream = parse_info()->character_stream();
   base::Optional<AllowHandleDereference> allow_deref;
   if (stream->can_access_heap()) {
     allow_deref.emplace();
   }
-  wasm::AsmJsParser parser(&translate_zone, stack_limit(), stream,
-                           compilation_info()->literal()->start_position());
+  stream->Seek(compilation_info()->literal()->start_position());
+  wasm::AsmJsParser parser(&translate_zone, stack_limit(), stream);
   if (!parser.Run()) {
     if (!FLAG_suppress_asm_messages) {
       ReportCompilationFailure(parse_info(), parser.failure_location(),
@@ -329,6 +330,28 @@ UnoptimizedCompilationJob* AsmJs::NewCompilationJob(
   return new AsmJsCompilationJob(parse_info, literal, allocator);
 }
 
+namespace {
+inline bool IsValidAsmjsMemorySize(size_t size) {
+  // Enforce asm.js spec minimum size.
+  if (size < (1u << 12u)) return false;
+  // Enforce engine-limited maximum allocation size.
+  if (size > wasm::kV8MaxWasmMemoryBytes) return false;
+  // Enforce flag-limited maximum allocation size.
+  if (size > (FLAG_wasm_max_mem_pages * uint64_t{wasm::kWasmPageSize})) {
+    return false;
+  }
+  // Enforce power-of-2 sizes for 2^12 - 2^24.
+  if (size < (1u << 24u)) {
+    uint32_t size32 = static_cast<uint32_t>(size);
+    return base::bits::IsPowerOfTwo(size32);
+  }
+  // Enforce multiple of 2^24 for sizes >= 2^24
+  if ((size % (1u << 24u)) != 0) return false;
+  // All checks passed!
+  return true;
+}
+}  // namespace
+
 MaybeHandle<Object> AsmJs::InstantiateAsmWasm(Isolate* isolate,
                                               Handle<SharedFunctionInfo> shared,
                                               Handle<FixedArray> wasm_data,
@@ -369,15 +392,9 @@ MaybeHandle<Object> AsmJs::InstantiateAsmWasm(Isolate* isolate,
     }
     memory->set_is_growable(false);
     size_t size = NumberToSize(memory->byte_length());
-    // TODO(mstarzinger): We currently only limit byte length of the buffer to
-    // be a multiple of 8, we should enforce the stricter spec limits here.
-    if (size % FixedTypedArrayBase::kMaxElementSize != 0) {
-      ReportInstantiationFailure(script, position, "Unexpected heap size");
-      return MaybeHandle<Object>();
-    }
-    // Currently WebAssembly only supports heap sizes within the uint32_t range.
-    if (size > std::numeric_limits<uint32_t>::max()) {
-      ReportInstantiationFailure(script, position, "Unexpected heap size");
+    // Check the asm.js heap size against the valid limits.
+    if (!IsValidAsmjsMemorySize(size)) {
+      ReportInstantiationFailure(script, position, "Invalid heap size");
       return MaybeHandle<Object>();
     }
   } else {

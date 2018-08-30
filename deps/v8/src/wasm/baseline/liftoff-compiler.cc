@@ -585,7 +585,7 @@ class LiftoffCompiler {
     LiftoffRegister src = __ PopToRegister();
     LiftoffRegister dst = src_rc == dst_rc ? __ GetUnusedRegister(dst_rc, {src})
                                            : __ GetUnusedRegister(dst_rc);
-    DCHECK_EQ(can_trap, trap_position > 0);
+    DCHECK_EQ(!!can_trap, trap_position > 0);
     Label* trap = can_trap ? AddOutOfLineTrap(
                                  trap_position,
                                  WasmCode::kThrowWasmTrapFloatUnrepresentable)
@@ -1494,7 +1494,7 @@ class LiftoffCompiler {
     }
     __ PushRegister(value_type, value);
 
-    if (FLAG_wasm_trace_memory) {
+    if (FLAG_trace_wasm_memory) {
       TraceMemoryOperation(false, type.mem_type().representation(), index.gp(),
                            offset, decoder->position());
     }
@@ -1524,7 +1524,7 @@ class LiftoffCompiler {
                        WasmCode::kThrowWasmTrapMemOutOfBounds,
                        protected_store_pc);
     }
-    if (FLAG_wasm_trace_memory) {
+    if (FLAG_trace_wasm_memory) {
       TraceMemoryOperation(true, type.mem_rep(), index.gp(), offset,
                            decoder->position());
     }
@@ -1835,7 +1835,7 @@ class LiftoffCompiler {
 
 }  // namespace
 
-bool LiftoffCompilationUnit::ExecuteCompilation() {
+bool LiftoffCompilationUnit::ExecuteCompilation(WasmFeatures* detected) {
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.wasm"),
                "ExecuteLiftoffCompilation");
   base::ElapsedTimer compile_timer;
@@ -1850,11 +1850,9 @@ bool LiftoffCompilationUnit::ExecuteCompilation() {
       compiler::GetWasmCallDescriptor(&zone, wasm_unit_->func_body_.sig);
   base::Optional<TimedHistogramScope> liftoff_compile_time_scope(
       base::in_place, wasm_unit_->counters_->liftoff_compile_time());
-  WasmFeatures unused_detected_features;
   WasmFullDecoder<Decoder::kValidate, LiftoffCompiler> decoder(
-      &zone, module, wasm_unit_->native_module_->enabled_features(),
-      &unused_detected_features, wasm_unit_->func_body_, call_descriptor,
-      wasm_unit_->env_, &zone);
+      &zone, module, wasm_unit_->native_module_->enabled_features(), detected,
+      wasm_unit_->func_body_, call_descriptor, wasm_unit_->env_, &zone);
   decoder.Decode();
   liftoff_compile_time_scope.reset();
   LiftoffCompiler* compiler = &decoder.interface();

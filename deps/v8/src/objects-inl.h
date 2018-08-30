@@ -2082,8 +2082,7 @@ FreeSpace* FreeSpace::next() {
          (!Heap::FromWritableHeapObject(this)->deserialization_complete() &&
           map() == nullptr));
   DCHECK_LE(kNextOffset + kPointerSize, relaxed_read_size());
-  return reinterpret_cast<FreeSpace*>(
-      Memory::Address_at(address() + kNextOffset));
+  return reinterpret_cast<FreeSpace*>(Memory<Address>(address() + kNextOffset));
 }
 
 
@@ -2448,7 +2447,7 @@ bool JSFunction::PrototypeRequiresRuntimeLookup() {
 Object* JSFunction::instance_prototype() {
   DCHECK(has_instance_prototype());
   if (has_initial_map()) return initial_map()->prototype();
-  // When there is no initial map and the prototype is a JSObject, the
+  // When there is no initial map and the prototype is a JSReceiver, the
   // initial map field is used for the prototype field.
   return prototype_or_initial_map();
 }
@@ -2456,7 +2455,7 @@ Object* JSFunction::instance_prototype() {
 
 Object* JSFunction::prototype() {
   DCHECK(has_prototype());
-  // If the function's prototype property has been set to a non-JSObject
+  // If the function's prototype property has been set to a non-JSReceiver
   // value, that value is stored in the constructor field of the map.
   if (map()->has_non_instance_prototype()) {
     Object* prototype = map()->GetConstructor();

@@ -76,6 +76,9 @@ declare_args() {
   v8_enable_embedded_builtins = v8_use_snapshot && v8_current_cpu != "x86" &&
                                 !is_aix && (!is_win || is_clang)
 
+  # Enable embedded bytecode handlers.
+  v8_enable_embedded_bytecode_handlers = false
+
   # Enable code-generation-time checking of types in the CodeStubAssembler.
   v8_enable_verify_csa = false
 
@@ -189,6 +192,13 @@ if (v8_check_microtasks_scopes_consistency == "") {
 
 assert(!v8_enable_embedded_builtins || v8_use_snapshot,
        "Embedded builtins only work with snapshots")
+assert(
+    v8_current_cpu != "x86" || !v8_enable_embedded_builtins ||
+        !v8_untrusted_code_mitigations,
+    "Embedded builtins on ia32 and untrusted code mitigations are incompatible")
+
+assert(!v8_enable_embedded_bytecode_handlers || v8_enable_embedded_builtins,
+       "Embedded bytecode handlers only work with embedded builtins")
 
 # Specifies if the target build is a simulator build. Comparing target cpu
 # with v8 target cpu to not affect simulator builds for making cross-compile
@@ -368,6 +378,9 @@ config("features") {
   }
   if (v8_enable_embedded_builtins) {
     defines += [ "V8_EMBEDDED_BUILTINS" ]
+  }
+  if (v8_enable_embedded_bytecode_handlers) {
+    defines += [ "V8_EMBEDDED_BYTECODE_HANDLERS" ]
   }
   if (v8_use_multi_snapshots) {
     defines += [ "V8_MULTI_SNAPSHOTS" ]
@@ -844,6 +857,8 @@ action("postmortem-metadata") {
     "src/objects/fixed-array.h",
     "src/objects/js-array-inl.h",
     "src/objects/js-array.h",
+    "src/objects/js-array-buffer-inl.h",
+    "src/objects/js-array-buffer.h",
     "src/objects/js-regexp-inl.h",
     "src/objects/js-regexp.h",
     "src/objects/js-regexp-string-iterator-inl.h",
@@ -872,10 +887,12 @@ torque_files = [
   "src/builtins/array.tq",
   "src/builtins/array-copywithin.tq",
   "src/builtins/array-foreach.tq",
-  "src/builtins/array-shift.tq",
+  "src/builtins/array-lastindexof.tq",
+  "src/builtins/array-reverse.tq",
   "src/builtins/typed-array.tq",
   "src/builtins/data-view.tq",
   "test/torque/test-torque.tq",
+  "third_party/v8/builtins/array-sort.tq",
 ]
 
 torque_modules = [
@@ -1523,6 +1540,7 @@ v8_source_set("v8_base") {
     "src/asmjs/asm-types.h",
     "src/asmjs/switch-logic.cc",
     "src/asmjs/switch-logic.h",
+    "src/assembler-arch-inl.h",
     "src/assembler-arch.h",
     "src/assembler-inl.h",
     "src/assembler.cc",
@@ -2157,6 +2175,9 @@ v8_source_set("v8_base") {
     "src/objects/intl-objects-inl.h",
     "src/objects/intl-objects.cc",
     "src/objects/intl-objects.h",
+    "src/objects/js-array-buffer-inl.h",
+    "src/objects/js-array-buffer.cc",
+    "src/objects/js-array-buffer.h",
     "src/objects/js-array-inl.h",
     "src/objects/js-array.h",
     "src/objects/js-collator-inl.h",
@@ -2164,6 +2185,9 @@ v8_source_set("v8_base") {
     "src/objects/js-collator.h",
     "src/objects/js-collection-inl.h",
     "src/objects/js-collection.h",
+    "src/objects/js-date-time-format-inl.h",
+    "src/objects/js-date-time-format.cc",
+    "src/objects/js-date-time-format.h",
     "src/objects/js-generator-inl.h",
     "src/objects/js-generator.h",
     "src/objects/js-list-format-inl.h",
@@ -2245,10 +2269,9 @@ v8_source_set("v8_base") {
     "src/parsing/parsing.cc",
     "src/parsing/parsing.h",
     "src/parsing/pattern-rewriter.cc",
-    "src/parsing/preparse-data.cc",
-    "src/parsing/preparse-data.h",
     "src/parsing/preparsed-scope-data.cc",
     "src/parsing/preparsed-scope-data.h",
+    "src/parsing/preparser-logger.h",
     "src/parsing/preparser.cc",
     "src/parsing/preparser.h",
     "src/parsing/rewriter.cc",
@@ -2320,6 +2343,8 @@ v8_source_set("v8_base") {
     "src/register-configuration.cc",
     "src/register-configuration.h",
     "src/reglist.h",
+    "src/reloc-info.cc",
+    "src/reloc-info.h",
     "src/roots-inl.h",
     "src/roots.h",
     "src/runtime-profiler.cc",
@@ -2534,6 +2559,7 @@ v8_source_set("v8_base") {
     "src/wasm/wasm-serialization.h",
     "src/wasm/wasm-text.cc",
     "src/wasm/wasm-text.h",
+    "src/wasm/wasm-tier.h",
     "src/wasm/wasm-value.h",
     "src/zone/accounting-allocator.cc",
     "src/zone/accounting-allocator.h",
@@ -2872,6 +2898,9 @@ v8_source_set("v8_base") {
       "src/objects/js-collator-inl.h",
       "src/objects/js-collator.cc",
       "src/objects/js-collator.h",
+      "src/objects/js-date-time-format-inl.h",
+      "src/objects/js-date-time-format.cc",
+      "src/objects/js-date-time-format.h",
       "src/objects/js-list-format-inl.h",
       "src/objects/js-list-format.cc",
       "src/objects/js-list-format.h",
@@ -2986,6 +3015,8 @@ v8_component("v8_libbase") {
     "src/base/platform/semaphore.h",
     "src/base/platform/time.cc",
     "src/base/platform/time.h",
+    "src/base/region-allocator.cc",
+    "src/base/region-allocator.h",
     "src/base/ring-buffer.h",
     "src/base/safe_conversions.h",
     "src/base/safe_conversions_impl.h",

@@ -26,11 +26,13 @@ void Isolate::set_context(Context* context) {
   thread_local_top_.context_ = context;
 }
 
-Handle<Context> Isolate::native_context() {
+Handle<NativeContext> Isolate::native_context() {
   return handle(context()->native_context(), this);
 }
 
-Context* Isolate::raw_native_context() { return context()->native_context(); }
+NativeContext* Isolate::raw_native_context() {
+  return context()->native_context();
+}
 
 Object* Isolate::pending_exception() {
   DCHECK(has_pending_exception());
@@ -56,17 +58,6 @@ bool Isolate::has_pending_exception() {
   return !thread_local_top_.pending_exception_->IsTheHole(this);
 }
 
-Object* Isolate::get_wasm_caught_exception() {
-  return thread_local_top_.wasm_caught_exception_;
-}
-
-void Isolate::set_wasm_caught_exception(Object* exception) {
-  thread_local_top_.wasm_caught_exception_ = exception;
-}
-
-void Isolate::clear_wasm_caught_exception() {
-  thread_local_top_.wasm_caught_exception_ = nullptr;
-}
 
 void Isolate::clear_pending_message() {
   thread_local_top_.pending_message_obj_ = ReadOnlyRoots(this).the_hole_value();

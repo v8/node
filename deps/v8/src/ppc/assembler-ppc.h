@@ -298,7 +298,6 @@ GENERAL_REGISTERS(DEFINE_REGISTER)
 constexpr Register no_reg = Register::no_reg();
 
 // Aliases
-constexpr Register kLithiumScratch = r11;        // lithium scratch.
 constexpr Register kConstantPoolRegister = r28;  // Constant pool.
 constexpr Register kRootRegister = r29;          // Roots array pointer.
 constexpr Register cp = r30;                     // JavaScript context pointer.
@@ -660,7 +659,6 @@ class Assembler : public AssemblerBase {
   template <class R>                                                     \
   inline void name(const R rt, const Register ra, const Register rb,     \
                    const RCBit rc = LeaveRC) {                           \
-    DCHECK(ra != r0);                                                    \
     x_form(instr_name, rt.code(), ra.code(), rb.code(), rc);             \
   }                                                                      \
   template <class R>                                                     \

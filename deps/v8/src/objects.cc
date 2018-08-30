@@ -59,10 +59,14 @@
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/frame-array-inl.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/js-array-inl.h"
 #ifdef V8_INTL_SUPPORT
 #include "src/objects/js-collator.h"
 #endif  // V8_INTL_SUPPORT
 #include "src/objects/js-collection-inl.h"
+#ifdef V8_INTL_SUPPORT
+#include "src/objects/js-date-time-format.h"
+#endif  // V8_INTL_SUPPORT
 #include "src/objects/js-generator-inl.h"
 #ifdef V8_INTL_SUPPORT
 #include "src/objects/js-list-format.h"
@@ -363,8 +367,17 @@ Handle<String> Object::NoSideEffectsToString(Isolate* isolate,
                                              Handle<Object> input) {
   DisallowJavascriptExecution no_js(isolate);
 
-  if (input->IsString() || input->IsNumeric() || input->IsOddball()) {
+  if (input->IsString() || input->IsNumber() || input->IsOddball()) {
     return Object::ToString(isolate, input).ToHandleChecked();
+  } else if (input->IsBigInt()) {
+    MaybeHandle<String> maybe_string =
+        BigInt::ToString(isolate, Handle<BigInt>::cast(input), 10, kDontThrow);
+    Handle<String> result;
+    if (maybe_string.ToHandle(&result)) return result;
+    // BigInt-to-String conversion can fail on 32-bit platforms where
+    // String::kMaxLength is too small to fit this BigInt.
+    return isolate->factory()->NewStringFromStaticChars(
+        "<a very large BigInt>");
   } else if (input->IsFunction()) {
     // -- F u n c t i o n
     Handle<String> fun_str;
@@ -1341,6 +1354,27 @@ MaybeHandle<JSObject> JSObject::New(Handle<JSFunction> constructor,
   return result;
 }
 
+// 9.1.12 ObjectCreate ( proto [ , internalSlotsList ] )
+// Notice: This is NOT 19.1.2.2 Object.create ( O, Properties )
+MaybeHandle<JSObject> JSObject::ObjectCreate(Isolate* isolate,
+                                             Handle<Object> prototype) {
+  // Generate the map with the specified {prototype} based on the Object
+  // function's initial map from the current native context.
+  // TODO(bmeurer): Use a dedicated cache for Object.create; think about
+  // slack tracking for Object.create.
+  Handle<Map> map =
+      Map::GetObjectCreateMap(isolate, Handle<HeapObject>::cast(prototype));
+
+  // Actually allocate the object.
+  Handle<JSObject> object;
+  if (map->is_dictionary_map()) {
+    object = isolate->factory()->NewSlowJSObjectFromMap(map);
+  } else {
+    object = isolate->factory()->NewJSObjectFromMap(map);
+  }
+  return object;
+}
+
 void JSObject::EnsureWritableFastElements(Handle<JSObject> object) {
   DCHECK(object->HasSmiOrObjectElements() ||
          object->HasFastStringWrapperElements());
@@ -1424,6 +1458,8 @@ int JSObject::GetHeaderSize(InstanceType type,
 #ifdef V8_INTL_SUPPORT
     case JS_INTL_COLLATOR_TYPE:
       return JSCollator::kSize;
+    case JS_INTL_DATE_TIME_FORMAT_TYPE:
+      return JSDateTimeFormat::kSize;
     case JS_INTL_LIST_FORMAT_TYPE:
       return JSListFormat::kSize;
     case JS_INTL_LOCALE_TYPE:
@@ -2590,7 +2626,7 @@ bool String::MakeExternal(v8::String::ExternalStringResource* resource) {
 #endif  // DEBUG
   int size = this->Size();  // Byte size of the original string.
   // Abort if size does not allow in-place conversion.
-  if (size < ExternalString::kShortSize) return false;
+  if (size < ExternalString::kUncachedSize) return false;
   Isolate* isolate;
   // Read-only strings cannot be made external, since that would mutate the
   // string.
@@ -2604,23 +2640,25 @@ bool String::MakeExternal(v8::String::ExternalStringResource* resource) {
   }
   // Morph the string to an external string by replacing the map and
   // reinitializing the fields.  This won't work if the space the existing
-  // string occupies is too small for a regular  external string.
-  // Instead, we resort to a short external string instead, omitting
-  // the field caching the address of the backing store.  When we encounter
-  // short external strings in generated code, we need to bailout to runtime.
+  // string occupies is too small for a regular external string.  Instead, we
+  // resort to an uncached external string instead, omitting the field caching
+  // the address of the backing store.  When we encounter uncached external
+  // strings in generated code, we need to bailout to runtime.
   Map* new_map;
   ReadOnlyRoots roots(heap);
   if (size < ExternalString::kSize) {
     if (is_internalized) {
-      new_map =
-          is_one_byte
-              ? roots
-                    .short_external_internalized_string_with_one_byte_data_map()
-              : roots.short_external_internalized_string_map();
+      if (is_one_byte) {
+        new_map =
+            roots
+                .uncached_external_internalized_string_with_one_byte_data_map();
+      } else {
+        new_map = roots.uncached_external_internalized_string_map();
+      }
     } else {
       new_map = is_one_byte
-                    ? roots.short_external_string_with_one_byte_data_map()
-                    : roots.short_external_string_map();
+                    ? roots.uncached_external_string_with_one_byte_data_map()
+                    : roots.uncached_external_string_map();
     }
   } else {
     new_map =
@@ -2675,7 +2713,7 @@ bool String::MakeExternal(v8::String::ExternalOneByteStringResource* resource) {
 #endif  // DEBUG
   int size = this->Size();  // Byte size of the original string.
   // Abort if size does not allow in-place conversion.
-  if (size < ExternalString::kShortSize) return false;
+  if (size < ExternalString::kUncachedSize) return false;
   Isolate* isolate;
   // Read-only strings cannot be made external, since that would mutate the
   // string.
@@ -2690,16 +2728,16 @@ bool String::MakeExternal(v8::String::ExternalOneByteStringResource* resource) {
 
   // Morph the string to an external string by replacing the map and
   // reinitializing the fields.  This won't work if the space the existing
-  // string occupies is too small for a regular  external string.
-  // Instead, we resort to a short external string instead, omitting
-  // the field caching the address of the backing store.  When we encounter
-  // short external strings in generated code, we need to bailout to runtime.
+  // string occupies is too small for a regular external string.  Instead, we
+  // resort to an uncached external string instead, omitting the field caching
+  // the address of the backing store.  When we encounter uncached external
+  // strings in generated code, we need to bailout to runtime.
   Map* new_map;
   ReadOnlyRoots roots(heap);
   if (size < ExternalString::kSize) {
     new_map = is_internalized
-                  ? roots.short_external_one_byte_internalized_string_map()
-                  : roots.short_external_one_byte_string_map();
+                  ? roots.uncached_external_one_byte_internalized_string_map()
+                  : roots.uncached_external_one_byte_string_map();
   } else {
     new_map = is_internalized
                   ? roots.external_one_byte_internalized_string_map()
@@ -3166,6 +3204,7 @@ VisitorId Map::GetVisitorId(Map* map) {
     case JS_REGEXP_STRING_ITERATOR_TYPE:
 #ifdef V8_INTL_SUPPORT
     case JS_INTL_COLLATOR_TYPE:
+    case JS_INTL_DATE_TIME_FORMAT_TYPE:
     case JS_INTL_LIST_FORMAT_TYPE:
     case JS_INTL_LOCALE_TYPE:
     case JS_INTL_PLURAL_RULES_TYPE:
@@ -3793,8 +3832,9 @@ void HeapObject::RehashBasedOnMap(Isolate* isolate) {
   }
 }
 
-// static
-Handle<String> JSReceiver::GetConstructorName(Handle<JSReceiver> receiver) {
+namespace {
+std::pair<MaybeHandle<JSFunction>, Handle<String>> GetConstructorHelper(
+    Handle<JSReceiver> receiver) {
   Isolate* isolate = receiver->GetIsolate();
 
   // If the object was instantiated simply with base == new.target, the
@@ -3809,37 +3849,61 @@ Handle<String> JSReceiver::GetConstructorName(Handle<JSReceiver> receiver) {
       String* name = constructor->shared()->DebugName();
       if (name->length() != 0 &&
           !name->Equals(ReadOnlyRoots(isolate).Object_string())) {
-        return handle(name, isolate);
+        return std::make_pair(handle(constructor, isolate),
+                              handle(name, isolate));
       }
     } else if (maybe_constructor->IsFunctionTemplateInfo()) {
       FunctionTemplateInfo* info =
           FunctionTemplateInfo::cast(maybe_constructor);
       if (info->class_name()->IsString()) {
-        return handle(String::cast(info->class_name()), isolate);
+        return std::make_pair(
+            MaybeHandle<JSFunction>(),
+            handle(String::cast(info->class_name()), isolate));
       }
     }
   }
 
   Handle<Object> maybe_tag = JSReceiver::GetDataProperty(
       receiver, isolate->factory()->to_string_tag_symbol());
-  if (maybe_tag->IsString()) return Handle<String>::cast(maybe_tag);
+  if (maybe_tag->IsString())
+    return std::make_pair(MaybeHandle<JSFunction>(),
+                          Handle<String>::cast(maybe_tag));
 
   PrototypeIterator iter(isolate, receiver);
-  if (iter.IsAtEnd()) return handle(receiver->class_name(), isolate);
+  if (iter.IsAtEnd()) {
+    return std::make_pair(MaybeHandle<JSFunction>(),
+                          handle(receiver->class_name(), isolate));
+  }
+
   Handle<JSReceiver> start = PrototypeIterator::GetCurrent<JSReceiver>(iter);
   LookupIterator it(receiver, isolate->factory()->constructor_string(), start,
                     LookupIterator::PROTOTYPE_CHAIN_SKIP_INTERCEPTOR);
   Handle<Object> maybe_constructor = JSReceiver::GetDataProperty(&it);
-  Handle<String> result = isolate->factory()->Object_string();
   if (maybe_constructor->IsJSFunction()) {
     JSFunction* constructor = JSFunction::cast(*maybe_constructor);
     String* name = constructor->shared()->DebugName();
-    if (name->length() > 0) result = handle(name, isolate);
+
+    if (name->length() != 0 &&
+        !name->Equals(ReadOnlyRoots(isolate).Object_string())) {
+      return std::make_pair(handle(constructor, isolate),
+                            handle(name, isolate));
+    }
   }
 
-  return result.is_identical_to(isolate->factory()->Object_string())
-             ? handle(receiver->class_name(), isolate)
-             : result;
+  return std::make_pair(MaybeHandle<JSFunction>(),
+                        handle(receiver->class_name(), isolate));
+}
+}  // anonymous namespace
+
+// static
+MaybeHandle<JSFunction> JSReceiver::GetConstructor(
+    Handle<JSReceiver> receiver) {
+  return GetConstructorHelper(receiver).first;
+}
+
+// static
+Handle<String> JSReceiver::GetConstructorName(Handle<JSReceiver> receiver) {
+  return GetConstructorHelper(receiver).second;
 }
 
 Handle<Context> JSReceiver::GetCreationContext() {
@@ -10462,13 +10526,15 @@ bool WeakArrayList::IsFull() { return length() == capacity(); }
 // static
 Handle<WeakArrayList> WeakArrayList::EnsureSpace(Isolate* isolate,
                                                  Handle<WeakArrayList> array,
-                                                 int length) {
+                                                 int length,
+                                                 PretenureFlag pretenure) {
   int capacity = array->capacity();
   if (capacity < length) {
     int new_capacity = length;
     new_capacity = new_capacity + Max(new_capacity / 2, 2);
     int grow_by = new_capacity - capacity;
-    array = isolate->factory()->CopyWeakArrayListAndGrow(array, grow_by);
+    array =
+        isolate->factory()->CopyWeakArrayListAndGrow(array, grow_by, pretenure);
   }
   return array;
 }
@@ -10549,7 +10615,8 @@ Handle<WeakArrayList> PrototypeUsers::Add(Isolate* isolate,
 }
 
 WeakArrayList* PrototypeUsers::Compact(Handle<WeakArrayList> array, Heap* heap,
-                                       CompactionCallback callback) {
+                                       CompactionCallback callback,
+                                       PretenureFlag pretenure) {
   if (array->length() == 0) {
     return *array;
   }
@@ -10561,7 +10628,7 @@ WeakArrayList* PrototypeUsers::Compact(Handle<WeakArrayList> array, Heap* heap,
   Handle<WeakArrayList> new_array = WeakArrayList::EnsureSpace(
       heap->isolate(),
       handle(ReadOnlyRoots(heap).empty_weak_array_list(), heap->isolate()),
-      new_length);
+      new_length, pretenure);
   // Allocation might have caused GC and turned some of the elements into
   // cleared weak heap objects. Count the number of live objects again.
   int copy_to = kFirstIndex;
@@ -13078,7 +13145,10 @@ bool CanSubclassHaveInobjectProperties(InstanceType instance_type) {
     case JS_GENERATOR_OBJECT_TYPE:
 #ifdef V8_INTL_SUPPORT
     case JS_INTL_COLLATOR_TYPE:
+    case JS_INTL_DATE_TIME_FORMAT_TYPE:
+    case JS_INTL_LIST_FORMAT_TYPE:
     case JS_INTL_PLURAL_RULES_TYPE:
+    case JS_INTL_RELATIVE_TIME_FORMAT_TYPE:
 #endif
     case JS_ASYNC_GENERATOR_OBJECT_TYPE:
     case JS_MAP_TYPE:
@@ -14321,11 +14391,11 @@ void Code::CopyFrom(Heap* heap, const CodeDesc& desc) {
 }
 
 void Code::CopyFromNoFlush(Heap* heap, const CodeDesc& desc) {
-  // copy code
+  // Copy code.
   CopyBytes(reinterpret_cast<byte*>(raw_instruction_start()), desc.buffer,
             static_cast<size_t>(desc.instr_size));
 
-  // copy unwinding info, if any
+  // Copy unwinding info, if any.
   if (desc.unwinding_info) {
     DCHECK_GT(desc.unwinding_info_size, 0);
     set_unwinding_info_size(desc.unwinding_info_size);
@@ -14334,20 +14404,15 @@ void Code::CopyFromNoFlush(Heap* heap, const CodeDesc& desc) {
               static_cast<size_t>(desc.unwinding_info_size));
   }
 
-  // copy reloc info
+  // Copy reloc info.
   CopyBytes(relocation_start(),
             desc.buffer + desc.buffer_size - desc.reloc_size,
             static_cast<size_t>(desc.reloc_size));
 
-  // unbox handles and relocate
-  int mode_mask = RelocInfo::ModeMask(RelocInfo::CODE_TARGET) |
-                  RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT) |
-                  RelocInfo::ModeMask(RelocInfo::RUNTIME_ENTRY) |
-                  RelocInfo::ModeMask(RelocInfo::RELATIVE_CODE_TARGET) |
-                  RelocInfo::kApplyMask;
-  // Needed to find target_object and runtime_entry on X64
+  // Unbox handles and relocate.
   Assembler* origin = desc.origin;
   AllowDeferredHandleDereference embedding_raw_address;
+  const int mode_mask = RelocInfo::PostCodegenRelocationMask();
   for (RelocIterator it(this, mode_mask); !it.done(); it.next()) {
     RelocInfo::Mode mode = it.rinfo()->rmode();
     if (mode == RelocInfo::EMBEDDED_OBJECT) {
@@ -14355,8 +14420,8 @@ void Code::CopyFromNoFlush(Heap* heap, const CodeDesc& desc) {
       it.rinfo()->set_target_object(heap, *p, UPDATE_WRITE_BARRIER,
                                     SKIP_ICACHE_FLUSH);
     } else if (RelocInfo::IsCodeTargetMode(mode)) {
-      // rewrite code handles to direct pointers to the first instruction in the
-      // code object
+      // Rewrite code handles to direct pointers to the first instruction in the
+      // code object.
       Handle<Object> p = it.rinfo()->target_object_handle(origin);
       Code* code = Code::cast(*p);
       it.rinfo()->set_target_address(code->raw_instruction_start(),
@@ -14565,9 +14630,14 @@ bool Code::IsIsolateIndependent(Isolate* isolate) {
 
   bool is_process_independent = true;
   for (RelocIterator it(this, mode_mask); !it.done(); it.next()) {
+#if defined(V8_TARGET_ARCH_X64) || defined(V8_TARGET_ARCH_ARM64) || \
+    defined(V8_TARGET_ARCH_ARM)
+    // On X64, ARM, ARM64 we emit relative builtin-to-builtin jumps for isolate
+    // independent builtins in the snapshot. They are later rewritten as
+    // pc-relative jumps to the off-heap instruction stream and are thus
+    // process-independent.
+    // See also: FinalizeEmbeddedCodeTargets.
     if (RelocInfo::IsCodeTargetMode(it.rinfo()->rmode())) {
-      // Off-heap code targets are later rewritten as pc-relative jumps to the
-      // off-heap instruction stream and are thus process-independent.
       Address target_address = it.rinfo()->target_address();
       if (InstructionStream::PcIsOffHeap(isolate, target_address)) continue;
 
@@ -14575,6 +14645,7 @@ bool Code::IsIsolateIndependent(Isolate* isolate) {
       CHECK(target->IsCode());
       if (Builtins::IsIsolateIndependentBuiltin(target)) continue;
     }
+#endif
     is_process_independent = false;
   }
 
@@ -14883,6 +14954,24 @@ void Code::PrintBuiltinCode(Isolate* isolate, const char* name) {
   }
 }
 
+namespace {
+
+inline void DisassembleCodeRange(Isolate* isolate, std::ostream& os, Code* code,
+                                 Address begin, size_t size,
+                                 Address current_pc) {
+  Address end = begin + size;
+  // TODO(mstarzinger): Refactor CodeReference to avoid the
+  // unhandlified->handlified transition.
+  AllowHandleAllocation allow_handles;
+  DisallowHeapAllocation no_gc;
+  HandleScope handle_scope(isolate);
+  Disassembler::Decode(isolate, &os, reinterpret_cast<byte*>(begin),
+                       reinterpret_cast<byte*>(end),
+                       CodeReference(handle(code, isolate)), current_pc);
+}
+
+}  // namespace
+
 void Code::Disassemble(const char* name, std::ostream& os, Address current_pc) {
   Isolate* isolate = GetIsolate();
   os << "kind = " << Kind2String(kind()) << "\n";
@@ -14901,9 +14990,16 @@ void Code::Disassemble(const char* name, std::ostream& os, Address current_pc) {
     os << "stack_slots = " << stack_slots() << "\n";
   }
   os << "compiler = " << (is_turbofanned() ? "turbofan" : "unknown") << "\n";
-  os << "address = " << static_cast<const void*>(this) << "\n";
+  os << "address = " << static_cast<const void*>(this) << "\n\n";
 
-  os << "Body (size = " << InstructionSize() << ")\n";
+  if (is_off_heap_trampoline()) {
+    int trampoline_size = raw_instruction_size();
+    os << "Trampoline (size = " << trampoline_size << ")\n";
+    DisassembleCodeRange(isolate, os, this, raw_instruction_start(),
+                         trampoline_size, current_pc);
+    os << "\n";
+  }
+
   {
     int size = InstructionSize();
     int safepoint_offset =
@@ -14915,25 +15011,16 @@ void Code::Disassemble(const char* name, std::ostream& os, Address current_pc) {
     int code_size =
         Min(handler_offset, Min(safepoint_offset, constant_pool_offset));
     os << "Instructions (size = " << code_size << ")\n";
-    Address begin = InstructionStart();
-    Address end = begin + code_size;
-    {
-      // TODO(mstarzinger): Refactor CodeReference to avoid the
-      // unhandlified->handlified transition.
-      AllowHandleAllocation allow_handles;
-      DisallowHeapAllocation no_gc;
-      HandleScope handle_scope(isolate);
-      Disassembler::Decode(isolate, &os, reinterpret_cast<byte*>(begin),
-                           reinterpret_cast<byte*>(end),
-                           CodeReference(handle(this, isolate)), current_pc);
-    }
+    DisassembleCodeRange(isolate, os, this, InstructionStart(), code_size,
+                         current_pc);
 
     if (constant_pool_offset < size) {
       int constant_pool_size = safepoint_offset - constant_pool_offset;
       DCHECK_EQ(constant_pool_size & kPointerAlignmentMask, 0);
       os << "\nConstant Pool (size = " << constant_pool_size << ")\n";
       Vector<char> buf = Vector<char>::New(50);
-      intptr_t* ptr = reinterpret_cast<intptr_t*>(begin + constant_pool_offset);
+      intptr_t* ptr = reinterpret_cast<intptr_t*>(InstructionStart() +
+                                                  constant_pool_offset);
       for (int i = 0; i < constant_pool_size; i += kPointerSize, ptr++) {
         SNPrintF(buf, "%4d %08" V8PRIxPTR, i, *ptr);
         os << static_cast<const void*>(ptr) << "  " << buf.start() << "\n";
@@ -16874,128 +16961,6 @@ uint32_t HashTable<Derived, Shape>::FindInsertionEntry(uint32_t hash) {
   return entry;
 }
 
-namespace {
-
-bool CanonicalNumericIndexString(Isolate* isolate, Handle<Object> s,
-                                 Handle<Object>* index) {
-  DCHECK(s->IsString() || s->IsSmi());
-
-  Handle<Object> result;
-  if (s->IsSmi()) {
-    result = s;
-  } else {
-    result = String::ToNumber(isolate, Handle<String>::cast(s));
-    if (!result->IsMinusZero()) {
-      Handle<String> str = Object::ToString(isolate, result).ToHandleChecked();
-      // Avoid treating strings like "2E1" and "20" as the same key.
-      if (!str->SameValue(*s)) return false;
-    }
-  }
-  *index = result;
-  return true;
-}
-
-}  // anonymous namespace
-
-// ES#sec-integer-indexed-exotic-objects-defineownproperty-p-desc
-// static
-Maybe<bool> JSTypedArray::DefineOwnProperty(Isolate* isolate,
-                                            Handle<JSTypedArray> o,
-                                            Handle<Object> key,
-                                            PropertyDescriptor* desc,
-                                            ShouldThrow should_throw) {
-  // 1. Assert: IsPropertyKey(P) is true.
-  DCHECK(key->IsName() || key->IsNumber());
-  // 2. Assert: O is an Object that has a [[ViewedArrayBuffer]] internal slot.
-  // 3. If Type(P) is String, then
-  if (key->IsString() || key->IsSmi()) {
-    // 3a. Let numericIndex be ! CanonicalNumericIndexString(P)
-    // 3b. If numericIndex is not undefined, then
-    Handle<Object> numeric_index;
-    if (CanonicalNumericIndexString(isolate, key, &numeric_index)) {
-      // 3b i. If IsInteger(numericIndex) is false, return false.
-      // 3b ii. If numericIndex = -0, return false.
-      // 3b iii. If numericIndex < 0, return false.
-      // FIXME: the standard allows up to 2^53 elements.
-      uint32_t index;
-      if (numeric_index->IsMinusZero() || !numeric_index->ToUint32(&index)) {
-        RETURN_FAILURE(isolate, should_throw,
-                       NewTypeError(MessageTemplate::kInvalidTypedArrayIndex));
-      }
-      // 3b iv. Let length be O.[[ArrayLength]].
-      uint32_t length = o->length()->Number();
-      // 3b v. If numericIndex ≥ length, return false.
-      if (index >= length) {
-        RETURN_FAILURE(isolate, should_throw,
-                       NewTypeError(MessageTemplate::kInvalidTypedArrayIndex));
-      }
-      // 3b vi. If IsAccessorDescriptor(Desc) is true, return false.
-      if (PropertyDescriptor::IsAccessorDescriptor(desc)) {
-        RETURN_FAILURE(isolate, should_throw,
-                       NewTypeError(MessageTemplate::kRedefineDisallowed, key));
-      }
-      // 3b vii. If Desc has a [[Configurable]] field and if
-      //         Desc.[[Configurable]] is true, return false.
-      // 3b viii. If Desc has an [[Enumerable]] field and if Desc.[[Enumerable]]
-      //          is false, return false.
-      // 3b ix. If Desc has a [[Writable]] field and if Desc.[[Writable]] is
-      //        false, return false.
-      if ((desc->has_configurable() && desc->configurable()) ||
-          (desc->has_enumerable() && !desc->enumerable()) ||
-          (desc->has_writable() && !desc->writable())) {
-        RETURN_FAILURE(isolate, should_throw,
-                       NewTypeError(MessageTemplate::kRedefineDisallowed, key));
-      }
-      // 3b x. If Desc has a [[Value]] field, then
-      //   3b x 1. Let value be Desc.[[Value]].
-      //   3b x 2. Return ? IntegerIndexedElementSet(O, numericIndex, value).
-      if (desc->has_value()) {
-        if (!desc->has_configurable()) desc->set_configurable(false);
-        if (!desc->has_enumerable()) desc->set_enumerable(true);
-        if (!desc->has_writable()) desc->set_writable(true);
-        Handle<Object> value = desc->value();
-        RETURN_ON_EXCEPTION_VALUE(isolate,
-                                  SetOwnElementIgnoreAttributes(
-                                      o, index, value, desc->ToAttributes()),
-                                  Nothing<bool>());
-      }
-      // 3b xi. Return true.
-      return Just(true);
-    }
-  }
-  // 4. Return ! OrdinaryDefineOwnProperty(O, P, Desc).
-  return OrdinaryDefineOwnProperty(isolate, o, key, desc, should_throw);
-}
-
-ExternalArrayType JSTypedArray::type() {
-  switch (elements()->map()->instance_type()) {
-#define INSTANCE_TYPE_TO_ARRAY_TYPE(Type, type, TYPE, ctype) \
-  case FIXED_##TYPE##_ARRAY_TYPE:                            \
-    return kExternal##Type##Array;
-
-    TYPED_ARRAYS(INSTANCE_TYPE_TO_ARRAY_TYPE)
-#undef INSTANCE_TYPE_TO_ARRAY_TYPE
-
-    default:
-      UNREACHABLE();
-  }
-}
-
-
-size_t JSTypedArray::element_size() {
-  switch (elements()->map()->instance_type()) {
-#define INSTANCE_TYPE_TO_ELEMENT_SIZE(Type, type, TYPE, ctype) \
-  case FIXED_##TYPE##_ARRAY_TYPE:                              \
-    return sizeof(ctype);
-
-    TYPED_ARRAYS(INSTANCE_TYPE_TO_ELEMENT_SIZE)
-#undef INSTANCE_TYPE_TO_ELEMENT_SIZE
-
-    default:
-      UNREACHABLE();
-  }
-}
-
 void JSGlobalObject::InvalidatePropertyCell(Handle<JSGlobalObject> global,
                                             Handle<Name> name) {
   // Regardless of whether the property is there or not invalidate
@@ -18647,187 +18612,6 @@ Handle<String> JSMessageObject::GetSourceLine() const {
 
   Handle<String> src = handle(String::cast(the_script->source()), isolate);
   return isolate->factory()->NewSubString(src, info.line_start, info.line_end);
-}
-
-void JSArrayBuffer::Neuter() {
-  CHECK(is_neuterable());
-  CHECK(!was_neutered());
-  CHECK(is_external());
-  set_backing_store(nullptr);
-  set_byte_length(Smi::kZero);
-  set_was_neutered(true);
-  set_is_neuterable(false);
-  // Invalidate the neutering protector.
-  Isolate* const isolate = GetIsolate();
-  if (isolate->IsArrayBufferNeuteringIntact()) {
-    isolate->InvalidateArrayBufferNeuteringProtector();
-  }
-}
-
-void JSArrayBuffer::StopTrackingWasmMemory(Isolate* isolate) {
-  DCHECK(is_wasm_memory());
-  isolate->wasm_engine()->memory_tracker()->ReleaseAllocation(isolate,
-                                                              backing_store());
-  set_is_wasm_memory(false);
-}
-
-void JSArrayBuffer::FreeBackingStoreFromMainThread() {
-  if (allocation_base() == nullptr) {
-    return;
-  }
-  FreeBackingStore(GetIsolate(), {allocation_base(), allocation_length(),
-                                  backing_store(), is_wasm_memory()});
-  // Zero out the backing store and allocation base to avoid dangling
-  // pointers.
-  set_backing_store(nullptr);
-}
-
-// static
-void JSArrayBuffer::FreeBackingStore(Isolate* isolate, Allocation allocation) {
-  if (allocation.is_wasm_memory) {
-    wasm::WasmMemoryTracker* memory_tracker =
-        isolate->wasm_engine()->memory_tracker();
-    if (!memory_tracker->FreeMemoryIfIsWasmMemory(isolate,
-                                                  allocation.backing_store)) {
-      CHECK(FreePages(allocation.allocation_base, allocation.length));
-    }
-  } else {
-    isolate->array_buffer_allocator()->Free(allocation.allocation_base,
-                                            allocation.length);
-  }
-}
-
-void JSArrayBuffer::set_is_wasm_memory(bool is_wasm_memory) {
-  set_bit_field(IsWasmMemory::update(bit_field(), is_wasm_memory));
-}
-
-void JSArrayBuffer::Setup(Handle<JSArrayBuffer> array_buffer, Isolate* isolate,
-                          bool is_external, void* data, size_t byte_length,
-                          SharedFlag shared, bool is_wasm_memory) {
-  DCHECK_EQ(array_buffer->GetEmbedderFieldCount(),
-            v8::ArrayBuffer::kEmbedderFieldCount);
-  for (int i = 0; i < v8::ArrayBuffer::kEmbedderFieldCount; i++) {
-    array_buffer->SetEmbedderField(i, Smi::kZero);
-  }
-  array_buffer->set_bit_field(0);
-  array_buffer->set_is_external(is_external);
-  array_buffer->set_is_neuterable(shared == SharedFlag::kNotShared);
-  array_buffer->set_is_shared(shared == SharedFlag::kShared);
-  array_buffer->set_is_wasm_memory(is_wasm_memory);
-
-  Handle<Object> heap_byte_length =
-      isolate->factory()->NewNumberFromSize(byte_length);
-  CHECK(heap_byte_length->IsSmi() || heap_byte_length->IsHeapNumber());
-  array_buffer->set_byte_length(*heap_byte_length);
-  // Initialize backing store at last to avoid handling of |JSArrayBuffers| that
-  // are currently being constructed in the |ArrayBufferTracker|. The
-  // registration method below handles the case of registering a buffer that has
-  // already been promoted.
-  array_buffer->set_backing_store(data);
-
-  if (data && !is_external) {
-    isolate->heap()->RegisterNewArrayBuffer(*array_buffer);
-  }
-}
-
-namespace {
-
-inline int ConvertToMb(size_t size) {
-  return static_cast<int>(size / static_cast<size_t>(MB));
-}
-
-}  // namespace
-
-bool JSArrayBuffer::SetupAllocatingData(Handle<JSArrayBuffer> array_buffer,
-                                        Isolate* isolate,
-                                        size_t allocated_length,
-                                        bool initialize, SharedFlag shared) {
-  void* data;
-  CHECK_NOT_NULL(isolate->array_buffer_allocator());
-  if (allocated_length != 0) {
-    if (allocated_length >= MB)
-      isolate->counters()->array_buffer_big_allocations()->AddSample(
-          ConvertToMb(allocated_length));
-    if (shared == SharedFlag::kShared)
-      isolate->counters()->shared_array_allocations()->AddSample(
-          ConvertToMb(allocated_length));
-    if (initialize) {
-      data = isolate->array_buffer_allocator()->Allocate(allocated_length);
-    } else {
-      data = isolate->array_buffer_allocator()->AllocateUninitialized(
-          allocated_length);
-    }
-    if (data == nullptr) {
-      isolate->counters()->array_buffer_new_size_failures()->AddSample(
-          ConvertToMb(allocated_length));
-      return false;
-    }
-  } else {
-    data = nullptr;
-  }
-
-  const bool is_external = false;
-  JSArrayBuffer::Setup(array_buffer, isolate, is_external, data,
-                       allocated_length, shared);
-  return true;
-}
-
-Handle<JSArrayBuffer> JSTypedArray::MaterializeArrayBuffer(
-    Handle<JSTypedArray> typed_array) {
-  DCHECK(typed_array->is_on_heap());
-
-  Isolate* isolate = typed_array->GetIsolate();
-
-  DCHECK(IsFixedTypedArrayElementsKind(typed_array->GetElementsKind()));
-
-  Handle<FixedTypedArrayBase> fixed_typed_array(
-      FixedTypedArrayBase::cast(typed_array->elements()), isolate);
-
-  Handle<JSArrayBuffer> buffer(JSArrayBuffer::cast(typed_array->buffer()),
-                               isolate);
-  // This code does not know how to materialize from wasm buffers.
-  DCHECK(!buffer->is_wasm_memory());
-
-  void* backing_store =
-      isolate->array_buffer_allocator()->AllocateUninitialized(
-          fixed_typed_array->DataSize());
-  if (backing_store == nullptr) {
-    isolate->heap()->FatalProcessOutOfMemory(
-        "JSTypedArray::MaterializeArrayBuffer");
-  }
-  buffer->set_is_external(false);
-  DCHECK(buffer->byte_length()->IsSmi() ||
-         buffer->byte_length()->IsHeapNumber());
-  DCHECK(NumberToInt32(buffer->byte_length()) == fixed_typed_array->DataSize());
-  // Initialize backing store at last to avoid handling of |JSArrayBuffers| that
-  // are currently being constructed in the |ArrayBufferTracker|. The
-  // registration method below handles the case of registering a buffer that has
-  // already been promoted.
-  buffer->set_backing_store(backing_store);
-  // RegisterNewArrayBuffer expects a valid length for adjusting counters.
-  isolate->heap()->RegisterNewArrayBuffer(*buffer);
-  memcpy(buffer->backing_store(),
-         fixed_typed_array->DataPtr(),
-         fixed_typed_array->DataSize());
-  Handle<FixedTypedArrayBase> new_elements =
-      isolate->factory()->NewFixedTypedArrayWithExternalPointer(
-          fixed_typed_array->length(), typed_array->type(),
-          static_cast<uint8_t*>(buffer->backing_store()));
-
-  typed_array->set_elements(*new_elements);
-  DCHECK(!typed_array->is_on_heap());
-
-  return buffer;
-}
-
-Handle<JSArrayBuffer> JSTypedArray::GetBuffer() {
-  if (!is_on_heap()) {
-    Handle<JSArrayBuffer> array_buffer(JSArrayBuffer::cast(buffer()),
-                                       GetIsolate());
-    return array_buffer;
-  }
-  Handle<JSTypedArray> self(this, GetIsolate());
-  return MaterializeArrayBuffer(self);
 }
 
 Handle<PropertyCell> PropertyCell::InvalidateEntry(

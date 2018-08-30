@@ -7,7 +7,6 @@
 #include "src/char-predicates-inl.h"
 #include "src/conversions.h"
 #include "src/flags.h"
-#include "src/parsing/scanner-character-streams.h"
 #include "src/parsing/scanner.h"
 #include "src/unicode-cache.h"
 
@@ -20,7 +19,7 @@ namespace {
 static const int kMaxIdentifierCount = 0xF000000;
 };
 
-AsmJsScanner::AsmJsScanner(CharacterStream<uint16_t>* stream, int start)
+AsmJsScanner::AsmJsScanner(Utf16CharacterStream* stream)
     : stream_(stream),
       token_(kUninitialized),
       preceding_token_(kUninitialized),
@@ -34,7 +33,6 @@ AsmJsScanner::AsmJsScanner(CharacterStream<uint16_t>* stream, int start)
       double_value_(0.0),
       unsigned_value_(0),
       preceded_by_newline_(false) {
-  stream->Seek(start);
 #define V(name, _junk1, _junk2, _junk3) property_names_[#name] = kToken_##name;
   STDLIB_MATH_FUNCTION_LIST(V)
   STDLIB_ARRAY_TYPE_LIST(V)

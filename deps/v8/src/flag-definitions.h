@@ -389,6 +389,7 @@ DEFINE_BOOL(block_concurrent_recompilation, false,
             "block queued jobs until released")
 DEFINE_BOOL(concurrent_compiler_frontend, false,
             "run optimizing compiler's frontend phases on a separate thread")
+DEFINE_IMPLICATION(future, concurrent_compiler_frontend)
 DEFINE_BOOL(strict_heap_broker, false, "fail on incomplete serialization")
 DEFINE_BOOL(trace_heap_broker, false, "trace the heap broker")
 
@@ -535,11 +536,11 @@ DEFINE_BOOL(wasm_disable_structured_cloning, false,
             "disable wasm structured cloning")
 DEFINE_INT(wasm_num_compilation_tasks, 10,
            "number of parallel compilation tasks for wasm")
-DEFINE_DEBUG_BOOL(wasm_trace_native_heap, false,
+DEFINE_DEBUG_BOOL(trace_wasm_native_heap, false,
                   "trace wasm native heap events")
 DEFINE_BOOL(wasm_write_protect_code_memory, false,
             "write protect code memory on the wasm native heap")
-DEFINE_BOOL(wasm_trace_serialization, false,
+DEFINE_BOOL(trace_wasm_serialization, false,
             "trace serialization/deserialization")
 DEFINE_BOOL(wasm_async_compilation, true,
             "enable actual asynchronous compilation for WebAssembly.compile")
@@ -579,7 +580,7 @@ DEFINE_DEBUG_BOOL(trace_liftoff, false,
                   "trace Liftoff, the baseline compiler for WebAssembly")
 DEFINE_DEBUG_BOOL(wasm_break_on_decoder_error, false,
                   "debug break when wasm decoder encounters an error")
-DEFINE_BOOL(wasm_trace_memory, false,
+DEFINE_BOOL(trace_wasm_memory, false,
             "print all memory updates performed in wasm code")
 // Fuzzers use {wasm_tier_mask_for_testing} together with {liftoff} and
 // {no_wasm_tier_up} to force some functions to be compiled with Turbofan.
@@ -621,7 +622,7 @@ DEFINE_BOOL(wasm_no_stack_checks, false,
 DEFINE_BOOL(wasm_shared_engine, true,
             "shares one wasm engine between all isolates within a process")
 DEFINE_IMPLICATION(future, wasm_shared_engine)
-DEFINE_BOOL(wasm_shared_code, false,
+DEFINE_BOOL(wasm_shared_code, true,
             "shares code underlying a wasm module when it is transferred")
 DEFINE_IMPLICATION(future, wasm_shared_code)
 DEFINE_BOOL(wasm_trap_handler, true,
@@ -978,7 +979,6 @@ DEFINE_INT(heap_snapshot_string_limit, 1024,
 DEFINE_BOOL(sampling_heap_profiler_suppress_randomness, false,
             "Use constant sample intervals to eliminate test flakiness")
 
-
 // v8.cc
 DEFINE_BOOL(use_idle_notification, true,
             "Use idle notification to reduce memory footprint.")
@@ -1084,6 +1084,13 @@ DEFINE_VALUE_IMPLICATION(runtime_call_stats, runtime_stats, 1)
 #endif
 DEFINE_BOOL_READONLY(embedded_builtins, V8_EMBEDDED_BUILTINS_BOOL,
                      "Embed builtin code into the binary.")
+// TODO(jgruber,v8:6666): Remove once ia32 has full embedded builtin support.
+DEFINE_BOOL_READONLY(
+    ia32_verify_root_register, false,
+    "Check that the value of the root register was not clobbered.")
+// TODO(jgruber,v8:6666): Remove once ia32 has full embedded builtin support.
+DEFINE_BOOL(print_embedded_builtin_candidates, false,
+            "Prints builtins that are not yet embedded but could be.")
 DEFINE_BOOL(lazy_deserialization, true,
             "Deserialize code lazily from the snapshot.")
 DEFINE_BOOL(lazy_handler_deserialization, true,
@@ -1145,6 +1152,8 @@ DEFINE_BOOL(use_external_strings, false, "Use external strings for source code")
 DEFINE_STRING(map_counters, "", "Map counters to a file")
 DEFINE_ARGS(js_arguments,
             "Pass all remaining arguments to the script. Alias for \"--\".")
+DEFINE_BOOL(mock_arraybuffer_allocator, false,
+            "Use a mock ArrayBuffer allocator for testing.")
 
 //
 // GDB JIT integration flags.
@@ -1258,7 +1267,7 @@ DEFINE_BOOL(log_function_events, false,
 DEFINE_BOOL(prof, false,
             "Log statistical profiling information (implies --log-code).")
 
-DEFINE_BOOL(detailed_line_info, true,
+DEFINE_BOOL(detailed_line_info, false,
             "Always generate detailed line information for CPU profiling.")
 
 #if defined(ANDROID)

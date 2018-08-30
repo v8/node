@@ -264,6 +264,7 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kArmLdrsh:
     case kArmLdr:
     case kArmPeek:
+    case kArmWord32AtomicPairLoad:
       return kIsLoadOperation;
 
     case kArmVstrF32:
@@ -276,6 +277,14 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kArmPush:
     case kArmPoke:
     case kArmDsbIsb:
+    case kArmWord32AtomicPairStore:
+    case kArmWord32AtomicPairAdd:
+    case kArmWord32AtomicPairSub:
+    case kArmWord32AtomicPairAnd:
+    case kArmWord32AtomicPairOr:
+    case kArmWord32AtomicPairXor:
+    case kArmWord32AtomicPairExchange:
+    case kArmWord32AtomicPairCompareExchange:
       return kHasSideEffect;
 
 #define CASE(Name) case k##Name:

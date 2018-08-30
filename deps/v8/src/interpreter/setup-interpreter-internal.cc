@@ -4,6 +4,7 @@
 
 #include "src/interpreter/setup-interpreter.h"
 
+#include "src/assembler.h"
 #include "src/handles-inl.h"
 #include "src/interpreter/bytecodes.h"
 #include "src/interpreter/interpreter-generator.h"
@@ -80,7 +81,12 @@ void SetupInterpreter::InstallBytecodeHandler(Isolate* isolate,
   if (!Bytecodes::BytecodeHasHandler(bytecode, operand_scale)) return;
 
   size_t index = Interpreter::GetDispatchTableIndex(bytecode, operand_scale);
-  Handle<Code> code = GenerateBytecodeHandler(isolate, bytecode, operand_scale);
+  // Here we explicitly set the bytecode handler to not be a builtin with an
+  // index of kNoBuiltinId.
+  // TODO(delphick): Use builtins version instead.
+  Handle<Code> code = GenerateBytecodeHandler(
+      isolate, bytecode, operand_scale, Builtins::kNoBuiltinId,
+      AssemblerOptions::Default(isolate));
   dispatch_table[index] = code->entry();
 
   if (FLAG_print_builtin_size) PrintBuiltinSize(bytecode, operand_scale, code);

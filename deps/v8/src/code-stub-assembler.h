@@ -382,6 +382,12 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     return p_o;
   }
 
+  TNode<Object> UnsafeCastObjectToLoadFn(TNode<Object> p_o) { return p_o; }
+  TNode<Object> UnsafeCastObjectToStoreFn(TNode<Object> p_o) { return p_o; }
+  TNode<Object> UnsafeCastObjectToCanUseSameAccessorFn(TNode<Object> p_o) {
+    return p_o;
+  }
+
   TNode<NumberDictionary> UnsafeCastObjectToNumberDictionary(
       TNode<Object> p_o) {
     return CAST(p_o);
@@ -520,6 +526,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   SMI_ARITHMETIC_BINOP(SmiAnd, WordAnd, Word32And)
   SMI_ARITHMETIC_BINOP(SmiOr, WordOr, Word32Or)
 #undef SMI_ARITHMETIC_BINOP
+  TNode<Smi> SmiInc(TNode<Smi> value) { return SmiAdd(value, SmiConstant(1)); }
 
   TNode<Smi> TrySmiAdd(TNode<Smi> a, TNode<Smi> b, Label* if_overflow);
   TNode<Smi> TrySmiSub(TNode<Smi> a, TNode<Smi> b, Label* if_overflow);
@@ -747,7 +754,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   void BranchIfJSReceiver(Node* object, Label* if_true, Label* if_false);
 
   void BranchIfFastJSArray(Node* object, Node* context, Label* if_true,
-                           Label* if_false);
+                           Label* if_false, bool iteration_only = false);
   void BranchIfNotFastJSArray(Node* object, Node* context, Label* if_true,
                               Label* if_false) {
     BranchIfFastJSArray(object, context, if_false, if_true);
@@ -1049,6 +1056,16 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                                        SMI_PARAMETERS);
   }
 
+  // Load an array element from a FixedArray, FixedDoubleArray or a
+  // NumberDictionary (depending on the |elements_kind|) and return
+  // it as a tagged value. Assumes that the |index| passed a length
+  // check before. Bails out to |if_accessor| if the element that
+  // was found is an accessor, or to |if_hole| if the element at
+  // the given |index| is not found in |elements|.
+  TNode<Object> LoadFixedArrayBaseElementAsTagged(
+      TNode<FixedArrayBase> elements, TNode<IntPtrT> index,
+      TNode<Int32T> elements_kind, Label* if_accessor, Label* if_hole);
+
   // Load a feedback slot from a FeedbackVector.
   TNode<MaybeObject> LoadFeedbackVectorSlot(
       Node* object, Node* index, int additional_offset = 0,
@@ -1070,6 +1087,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* LoadFixedTypedArrayElementAsTagged(
       Node* data_pointer, Node* index_node, ElementsKind elements_kind,
       ParameterMode parameter_mode = INTPTR_PARAMETERS);
+  TNode<Numeric> LoadFixedTypedArrayElementAsTagged(
+      TNode<WordT> data_pointer, TNode<Smi> index, TNode<Int32T> elements_kind);
   // Parts of the above, factored out for readability:
   Node* LoadFixedBigInt64ArrayElementAsTagged(Node* data_pointer, Node* offset);
   Node* LoadFixedBigUint64ArrayElementAsTagged(Node* data_pointer,
@@ -1291,8 +1310,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   // Allocate an appropriate one- or two-byte ConsString with the first and
   // second parts specified by |left| and |right|.
-  TNode<String> NewConsString(Node* context, TNode<Smi> length,
-                              TNode<String> left, TNode<String> right,
+  TNode<String> NewConsString(TNode<Smi> length, TNode<String> left,
+                              TNode<String> right,
                               AllocationFlags flags = kNone);
 
   TNode<NameDictionary> AllocateNameDictionary(int at_least_space_for);
@@ -1635,9 +1654,14 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* TruncateHeapNumberValueToWord32(Node* object);
 
   // Conversions.
+  void TryHeapNumberToSmi(TNode<HeapNumber> number, TVariable<Smi>& output,
+                          Label* if_smi);
+  void TryFloat64ToSmi(TNode<Float64T> number, TVariable<Smi>& output,
+                       Label* if_smi);
   TNode<Number> ChangeFloat64ToTagged(SloppyTNode<Float64T> value);
   TNode<Number> ChangeInt32ToTagged(SloppyTNode<Int32T> value);
   TNode<Number> ChangeUint32ToTagged(SloppyTNode<Uint32T> value);
+  TNode<Uint32T> ChangeNumberToUint32(TNode<Number> value);
   TNode<Float64T> ChangeNumberToFloat64(SloppyTNode<Number> value);
   TNode<UintPtrT> ChangeNonnegativeNumberToUintPtr(TNode<Number> value);
 
@@ -1719,9 +1743,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   TNode<BoolT> IsExternalStringInstanceType(SloppyTNode<Int32T> instance_type);
   TNode<BoolT> IsFastJSArray(SloppyTNode<Object> object,
                              SloppyTNode<Context> context);
-  TNode<BoolT> IsFastJSArrayWithNoCustomIteration(
-      TNode<Object> object, TNode<Context> context,
-      TNode<Context> native_context);
+  TNode<BoolT> IsFastJSArrayWithNoCustomIteration(TNode<Object> object,
+                                                  TNode<Context> context);
   TNode<BoolT> IsFeedbackCell(SloppyTNode<HeapObject> object);
   TNode<BoolT> IsFeedbackVector(SloppyTNode<HeapObject> object);
   TNode<BoolT> IsContext(SloppyTNode<HeapObject> object);
@@ -1785,7 +1808,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                                               SloppyTNode<Map> map);
   TNode<BoolT> IsSequentialStringInstanceType(
       SloppyTNode<Int32T> instance_type);
-  TNode<BoolT> IsShortExternalStringInstanceType(
+  TNode<BoolT> IsUncachedExternalStringInstanceType(
       SloppyTNode<Int32T> instance_type);
   TNode<BoolT> IsSpecialReceiverInstanceType(TNode<Int32T> instance_type);
   TNode<BoolT> IsCustomElementsReceiverInstanceType(
@@ -1853,6 +1876,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsFastElementsKind(Node* elements_kind);
   bool IsFastElementsKind(ElementsKind kind) {
     return v8::internal::IsFastElementsKind(kind);
+  }
+  TNode<BoolT> IsDictionaryElementsKind(TNode<Int32T> elements_kind) {
+    return ElementsKindEqual(elements_kind, Int32Constant(DICTIONARY_ELEMENTS));
   }
   TNode<BoolT> IsDoubleElementsKind(TNode<Int32T> elements_kind);
   bool IsDoubleElementsKind(ElementsKind kind) {
@@ -2690,6 +2716,12 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   // TypedArray/ArrayBuffer helpers
   Node* IsDetachedBuffer(Node* buffer);
+  void ThrowIfArrayBufferIsDetached(SloppyTNode<Context> context,
+                                    TNode<JSArrayBuffer> array_buffer,
+                                    const char* method_name);
+  void ThrowIfArrayBufferViewBufferIsDetached(
+      SloppyTNode<Context> context, TNode<JSArrayBufferView> array_buffer_view,
+      const char* method_name);
   TNode<JSArrayBuffer> LoadArrayBufferViewBuffer(
       TNode<JSArrayBufferView> array_buffer_view);
   TNode<RawPtrT> LoadArrayBufferBackingStore(TNode<JSArrayBuffer> array_buffer);

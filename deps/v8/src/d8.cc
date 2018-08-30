@@ -2567,12 +2567,8 @@ void SourceGroup::JoinThread() {
 }
 
 ExternalizedContents::~ExternalizedContents() {
-  if (base_ != nullptr) {
-    if (mode_ == ArrayBuffer::Allocator::AllocationMode::kReservation) {
-      CHECK(i::FreePages(base_, length_));
-    } else {
-      Shell::array_buffer_allocator->Free(base_, length_);
-    }
+  if (data_ != nullptr) {
+    deleter_(data_, length_, deleter_data_);
   }
 }
 
@@ -2793,9 +2789,6 @@ bool Shell::SetOptions(int argc, char* argv[]) {
                strcmp(argv[i], "--no-stress-background-compile") == 0) {
       options.stress_background_compile = false;
       argv[i] = nullptr;
-    } else if (strcmp(argv[i], "--mock-arraybuffer-allocator") == 0) {
-      options.mock_arraybuffer_allocator = true;
-      argv[i] = nullptr;
     } else if (strcmp(argv[i], "--noalways-opt") == 0 ||
                strcmp(argv[i], "--no-always-opt") == 0) {
       // No support for stressing if we can't use --always-opt.
@@ -2910,6 +2903,7 @@ bool Shell::SetOptions(int argc, char* argv[]) {
   }
 
   v8::V8::SetFlagsFromCommandLine(&argc, argv, true);
+  options.mock_arraybuffer_allocator = i::FLAG_mock_arraybuffer_allocator;
 
   // Set up isolated source groups.
   options.isolate_sources = new SourceGroup[options.num_isolates];

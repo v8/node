@@ -10,7 +10,6 @@
 // Clients of this interface shouldn't depend on lots of compiler internals.
 // Do not include anything from src/compiler here!
 #include "src/runtime/runtime.h"
-#include "src/trap-handler/trap-handler.h"
 #include "src/wasm/function-body-decoder.h"
 #include "src/wasm/function-compiler.h"
 #include "src/wasm/wasm-module.h"
@@ -41,57 +40,27 @@ struct DecodeStruct;
 typedef compiler::Node TFNode;
 typedef compiler::MachineGraph TFGraph;
 class WasmCode;
+struct WasmFeatures;
 }  // namespace wasm
 
 namespace compiler {
-
-// Information about Wasm compilation that needs to be plumbed through the
-// different layers of the compiler.
-class WasmCompilationData {
- public:
-  explicit WasmCompilationData(
-      wasm::RuntimeExceptionSupport runtime_exception_support)
-      : runtime_exception_support_(runtime_exception_support) {}
-
-  void AddProtectedInstruction(uint32_t instr_offset, uint32_t landing_offset) {
-    protected_instructions_.push_back({instr_offset, landing_offset});
-  }
-
-  OwnedVector<trap_handler::ProtectedInstructionData>
-  GetProtectedInstructions() {
-    return OwnedVector<trap_handler::ProtectedInstructionData>::Of(
-        protected_instructions_);
-  }
-
-  wasm::RuntimeExceptionSupport runtime_exception_support() const {
-    return runtime_exception_support_;
-  }
-
- private:
-  std::vector<trap_handler::ProtectedInstructionData> protected_instructions_;
-
-  // See ModuleEnv::runtime_exception_support_.
-  wasm::RuntimeExceptionSupport runtime_exception_support_;
-
-  DISALLOW_COPY_AND_ASSIGN(WasmCompilationData);
-};
 
 class TurbofanWasmCompilationUnit {
  public:
   explicit TurbofanWasmCompilationUnit(wasm::WasmCompilationUnit* wasm_unit);
   ~TurbofanWasmCompilationUnit();
 
-  SourcePositionTable* BuildGraphForWasmFunction(double* decode_ms,
+  SourcePositionTable* BuildGraphForWasmFunction(wasm::WasmFeatures* detected,
+                                                 double* decode_ms,
                                                  MachineGraph* mcgraph,
                                                  NodeOriginTable* node_origins);
 
-  void ExecuteCompilation();
+  void ExecuteCompilation(wasm::WasmFeatures* detected);
 
   wasm::WasmCode* FinishCompilation(wasm::ErrorThrower*);
 
  private:
   wasm::WasmCompilationUnit* const wasm_unit_;
-  WasmCompilationData wasm_compilation_data_;
   bool ok_ = true;
   wasm::WasmCode* wasm_code_ = nullptr;
   wasm::Result<wasm::DecodeStruct*> graph_construction_result_;
@@ -197,10 +166,11 @@ class WasmGraphBuilder {
   Node* GrowMemory(Node* input);
   Node* Throw(uint32_t tag, const wasm::WasmException* exception,
               const Vector<Node*> values);
-  Node* Rethrow();
+  Node* Rethrow(Node* except_obj);
   Node* ConvertExceptionTagToRuntimeId(uint32_t tag);
-  Node* GetExceptionRuntimeId();
-  Node** GetExceptionValues(const wasm::WasmException* except_decl);
+  Node* GetExceptionRuntimeId(Node* except_obj);
+  Node** GetExceptionValues(Node* except_obj,
+                            const wasm::WasmException* except_decl);
   bool IsPhiWithMerge(Node* phi, Node* merge);
   bool ThrowsException(Node* node, Node** if_success, Node** if_exception);
   void AppendToMerge(Node* merge, Node* from);
@@ -480,7 +450,8 @@ class WasmGraphBuilder {
   Node* BuildAsmjsStoreMem(MachineType type, Node* index, Node* val);
 
   uint32_t GetExceptionEncodedSize(const wasm::WasmException* exception) const;
-  void BuildEncodeException32BitValue(uint32_t* index, Node* value);
+  void BuildEncodeException32BitValue(Node* except_obj, uint32_t* index,
+                                      Node* value);
   Node* BuildDecodeException32BitValue(Node* const* values, uint32_t* index);
 
   Node** Realloc(Node* const* buffer, size_t old_count, size_t new_count) {

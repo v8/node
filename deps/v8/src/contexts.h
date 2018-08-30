@@ -10,6 +10,7 @@
 namespace v8 {
 namespace internal {
 
+class NativeContext;
 class RegExpMatchInfo;
 
 enum ContextLookupFlags {
@@ -203,6 +204,8 @@ enum ContextLookupFlags {
   V(ITERATOR_RESULT_MAP_INDEX, Map, iterator_result_map)                       \
   V(INTL_DATE_TIME_FORMAT_FUNCTION_INDEX, JSFunction,                          \
     intl_date_time_format_function)                                            \
+  V(INTL_DATE_FORMAT_INTERNAL_FORMAT_SHARED_FUN, SharedFunctionInfo,           \
+    date_format_internal_format_shared_fun)                                    \
   V(INTL_NUMBER_FORMAT_FUNCTION_INDEX, JSFunction,                             \
     intl_number_format_function)                                               \
   V(INTL_NUMBER_FORMAT_INTERNAL_FORMAT_NUMBER_SHARED_FUN, SharedFunctionInfo,  \
@@ -214,16 +217,26 @@ enum ContextLookupFlags {
   V(INTL_PLURAL_RULES_FUNCTION_INDEX, JSFunction, intl_plural_rules_function)  \
   V(INTL_V8_BREAK_ITERATOR_FUNCTION_INDEX, JSFunction,                         \
     intl_v8_break_iterator_function)                                           \
+  V(INTL_V8_BREAK_ITERATOR_INTERNAL_ADOPT_TEXT_SHARED_FUN, SharedFunctionInfo, \
+    break_iterator_internal_adopt_text_shared_fun)                             \
+  V(INTL_V8_BREAK_ITERATOR_INTERNAL_FIRST_SHARED_FUN, SharedFunctionInfo,      \
+    break_iterator_internal_first_shared_fun)                                  \
+  V(INTL_V8_BREAK_ITERATOR_INTERNAL_NEXT_SHARED_FUN, SharedFunctionInfo,       \
+    break_iterator_internal_next_shared_fun)                                   \
+  V(INTL_V8_BREAK_ITERATOR_INTERNAL_CURRENT_SHARED_FUN, SharedFunctionInfo,    \
+    break_iterator_internal_current_shared_fun)                                \
+  V(INTL_V8_BREAK_ITERATOR_INTERNAL_BREAK_TYPE_SHARED_FUN, SharedFunctionInfo, \
+    break_iterator_internal_break_type_shared_fun)                             \
   V(JS_ARRAY_PACKED_SMI_ELEMENTS_MAP_INDEX, Map,                               \
-    js_array_fast_smi_elements_map)                                            \
+    js_array_packed_smi_elements_map)                                          \
   V(JS_ARRAY_HOLEY_SMI_ELEMENTS_MAP_INDEX, Map,                                \
-    js_array_fast_holey_smi_elements_map)                                      \
-  V(JS_ARRAY_PACKED_ELEMENTS_MAP_INDEX, Map, js_array_fast_elements_map)       \
-  V(JS_ARRAY_HOLEY_ELEMENTS_MAP_INDEX, Map, js_array_fast_holey_elements_map)  \
+    js_array_holey_smi_elements_map)                                           \
+  V(JS_ARRAY_PACKED_ELEMENTS_MAP_INDEX, Map, js_array_packed_elements_map)     \
+  V(JS_ARRAY_HOLEY_ELEMENTS_MAP_INDEX, Map, js_array_holey_elements_map)       \
   V(JS_ARRAY_PACKED_DOUBLE_ELEMENTS_MAP_INDEX, Map,                            \
-    js_array_fast_double_elements_map)                                         \
+    js_array_packed_double_elements_map)                                       \
   V(JS_ARRAY_HOLEY_DOUBLE_ELEMENTS_MAP_INDEX, Map,                             \
-    js_array_fast_holey_double_elements_map)                                   \
+    js_array_holey_double_elements_map)                                        \
   V(JS_MAP_FUN_INDEX, JSFunction, js_map_fun)                                  \
   V(JS_MAP_MAP_INDEX, Map, js_map_map)                                         \
   V(JS_MODULE_NAMESPACE_MAP, Map, js_module_namespace_map)                     \
@@ -535,13 +548,11 @@ class Context : public FixedArray, public NeverReadOnlySpaceObject {
   Context* script_context();
 
   // Compute the native context.
-  inline Context* native_context() const;
-  inline void set_native_context(Context* context);
+  inline NativeContext* native_context() const;
+  inline void set_native_context(NativeContext* context);
 
-  // Predicates for context types.  IsNativeContext is also defined on Object
-  // because we frequently have to know if arbitrary objects are natives
-  // contexts.
-  inline bool IsNativeContext() const;
+  // Predicates for context types.  IsNativeContext is already defined on
+  // Object.
   inline bool IsFunctionContext() const;
   inline bool IsCatchContext() const;
   inline bool IsWithContext() const;
@@ -638,6 +649,15 @@ class Context : public FixedArray, public NeverReadOnlySpaceObject {
 
   STATIC_ASSERT(kHeaderSize == Internals::kContextHeaderSize);
   STATIC_ASSERT(EMBEDDER_DATA_INDEX == Internals::kContextEmbedderDataIndex);
+};
+
+class NativeContext : public Context {
+ public:
+  static inline NativeContext* cast(Object* context);
+  // TODO(neis): Move some stuff from Context here.
+
+ private:
+  DISALLOW_IMPLICIT_CONSTRUCTORS(NativeContext);
 };
 
 typedef Context::Field ContextField;

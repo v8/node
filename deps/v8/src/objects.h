@@ -76,6 +76,7 @@
 //         - JSMessageObject
 //         - JSModuleNamespace
 //         - JSCollator            // If V8_INTL_SUPPORT enabled.
+//         - JSDateTimeFormat      // If V8_INTL_SUPPORT enabled.
 //         - JSListFormat          // If V8_INTL_SUPPORT enabled.
 //         - JSLocale              // If V8_INTL_SUPPORT enabled.
 //         - JSPluralRules         // If V8_INTL_SUPPORT enabled.
@@ -351,8 +352,8 @@ const uint32_t kOneByteDataHintTag = 0x10;
 
 // If bit 7 is clear and string representation indicates an external string,
 // then bit 5 indicates whether the data pointer is cached.
-const uint32_t kShortExternalStringMask = 0x20;
-const uint32_t kShortExternalStringTag = 0x20;
+const uint32_t kUncachedExternalStringMask = 0x20;
+const uint32_t kUncachedExternalStringTag = 0x20;
 
 // A ConsString with an empty string as the right side is a candidate
 // for being shortcut by the garbage collector. We don't allocate any
@@ -383,15 +384,15 @@ enum InstanceType : uint16_t {
   EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE =
       EXTERNAL_INTERNALIZED_STRING_TYPE | kOneByteDataHintTag |
       kInternalizedTag,
-  SHORT_EXTERNAL_INTERNALIZED_STRING_TYPE = EXTERNAL_INTERNALIZED_STRING_TYPE |
-                                            kShortExternalStringTag |
-                                            kInternalizedTag,
-  SHORT_EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE =
-      EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE | kShortExternalStringTag |
+  UNCACHED_EXTERNAL_INTERNALIZED_STRING_TYPE =
+      EXTERNAL_INTERNALIZED_STRING_TYPE | kUncachedExternalStringTag |
       kInternalizedTag,
-  SHORT_EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE =
+  UNCACHED_EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE =
+      EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE | kUncachedExternalStringTag |
+      kInternalizedTag,
+  UNCACHED_EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE =
       EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE |
-      kShortExternalStringTag | kInternalizedTag,
+      kUncachedExternalStringTag | kInternalizedTag,
   STRING_TYPE = INTERNALIZED_STRING_TYPE | kNotInternalizedTag,
   ONE_BYTE_STRING_TYPE =
       ONE_BYTE_INTERNALIZED_STRING_TYPE | kNotInternalizedTag,
@@ -409,12 +410,12 @@ enum InstanceType : uint16_t {
   EXTERNAL_STRING_WITH_ONE_BYTE_DATA_TYPE =
       EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE |
       kNotInternalizedTag,
-  SHORT_EXTERNAL_STRING_TYPE =
-      SHORT_EXTERNAL_INTERNALIZED_STRING_TYPE | kNotInternalizedTag,
-  SHORT_EXTERNAL_ONE_BYTE_STRING_TYPE =
-      SHORT_EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE | kNotInternalizedTag,
-  SHORT_EXTERNAL_STRING_WITH_ONE_BYTE_DATA_TYPE =
-      SHORT_EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE |
+  UNCACHED_EXTERNAL_STRING_TYPE =
+      UNCACHED_EXTERNAL_INTERNALIZED_STRING_TYPE | kNotInternalizedTag,
+  UNCACHED_EXTERNAL_ONE_BYTE_STRING_TYPE =
+      UNCACHED_EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE | kNotInternalizedTag,
+  UNCACHED_EXTERNAL_STRING_WITH_ONE_BYTE_DATA_TYPE =
+      UNCACHED_EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE |
       kNotInternalizedTag,
   THIN_STRING_TYPE = kTwoByteStringTag | kThinStringTag | kNotInternalizedTag,
   THIN_ONE_BYTE_STRING_TYPE =
@@ -422,7 +423,7 @@ enum InstanceType : uint16_t {
 
   // Non-string names
   SYMBOL_TYPE =
-      1 + (kIsNotInternalizedMask | kShortExternalStringMask |
+      1 + (kIsNotInternalizedMask | kUncachedExternalStringMask |
            kOneByteDataHintMask | kStringEncodingMask |
            kStringRepresentationMask),  // FIRST_NONSTRING_TYPE, LAST_NAME_TYPE
 
@@ -583,6 +584,7 @@ enum InstanceType : uint16_t {
 
 #ifdef V8_INTL_SUPPORT
   JS_INTL_COLLATOR_TYPE,
+  JS_INTL_DATE_TIME_FORMAT_TYPE,
   JS_INTL_LIST_FORMAT_TYPE,
   JS_INTL_LOCALE_TYPE,
   JS_INTL_PLURAL_RULES_TYPE,
@@ -701,6 +703,7 @@ class JSGlobalObject;
 class JSGlobalProxy;
 #ifdef V8_INTL_SUPPORT
 class JSCollator;
+class JSDateTimeFormat;
 class JSListFormat;
 class JSLocale;
 class JSPluralRules;
@@ -912,6 +915,7 @@ class ZoneForwardList;
 #define HEAP_OBJECT_ORDINARY_TYPE_LIST(V) \
   HEAP_OBJECT_ORDINARY_TYPE_LIST_BASE(V)  \
   V(JSCollator)                           \
+  V(JSDateTimeFormat)                     \
   V(JSListFormat)                         \
   V(JSLocale)                             \
   V(JSPluralRules)                        \
@@ -1029,12 +1033,13 @@ class ZoneForwardList;
   V(WeakArrayList, WEAK_ARRAY_LIST_TYPE)
 #ifdef V8_INTL_SUPPORT
 
-#define INSTANCE_TYPE_CHECKERS_SINGLE(V)      \
-  INSTANCE_TYPE_CHECKERS_SINGLE_BASE(V)       \
-  V(JSCollator, JS_INTL_COLLATOR_TYPE)        \
-  V(JSListFormat, JS_INTL_LIST_FORMAT_TYPE)   \
-  V(JSLocale, JS_INTL_LOCALE_TYPE)            \
-  V(JSPluralRules, JS_INTL_PLURAL_RULES_TYPE) \
+#define INSTANCE_TYPE_CHECKERS_SINGLE(V)             \
+  INSTANCE_TYPE_CHECKERS_SINGLE_BASE(V)              \
+  V(JSCollator, JS_INTL_COLLATOR_TYPE)               \
+  V(JSDateTimeFormat, JS_INTL_DATE_TIME_FORMAT_TYPE) \
+  V(JSListFormat, JS_INTL_LIST_FORMAT_TYPE)          \
+  V(JSLocale, JS_INTL_LOCALE_TYPE)                   \
+  V(JSPluralRules, JS_INTL_PLURAL_RULES_TYPE)        \
   V(JSRelativeTimeFormat, JS_INTL_RELATIVE_TIME_FORMAT_TYPE)
 
 #else
@@ -2147,6 +2152,10 @@ class JSReceiver : public HeapObject, public NeverReadOnlySpaceObject {
   // Returns the class name ([[Class]] property in the specification).
   V8_EXPORT_PRIVATE String* class_name();
 
+  // Returns the constructor (the function that was used to instantiate the
+  // object).
+  static MaybeHandle<JSFunction> GetConstructor(Handle<JSReceiver> receiver);
+
   // Returns the constructor name (the name (possibly, inferred name) of the
   // function that was used to instantiate the object).
   static Handle<String> GetConstructorName(Handle<JSReceiver> receiver);
@@ -2234,6 +2243,11 @@ class JSObject: public JSReceiver {
       Handle<AllocationSite> site = Handle<AllocationSite>::null());
 
   static MaybeHandle<Context> GetFunctionRealm(Handle<JSObject> object);
+
+  // 9.1.12 ObjectCreate ( proto [ , internalSlotsList ] )
+  // Notice: This is NOT 19.1.2.2 Object.create ( O, Properties )
+  static V8_WARN_UNUSED_RESULT MaybeHandle<JSObject> ObjectCreate(
+      Isolate* isolate, Handle<Object> prototype);
 
   // [elements]: The elements (properties with names that are integers).
   //

@@ -35,10 +35,11 @@ constexpr Register kJavaScriptCallExtraArg1Register = a2;
 constexpr Register kOffHeapTrampolineRegister = at;
 constexpr Register kRuntimeCallFunctionRegister = a1;
 constexpr Register kRuntimeCallArgCountRegister = a0;
+constexpr Register kRuntimeCallArgvRegister = a2;
 constexpr Register kWasmInstanceRegister = a0;
 
 // Forward declarations.
-enum class AbortReason;
+enum class AbortReason : uint8_t;
 
 // Reserved Register Usage Summary.
 //

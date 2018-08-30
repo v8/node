@@ -1426,9 +1426,9 @@ class ThreadImpl {
     Push(result);
     len = 1 + imm.length;
 
-    if (FLAG_wasm_trace_memory) {
+    if (FLAG_trace_wasm_memory) {
       MemoryTracingInfo info(imm.offset + index, false, rep);
-      TraceMemoryOperation(ExecutionEngine::kInterpreter, &info,
+      TraceMemoryOperation(ExecutionTier::kInterpreter, &info,
                            code->function->func_index, static_cast<int>(pc),
                            instance_object_->memory_start());
     }
@@ -1452,9 +1452,9 @@ class ThreadImpl {
     WriteLittleEndianValue<mtype>(addr, converter<mtype, ctype>{}(val));
     len = 1 + imm.length;
 
-    if (FLAG_wasm_trace_memory) {
+    if (FLAG_trace_wasm_memory) {
       MemoryTracingInfo info(imm.offset + index, true, rep);
-      TraceMemoryOperation(ExecutionEngine::kInterpreter, &info,
+      TraceMemoryOperation(ExecutionTier::kInterpreter, &info,
                            code->function->func_index, static_cast<int>(pc),
                            instance_object_->memory_start());
     }
@@ -2318,6 +2318,7 @@ class ThreadImpl {
           uint32_t entry_index = Pop().to<uint32_t>();
           // Assume only one table for now.
           DCHECK_LE(module()->tables.size(), 1u);
+          CommitPc(pc);  // TODO(wasm): Be more disciplined about committing PC.
           ExternalCallResult result =
               CallIndirectFunction(0, entry_index, imm.sig_index);
           switch (result.type) {

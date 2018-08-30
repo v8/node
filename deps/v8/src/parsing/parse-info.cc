@@ -7,6 +7,7 @@
 #include "src/ast/ast-source-ranges.h"
 #include "src/ast/ast-value-factory.h"
 #include "src/ast/ast.h"
+#include "src/base/template-utils.h"
 #include "src/heap/heap-inl.h"
 #include "src/objects-inl.h"
 #include "src/objects/scope-info.h"
@@ -16,7 +17,7 @@ namespace v8 {
 namespace internal {
 
 ParseInfo::ParseInfo(Isolate* isolate, AccountingAllocator* zone_allocator)
-    : zone_(std::make_shared<Zone>(zone_allocator, ZONE_NAME)),
+    : zone_(base::make_unique<Zone>(zone_allocator, ZONE_NAME)),
       flags_(0),
       extension_(nullptr),
       script_scope_(nullptr),
@@ -102,39 +103,6 @@ ParseInfo::~ParseInfo() {}
 
 DeclarationScope* ParseInfo::scope() const { return literal()->scope(); }
 
-void ParseInfo::EmitBackgroundParseStatisticsOnBackgroundThread() {
-  // If runtime call stats was enabled by tracing, emit a trace event at the
-  // end of background parsing on the background thread.
-  if (runtime_call_stats_ &&
-      (FLAG_runtime_stats &
-       v8::tracing::TracingCategoryObserver::ENABLED_BY_TRACING)) {
-    auto value = v8::tracing::TracedValue::Create();
-    runtime_call_stats_->Dump(value.get());
-    TRACE_EVENT_INSTANT1(TRACE_DISABLED_BY_DEFAULT("v8.runtime_stats"),
-                         "V8.RuntimeStats", TRACE_EVENT_SCOPE_THREAD,
-                         "runtime-call-stats", std::move(value));
-  }
-}
-
-void ParseInfo::UpdateBackgroundParseStatisticsOnMainThread(Isolate* isolate) {
-  // Copy over the counters from the background thread to the main counters on
-  // the isolate.
-  RuntimeCallStats* main_call_stats = isolate->counters()->runtime_call_stats();
-  if (FLAG_runtime_stats ==
-      v8::tracing::TracingCategoryObserver::ENABLED_BY_NATIVE) {
-    DCHECK_NE(main_call_stats, runtime_call_stats());
-    DCHECK_NOT_NULL(main_call_stats);
-    DCHECK_NOT_NULL(runtime_call_stats());
-    main_call_stats->Add(runtime_call_stats());
-  }
-  set_runtime_call_stats(main_call_stats);
-}
-
-void ParseInfo::ShareZone(ParseInfo* other) {
-  DCHECK_EQ(0, zone_->allocation_size());
-  zone_ = other->zone_;
-}
-
 Handle<Script> ParseInfo::CreateScript(Isolate* isolate, Handle<String> source,
                                        ScriptOriginOptions origin_options,
                                        NativesFlag natives) {
@@ -175,11 +143,6 @@ AstValueFactory* ParseInfo::GetOrCreateAstValueFactory() {
   return ast_value_factory();
 }
 
-void ParseInfo::ShareAstValueFactory(ParseInfo* other) {
-  DCHECK(!ast_value_factory_.get());
-  ast_value_factory_ = other->ast_value_factory_;
-}
-
 void ParseInfo::AllocateSourceRangeMap() {
   DCHECK(block_coverage_enabled());
   set_source_range_map(new (zone()) SourceRangeMap(zone()));
@@ -188,7 +151,7 @@ void ParseInfo::AllocateSourceRangeMap() {
 void ParseInfo::ResetCharacterStream() { character_stream_.reset(); }
 
 void ParseInfo::set_character_stream(
-    std::unique_ptr<ScannerStream> character_stream) {
+    std::unique_ptr<Utf16CharacterStream> character_stream) {
   DCHECK_NULL(character_stream_);
   character_stream_.swap(character_stream);
 }

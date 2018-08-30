@@ -320,7 +320,7 @@ struct ObjectLiteralHelper {
   static Handle<JSObject> Create(Isolate* isolate,
                                  Handle<HeapObject> description, int flags,
                                  PretenureFlag pretenure_flag) {
-    Handle<Context> native_context = isolate->native_context();
+    Handle<NativeContext> native_context = isolate->native_context();
     Handle<ObjectBoilerplateDescription> object_boilerplate_description =
         Handle<ObjectBoilerplateDescription>::cast(description);
     bool use_fast_elements = (flags & ObjectLiteral::kFastElements) != 0;
@@ -561,6 +561,16 @@ RUNTIME_FUNCTION(Runtime_CreateObjectLiteralWithoutAllocationSite) {
   CONVERT_SMI_ARG_CHECKED(flags, 1);
   RETURN_RESULT_OR_FAILURE(
       isolate, CreateLiteralWithoutAllocationSite<ObjectLiteralHelper>(
+                   isolate, description, flags));
+}
+
+RUNTIME_FUNCTION(Runtime_CreateArrayLiteralWithoutAllocationSite) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(2, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(ArrayBoilerplateDescription, description, 0);
+  CONVERT_SMI_ARG_CHECKED(flags, 1);
+  RETURN_RESULT_OR_FAILURE(
+      isolate, CreateLiteralWithoutAllocationSite<ArrayLiteralHelper>(
                    isolate, description, flags));
 }
 

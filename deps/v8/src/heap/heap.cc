@@ -2331,7 +2331,7 @@ String* Heap::UpdateNewSpaceReferenceInExternalStringTableEntry(Heap* heap,
   return new_string->IsExternalString() ? new_string : nullptr;
 }
 
-void Heap::ExternalStringTable::Verify() {
+void Heap::ExternalStringTable::VerifyNewSpace() {
 #ifdef DEBUG
   std::set<String*> visited_map;
   std::map<MemoryChunk*, size_t> size_map;
@@ -2348,6 +2348,18 @@ void Heap::ExternalStringTable::Verify() {
     visited_map.insert(obj);
     size_map[mc] += ExternalString::cast(obj)->ExternalPayloadSize();
   }
+  for (std::map<MemoryChunk*, size_t>::iterator it = size_map.begin();
+       it != size_map.end(); it++)
+    DCHECK_EQ(it->first->ExternalBackingStoreBytes(type), it->second);
+#endif
+}
+
+void Heap::ExternalStringTable::Verify() {
+#ifdef DEBUG
+  std::set<String*> visited_map;
+  std::map<MemoryChunk*, size_t> size_map;
+  ExternalBackingStoreType type = ExternalBackingStoreType::kExternalString;
+  VerifyNewSpace();
   for (size_t i = 0; i < old_space_strings_.size(); ++i) {
     String* obj = String::cast(old_space_strings_[i]);
     MemoryChunk* mc = MemoryChunk::FromHeapObject(obj);
@@ -2395,7 +2407,7 @@ void Heap::ExternalStringTable::UpdateNewSpaceReferences(
   new_space_strings_.resize(static_cast<size_t>(last - start));
 #ifdef VERIFY_HEAP
   if (FLAG_verify_heap) {
-    Verify();
+    VerifyNewSpace();
   }
 #endif
 }
@@ -2722,19 +2734,6 @@ bool Heap::RootCanBeTreatedAsConstant(RootListIndex root_index) {
   return can_be;
 }
 
-int Heap::FullSizeNumberStringCacheLength() {
-  // Compute the size of the number string cache based on the max newspace size.
-  // The number string cache has a minimum size based on twice the initial cache
-  // size to ensure that it is bigger after being made 'full size'.
-  size_t number_string_cache_size = max_semi_space_size_ / 512;
-  number_string_cache_size =
-      Max(static_cast<size_t>(kInitialNumberStringCacheSize * 2),
-          Min<size_t>(0x4000u, number_string_cache_size));
-  // There is a string and a number per entry so the length is twice the number
-  // of entries.
-  return static_cast<int>(number_string_cache_size * 2);
-}
-
 
 void Heap::FlushNumberStringCache() {
   // Flush the number to string cache.
@@ -2813,7 +2812,7 @@ HeapObject* Heap::CreateFillerObjectAt(Address addr, int size,
         reinterpret_cast<Map*>(root(kTwoPointerFillerMapRootIndex)),
         SKIP_WRITE_BARRIER);
     if (clear_memory_mode == ClearFreedMemoryMode::kClearFreedMemory) {
-      Memory::Address_at(addr + kPointerSize) =
+      Memory<Address>(addr + kPointerSize) =
           static_cast<Address>(kClearedFreeMemoryValue);
     }
   } else {
@@ -5081,7 +5080,8 @@ void Heap::RemoveGCEpilogueCallback(v8::Isolate::GCCallbackWithData callback,
 
 namespace {
 Handle<WeakArrayList> CompactWeakArrayList(Heap* heap,
-                                           Handle<WeakArrayList> array) {
+                                           Handle<WeakArrayList> array,
+                                           PretenureFlag pretenure) {
   if (array->length() == 0) {
     return array;
   }
@@ -5093,7 +5093,7 @@ Handle<WeakArrayList> CompactWeakArrayList(Heap* heap,
   Handle<WeakArrayList> new_array = WeakArrayList::EnsureSpace(
       heap->isolate(),
       handle(ReadOnlyRoots(heap).empty_weak_array_list(), heap->isolate()),
-      new_length);
+      new_length, pretenure);
   // Allocation might have caused GC and turned some of the elements into
   // cleared weak heap objects. Count the number of live references again and
   // fill in the new array.
@@ -5109,7 +5109,7 @@ Handle<WeakArrayList> CompactWeakArrayList(Heap* heap,
 
 }  // anonymous namespace
 
-void Heap::CompactWeakArrayLists() {
+void Heap::CompactWeakArrayLists(PretenureFlag pretenure) {
   // Find known PrototypeUsers and compact them.
   std::vector<Handle<PrototypeInfo>> prototype_infos;
   {
@@ -5126,19 +5126,24 @@ void Heap::CompactWeakArrayLists() {
   for (auto& prototype_info : prototype_infos) {
     Handle<WeakArrayList> array(
         WeakArrayList::cast(prototype_info->prototype_users()), isolate());
+    DCHECK_IMPLIES(pretenure == TENURED,
+                   InOldSpace(*array) ||
+                       *array == ReadOnlyRoots(this).empty_weak_array_list());
     WeakArrayList* new_array = PrototypeUsers::Compact(
-        array, this, JSObject::PrototypeRegistryCompactionCallback);
+        array, this, JSObject::PrototypeRegistryCompactionCallback, pretenure);
     prototype_info->set_prototype_users(new_array);
   }
 
   // Find known WeakArrayLists and compact them.
   Handle<WeakArrayList> scripts(script_list(), isolate());
-  scripts = CompactWeakArrayList(this, scripts);
+  DCHECK_IMPLIES(pretenure == TENURED, InOldSpace(*scripts));
+  scripts = CompactWeakArrayList(this, scripts, pretenure);
   set_script_list(*scripts);
 
   Handle<WeakArrayList> no_script_list(noscript_shared_function_infos(),
                                        isolate());
-  no_script_list = CompactWeakArrayList(this, no_script_list);
+  DCHECK_IMPLIES(pretenure == TENURED, InOldSpace(*no_script_list));
+  no_script_list = CompactWeakArrayList(this, no_script_list, pretenure);
   set_noscript_shared_function_infos(*no_script_list);
 }
 
@@ -5240,6 +5245,20 @@ void Heap::CheckHandleCount() {
   isolate_->handle_scope_implementer()->Iterate(&v);
 }
 
+Address* Heap::store_buffer_top_address() {
+  return store_buffer()->top_address();
+}
+
+// static
+intptr_t Heap::store_buffer_mask_constant() {
+  return StoreBuffer::kStoreBufferMask;
+}
+
+// static
+Address Heap::store_buffer_overflow_function_address() {
+  return FUNCTION_ADDR(StoreBuffer::StoreBufferOverflow);
+}
+
 void Heap::ClearRecordedSlot(HeapObject* object, Object** slot) {
   Address slot_addr = reinterpret_cast<Address>(slot);
   Page* page = Page::FromAddress(slot_addr);
@@ -5268,34 +5287,6 @@ void Heap::ClearRecordedSlotRange(Address start, Address end) {
     store_buffer()->DeleteEntry(start, end);
   }
 }
-
-void Heap::RecordWriteIntoCodeSlow(Code* host, RelocInfo* rinfo,
-                                   Object* value) {
-  DCHECK(InNewSpace(value));
-  Page* source_page = Page::FromAddress(reinterpret_cast<Address>(host));
-  RelocInfo::Mode rmode = rinfo->rmode();
-  Address addr = rinfo->pc();
-  SlotType slot_type = SlotTypeForRelocInfoMode(rmode);
-  if (rinfo->IsInConstantPool()) {
-    addr = rinfo->constant_pool_entry_address();
-    if (RelocInfo::IsCodeTargetMode(rmode)) {
-      slot_type = CODE_ENTRY_SLOT;
-    } else {
-      DCHECK(RelocInfo::IsEmbeddedObject(rmode));
-      slot_type = OBJECT_SLOT;
-    }
-  }
-  RememberedSet<OLD_TO_NEW>::InsertTyped(
-      source_page, reinterpret_cast<Address>(host), slot_type, addr);
-}
-
-void Heap::RecordWritesIntoCode(Code* code) {
-  for (RelocIterator it(code, RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT));
-       !it.done(); it.next()) {
-    RecordWriteIntoCode(code, it.rinfo(), it.rinfo()->target_object());
-  }
-}
-
 
 PagedSpace* PagedSpaces::next() {
   switch (counter_++) {
@@ -5870,6 +5861,14 @@ Code* Heap::GcSafeFindCodeForInnerPointer(Address inner_pointer) {
   }
 }
 
+void Heap::WriteBarrierForCodeSlow(Code* code) {
+  for (RelocIterator it(code, RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT));
+       !it.done(); it.next()) {
+    GenerationalBarrierForCode(code, it.rinfo(), it.rinfo()->target_object());
+    MarkingBarrierForCode(code, it.rinfo(), it.rinfo()->target_object());
+  }
+}
+
 void Heap::GenerationalBarrierSlow(HeapObject* object, Address slot,
                                    HeapObject* value) {
   Heap* heap = Heap::FromWritableHeapObject(object);
@@ -5885,6 +5884,26 @@ void Heap::GenerationalBarrierForElementsSlow(Heap* heap, FixedArray* array,
   }
 }
 
+void Heap::GenerationalBarrierForCodeSlow(Code* host, RelocInfo* rinfo,
+                                          HeapObject* object) {
+  DCHECK(InNewSpace(object));
+  Page* source_page = Page::FromAddress(reinterpret_cast<Address>(host));
+  RelocInfo::Mode rmode = rinfo->rmode();
+  Address addr = rinfo->pc();
+  SlotType slot_type = SlotTypeForRelocInfoMode(rmode);
+  if (rinfo->IsInConstantPool()) {
+    addr = rinfo->constant_pool_entry_address();
+    if (RelocInfo::IsCodeTargetMode(rmode)) {
+      slot_type = CODE_ENTRY_SLOT;
+    } else {
+      DCHECK(RelocInfo::IsEmbeddedObject(rmode));
+      slot_type = OBJECT_SLOT;
+    }
+  }
+  RememberedSet<OLD_TO_NEW>::InsertTyped(
+      source_page, reinterpret_cast<Address>(host), slot_type, addr);
+}
+
 void Heap::MarkingBarrierSlow(HeapObject* object, Address slot,
                               HeapObject* value) {
   Heap* heap = Heap::FromWritableHeapObject(object);
@@ -5897,6 +5916,13 @@ void Heap::MarkingBarrierForElementsSlow(Heap* heap, HeapObject* object) {
       heap->incremental_marking()->marking_state()->IsBlack(object)) {
     heap->incremental_marking()->RevisitObject(object);
   }
+}
+
+void Heap::MarkingBarrierForCodeSlow(Code* host, RelocInfo* rinfo,
+                                     HeapObject* object) {
+  Heap* heap = Heap::FromWritableHeapObject(host);
+  DCHECK(heap->incremental_marking()->IsMarking());
+  heap->incremental_marking()->RecordWriteIntoCode(host, rinfo, object);
 }
 
 bool Heap::PageFlagsAreConsistent(HeapObject* object) {
@@ -5928,6 +5954,12 @@ static_assert(MemoryChunk::Flag::IN_TO_SPACE ==
 static_assert(MemoryChunk::kFlagsOffset ==
                   heap_internals::MemoryChunk::kFlagsOffset,
               "Flag offset inconsistent");
+
+void Heap::SetEmbedderStackStateForNextFinalizaton(
+    EmbedderHeapTracer::EmbedderStackState stack_state) {
+  local_embedder_heap_tracer()->SetEmbedderStackStateForNextFinalization(
+      stack_state);
+}
 
 }  // namespace internal
 }  // namespace v8

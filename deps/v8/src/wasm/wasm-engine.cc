@@ -8,6 +8,7 @@
 #include "src/compilation-statistics.h"
 #include "src/objects-inl.h"
 #include "src/objects/js-promise.h"
+#include "src/wasm/function-compiler.h"
 #include "src/wasm/module-compiler.h"
 #include "src/wasm/module-decoder.h"
 #include "src/wasm/streaming-decoder.h"
@@ -165,6 +166,18 @@ std::shared_ptr<StreamingDecoder> WasmEngine::StartStreamingCompilation(
       CreateAsyncCompileJob(isolate, enabled, std::unique_ptr<byte[]>(nullptr),
                             0, context, std::move(resolver));
   return job->CreateStreamingDecoder();
+}
+
+bool WasmEngine::CompileFunction(Isolate* isolate, NativeModule* native_module,
+                                 uint32_t function_index, ExecutionTier tier) {
+  ErrorThrower thrower(isolate, "Manually requested tier up");
+  // Note we assume that "one-off" compilations can discard detected features.
+  WasmFeatures detected = kNoWasmFeatures;
+  WasmCode* ret = WasmCompilationUnit::CompileWasmFunction(
+      isolate, native_module, &detected, &thrower,
+      GetModuleEnv(native_module->compilation_state()),
+      &native_module->module()->functions[function_index], tier);
+  return ret != nullptr;
 }
 
 std::shared_ptr<NativeModule> WasmEngine::ExportNativeModule(

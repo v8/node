@@ -43,6 +43,7 @@
 #include "src/heap/incremental-marking.h"
 #include "src/heap/mark-compact.h"
 #include "src/heap/memory-reducer.h"
+#include "src/heap/remembered-set.h"
 #include "src/ic/ic.h"
 #include "src/macro-assembler-inl.h"
 #include "src/objects-inl.h"
@@ -788,7 +789,7 @@ TEST(BytecodeArray) {
   CHECK_GE(array->address() + array->BytecodeArraySize(),
            array->GetFirstBytecodeAddress() + array->length());
   for (int i = 0; i < kRawBytesSize; i++) {
-    CHECK_EQ(Memory::uint8_at(array->GetFirstBytecodeAddress() + i),
+    CHECK_EQ(Memory<uint8_t>(array->GetFirstBytecodeAddress() + i),
              kRawBytes[i]);
     CHECK_EQ(array->get(i), kRawBytes[i]);
   }
@@ -806,7 +807,7 @@ TEST(BytecodeArray) {
   CHECK_EQ(array->frame_size(), kFrameSize);
   for (int i = 0; i < kRawBytesSize; i++) {
     CHECK_EQ(array->get(i), kRawBytes[i]);
-    CHECK_EQ(Memory::uint8_at(array->GetFirstBytecodeAddress() + i),
+    CHECK_EQ(Memory<uint8_t>(array->GetFirstBytecodeAddress() + i),
              kRawBytes[i]);
   }
 
@@ -3681,17 +3682,47 @@ TEST(AllocationSiteCreation) {
   i::FLAG_enable_one_shot_optimization = true;
 
   // Array literals.
-  CheckNumberOfAllocations(heap, "(function f1() { return []; })()", 1, 0);
-  CheckNumberOfAllocations(heap, "(function f2() { return [1, 2]; })()", 1, 0);
-  CheckNumberOfAllocations(heap, "(function f3() { return [[1], [2]]; })()", 1,
-                           2);
+  CheckNumberOfAllocations(heap, "function f1() { return []; }; f1()", 1, 0);
+  CheckNumberOfAllocations(heap, "function f2() { return [1, 2]; }; f2()", 1,
+                           0);
+  CheckNumberOfAllocations(heap, "function f3() { return [[1], [2]]; }; f3()",
+                           1, 2);
 
   CheckNumberOfAllocations(heap,
-                           "(function f4() { "
+                           "function f4() { "
                            "return [0, [1, 1.1, 1.2, "
                            "], 1.5, [2.1, 2.2], 3];"
-                           "})()",
+                           "}; f4();",
                            1, 2);
+
+  // No allocation sites within IIFE/top-level
+  CheckNumberOfAllocations(heap,
+                           R"(
+                            (function f4() {
+                              return [ 0, [ 1, 1.1, 1.2,], 1.5, [2.1, 2.2], 3 ];
+                            })();
+                            )",
+                           0, 0);
+
+  CheckNumberOfAllocations(heap,
+                           R"(
+                            l = [ 1, 2, 3, 4];
+                            )",
+                           0, 0);
+
+  CheckNumberOfAllocations(heap,
+                           R"(
+                            a = [];
+                            )",
+                           0, 0);
+
+  CheckNumberOfAllocations(heap,
+                           R"(
+                            (function f4() {
+                              return [];
+                            })();
+                            )",
+                           0, 0);
 
   // Object literals have lazy AllocationSites
   CheckNumberOfAllocations(heap, "function f5() { return {}; }; f5(); ", 0, 0);
@@ -4433,7 +4464,7 @@ TEST(CEntryStubOOM) {
   CcTest::isolate()->SetFatalErrorHandler(OnFatalErrorExpectOOM);
 
   v8::Local<v8::Value> result = CompileRun(
-      "%SetFlags('--gc-interval=1');"
+      "%SetAllocationTimeout(1, 1);"
       "var a = [];"
       "a.__proto__ = [];"
       "a.unshift(1)");

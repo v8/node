@@ -198,31 +198,6 @@ inline Condition NegateCondition(Condition cc) {
 }
 
 
-// Commute a condition such that {a cond b == b cond' a}.
-inline Condition CommuteCondition(Condition cc) {
-  switch (cc) {
-    case below:
-      return above;
-    case above:
-      return below;
-    case above_equal:
-      return below_equal;
-    case below_equal:
-      return above_equal;
-    case less:
-      return greater;
-    case greater:
-      return less;
-    case greater_equal:
-      return less_equal;
-    case less_equal:
-      return greater_equal;
-    default:
-      return cc;
-  }
-}
-
-
 enum RoundingMode {
   kRoundToNearest = 0x0,
   kRoundDown = 0x1,
@@ -269,6 +244,15 @@ class Immediate BASE_EMBEDDED {
   int immediate() const {
     DCHECK(!is_heap_object_request());
     return value_.immediate;
+  }
+
+  bool is_external_reference() const {
+    return rmode() == RelocInfo::EXTERNAL_REFERENCE;
+  }
+
+  ExternalReference external_reference() const {
+    DCHECK(is_external_reference());
+    return bit_cast<ExternalReference>(immediate());
   }
 
   bool is_zero() const { return RelocInfo::IsNone(rmode_) && immediate() == 0; }
@@ -362,16 +346,6 @@ class V8_EXPORT_PRIVATE Operand {
                    RelocInfo::INTERNAL_REFERENCE);
   }
 
-  static Operand StaticVariable(const ExternalReference& ext) {
-    return Operand(ext.address(), RelocInfo::EXTERNAL_REFERENCE);
-  }
-
-  static Operand StaticArray(Register index,
-                             ScaleFactor scale,
-                             const ExternalReference& arr) {
-    return Operand(index, scale, arr.address(), RelocInfo::EXTERNAL_REFERENCE);
-  }
-
   static Operand ForRegisterPlusImmediate(Register base, Immediate imm) {
     return Operand(base, imm.value_.immediate, imm.rmode_);
   }
@@ -413,9 +387,9 @@ class V8_EXPORT_PRIVATE Operand {
 
   byte buf_[6];
   // The number of bytes in buf_.
-  uint8_t len_;
+  uint8_t len_ = 0;
   // Only valid if len_ > 4.
-  RelocInfo::Mode rmode_;
+  RelocInfo::Mode rmode_ = RelocInfo::NONE;
 
   // TODO(clemensh): Get rid of this friendship, or make Operand immutable.
   friend class Assembler;
@@ -693,7 +667,10 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   void and_(Operand dst, Register src);
   void and_(Operand dst, const Immediate& x);
 
-  void cmpb(Register reg, Immediate imm8) { cmpb(Operand(reg), imm8); }
+  void cmpb(Register reg, Immediate imm8) {
+    DCHECK(reg.is_byte_register());
+    cmpb(Operand(reg), imm8);
+  }
   void cmpb(Operand op, Immediate imm8);
   void cmpb(Register reg, Operand op);
   void cmpb(Operand op, Register reg);

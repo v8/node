@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "src/arguments-inl.h"
-#include "src/assembler.h"
 #include "src/compiler/wasm-compiler.h"
 #include "src/conversions.h"
 #include "src/debug/debug.h"
@@ -117,13 +116,12 @@ RUNTIME_FUNCTION(Runtime_WasmThrowTypeError) {
 RUNTIME_FUNCTION(Runtime_WasmThrowCreate) {
   // TODO(kschimpf): Can this be replaced with equivalent TurboFan code/calls.
   HandleScope scope(isolate);
+  DCHECK_EQ(2, args.length());
   DCHECK_NULL(isolate->context());
   isolate->set_context(GetNativeContextFromWasmInstanceOnStackTop(isolate));
-  DCHECK_EQ(2, args.length());
   Handle<Object> exception = isolate->factory()->NewWasmRuntimeError(
       static_cast<MessageTemplate::Template>(
           MessageTemplate::kWasmExceptionError));
-  isolate->set_wasm_caught_exception(*exception);
   CONVERT_ARG_HANDLE_CHECKED(Smi, id, 0);
   CHECK(!JSReceiver::SetProperty(isolate, exception,
                                  isolate->factory()->InternalizeUtf8String(
@@ -138,27 +136,27 @@ RUNTIME_FUNCTION(Runtime_WasmThrowCreate) {
                                      wasm::WasmException::kRuntimeValuesStr),
                                  values, LanguageMode::kStrict)
              .is_null());
-  return ReadOnlyRoots(isolate).undefined_value();
+  return *exception;
 }
 
 RUNTIME_FUNCTION(Runtime_WasmThrow) {
   // TODO(kschimpf): Can this be replaced with equivalent TurboFan code/calls.
   HandleScope scope(isolate);
+  DCHECK_EQ(1, args.length());
   DCHECK_NULL(isolate->context());
   isolate->set_context(GetNativeContextFromWasmInstanceOnStackTop(isolate));
-  DCHECK_EQ(0, args.length());
-  Handle<Object> exception(isolate->get_wasm_caught_exception(), isolate);
-  CHECK(!exception.is_null());
-  isolate->clear_wasm_caught_exception();
-  return isolate->Throw(*exception);
+  CONVERT_ARG_HANDLE_CHECKED(Object, except_obj, 0);
+  CHECK(!except_obj.is_null());
+  return isolate->Throw(*except_obj);
 }
 
 RUNTIME_FUNCTION(Runtime_WasmGetExceptionRuntimeId) {
   // TODO(kschimpf): Can this be replaced with equivalent TurboFan code/calls.
   HandleScope scope(isolate);
+  DCHECK_EQ(1, args.length());
   DCHECK_NULL(isolate->context());
   isolate->set_context(GetNativeContextFromWasmInstanceOnStackTop(isolate));
-  Handle<Object> except_obj(isolate->get_wasm_caught_exception(), isolate);
+  CONVERT_ARG_HANDLE_CHECKED(Object, except_obj, 0);
   if (!except_obj.is_null() && except_obj->IsJSReceiver()) {
     Handle<JSReceiver> exception(JSReceiver::cast(*except_obj), isolate);
     Handle<Object> tag;
@@ -177,10 +175,10 @@ RUNTIME_FUNCTION(Runtime_WasmGetExceptionRuntimeId) {
 RUNTIME_FUNCTION(Runtime_WasmExceptionGetElement) {
   // TODO(kschimpf): Can this be replaced with equivalent TurboFan code/calls.
   HandleScope scope(isolate);
+  DCHECK_EQ(2, args.length());
   DCHECK_NULL(isolate->context());
   isolate->set_context(GetNativeContextFromWasmInstanceOnStackTop(isolate));
-  DCHECK_EQ(1, args.length());
-  Handle<Object> except_obj(isolate->get_wasm_caught_exception(), isolate);
+  CONVERT_ARG_HANDLE_CHECKED(Object, except_obj, 0);
   if (!except_obj.is_null() && except_obj->IsJSReceiver()) {
     Handle<JSReceiver> exception(JSReceiver::cast(*except_obj), isolate);
     Handle<Object> values_obj;
@@ -191,7 +189,7 @@ RUNTIME_FUNCTION(Runtime_WasmExceptionGetElement) {
       if (values_obj->IsJSTypedArray()) {
         Handle<JSTypedArray> values = Handle<JSTypedArray>::cast(values_obj);
         CHECK_EQ(values->type(), kExternalUint16Array);
-        CONVERT_SMI_ARG_CHECKED(index, 0);
+        CONVERT_SMI_ARG_CHECKED(index, 1);
         CHECK_LT(index, Smi::ToInt(values->length()));
         auto* vals =
             reinterpret_cast<uint16_t*>(values->GetBuffer()->backing_store());
@@ -205,10 +203,10 @@ RUNTIME_FUNCTION(Runtime_WasmExceptionGetElement) {
 RUNTIME_FUNCTION(Runtime_WasmExceptionSetElement) {
   // TODO(kschimpf): Can this be replaced with equivalent TurboFan code/calls.
   HandleScope scope(isolate);
-  DCHECK_EQ(2, args.length());
+  DCHECK_EQ(3, args.length());
   DCHECK_NULL(isolate->context());
   isolate->set_context(GetNativeContextFromWasmInstanceOnStackTop(isolate));
-  Handle<Object> except_obj(isolate->get_wasm_caught_exception(), isolate);
+  CONVERT_ARG_HANDLE_CHECKED(Object, except_obj, 0);
   if (!except_obj.is_null() && except_obj->IsJSReceiver()) {
     Handle<JSReceiver> exception(JSReceiver::cast(*except_obj), isolate);
     Handle<Object> values_obj;
@@ -219,9 +217,9 @@ RUNTIME_FUNCTION(Runtime_WasmExceptionSetElement) {
       if (values_obj->IsJSTypedArray()) {
         Handle<JSTypedArray> values = Handle<JSTypedArray>::cast(values_obj);
         CHECK_EQ(values->type(), kExternalUint16Array);
-        CONVERT_SMI_ARG_CHECKED(index, 0);
+        CONVERT_SMI_ARG_CHECKED(index, 1);
         CHECK_LT(index, Smi::ToInt(values->length()));
-        CONVERT_SMI_ARG_CHECKED(value, 1);
+        CONVERT_SMI_ARG_CHECKED(value, 2);
         auto* vals =
             reinterpret_cast<uint16_t*>(values->GetBuffer()->backing_store());
         vals[index] = static_cast<uint16_t>(value);
@@ -264,8 +262,13 @@ RUNTIME_FUNCTION(Runtime_WasmRunInterpreter) {
     frame_pointer = it.frame()->fp();
   }
 
-  bool success = instance->debug_info()->RunInterpreter(frame_pointer,
-                                                        func_index, arg_buffer);
+  // Run the function in the interpreter. Note that neither the {WasmDebugInfo}
+  // nor the {InterpreterHandle} have to exist, because interpretation might
+  // have been triggered by another Isolate sharing the same WasmEngine.
+  Handle<WasmDebugInfo> debug_info =
+      WasmInstanceObject::GetOrCreateDebugInfo(instance);
+  bool success = WasmDebugInfo::RunInterpreter(
+      isolate, debug_info, frame_pointer, func_index, arg_buffer);
 
   if (!success) {
     DCHECK(isolate->has_pending_exception());

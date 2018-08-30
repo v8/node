@@ -8,7 +8,7 @@
 #include "src/ast/ast.h"
 #include "src/ast/scopes.h"
 #include "src/parsing/parser-base.h"
-#include "src/parsing/preparse-data.h"
+#include "src/parsing/preparser-logger.h"
 #include "src/pending-compilation-error-handler.h"
 
 namespace v8 {
@@ -64,7 +64,7 @@ class PreParserIdentifier {
   bool IsPrivateName() const { return type_ == kPrivateNameIdentifier; }
 
  private:
-  enum Type {
+  enum Type : uint8_t {
     kNullIdentifier,
     kUnknownIdentifier,
     kEvalIdentifier,
@@ -76,10 +76,11 @@ class PreParserIdentifier {
     kPrivateNameIdentifier
   };
 
-  explicit PreParserIdentifier(Type type) : type_(type), string_(nullptr) {}
-  Type type_;
+  explicit PreParserIdentifier(Type type) : string_(nullptr), type_(type) {}
   // Only non-nullptr when PreParser.track_unresolved_variables_ is true.
   const AstRawString* string_;
+
+  Type type_;
   friend class PreParserExpression;
   friend class PreParser;
   friend class PreParserFactory;
@@ -401,7 +402,7 @@ class PreParserExpression {
   typedef BitField<ExpressionType, TypeField::kNext, 4> ExpressionTypeField;
   typedef BitField<bool, TypeField::kNext, 1> IsUseStrictField;
   typedef BitField<bool, IsUseStrictField::kNext, 1> IsUseAsmField;
-  typedef BitField<PreParserIdentifier::Type, TypeField::kNext, 10>
+  typedef BitField<PreParserIdentifier::Type, TypeField::kNext, 8>
       IdentifierTypeField;
   typedef BitField<bool, TypeField::kNext, 1> HasCoverInitializedNameField;
 
@@ -977,6 +978,10 @@ class PreParser : public ParserBase<PreParser> {
       bool may_abort, int* use_counts,
       ProducedPreParsedScopeData** produced_preparser_scope_data,
       int script_id);
+
+  V8_INLINE static bool ShouldTrackUnresolvedVariables(bool is_inner_function) {
+    return FLAG_preparser_scope_analysis || is_inner_function;
+  }
 
   ProducedPreParsedScopeData* produced_preparsed_scope_data() const {
     return produced_preparsed_scope_data_;

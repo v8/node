@@ -5,6 +5,8 @@
 #ifndef V8_BUILTINS_BUILTINS_DEFINITIONS_H_
 #define V8_BUILTINS_BUILTINS_DEFINITIONS_H_
 
+#include "src/interpreter/bytecodes.h"
+
 // include generated header
 #include "torque-generated/builtin-definitions-from-dsl.h"
 
@@ -23,6 +25,8 @@ namespace internal {
 //      Args: name, interface descriptor, return_size
 // TFH: Handlers in Turbofan, with CodeStub linkage.
 //      Args: name, interface descriptor
+// BCH: Bytecode Handlers, with bytecode dispatch linkage.
+//      Args: name
 // ASM: Builtin in platform-dependent assembly.
 //      Args: name
 
@@ -312,6 +316,7 @@ namespace internal {
   TFJ(ArrayPrototypePush, SharedFunctionInfo::kDontAdaptArgumentsSentinel)     \
   /* ES6 #sec-array.prototype.shift */                                         \
   CPP(ArrayShift)                                                              \
+  TFJ(ArrayPrototypeShift, SharedFunctionInfo::kDontAdaptArgumentsSentinel)    \
   /* ES6 #sec-array.prototype.slice */                                         \
   TFJ(ArrayPrototypeSlice, SharedFunctionInfo::kDontAdaptArgumentsSentinel)    \
   /* ES6 #sec-array.prototype.splice */                                        \
@@ -1125,6 +1130,7 @@ namespace internal {
                                                                                \
   /* TypedArray */                                                             \
   TFS(IterableToList, kIterable, kIteratorFn)                                  \
+  TFS(IterableToListWithSymbolLookup, kIterable)                               \
   TFS(TypedArrayInitialize, kHolder, kLength, kElementSize, kInitialize,       \
       kBufferConstructor)                                                      \
   TFS(TypedArrayInitializeWithBuffer, kHolder, kLength, kBuffer, kElementSize, \
@@ -1203,7 +1209,7 @@ namespace internal {
   /* Wasm */                                                                   \
   ASM(WasmCompileLazy)                                                         \
   TFC(WasmAllocateHeapNumber, AllocateHeapNumber, 1)                           \
-  TFC(WasmArgumentsAdaptor, ArgumentAdaptor, 1)                                \
+  TFC(WasmArgumentsAdaptor, ArgumentsAdaptor, 1)                               \
   TFC(WasmCallJavaScript, CallTrampoline, 1)                                   \
   TFC(WasmGrowMemory, WasmGrowMemory, 1)                                       \
   TFC(WasmStackGuard, NoContext, 1)                                            \
@@ -1319,12 +1325,13 @@ namespace internal {
   CPP(Trace)
 
 #ifdef V8_INTL_SUPPORT
-#define BUILTIN_LIST(CPP, API, TFJ, TFC, TFS, TFH, ASM)                \
-  BUILTIN_LIST_BASE(CPP, API, TFJ, TFC, TFS, TFH, ASM)                 \
-  BUILTIN_LIST_FROM_DSL(CPP, API, TFJ, TFC, TFS, TFH, ASM)             \
-                                                                       \
+#define BUILTIN_LIST_INTL(CPP, TFJ, TFS)                               \
   /* ecma402 #sec-intl.collator */                                     \
   CPP(CollatorConstructor)                                             \
+  /* ecma402 #sec-intl.v8breakiterator.supportedlocalesof */           \
+  CPP(v8BreakIteratorSupportedLocalesOf)                               \
+  /* ecma402 #sec-intl.collator.supportedlocalesof */                  \
+  CPP(CollatorSupportedLocalesOf)                                      \
   TFS(StringToLowerCaseIntl, kString)                                  \
   /* ES #sec-string.prototype.tolowercase */                           \
   TFJ(StringPrototypeToLowerCaseIntl, 0, kReceiver)                    \
@@ -1347,6 +1354,8 @@ namespace internal {
   /* ecma402 #sec-intl-list-format.prototype.formattoparts */          \
   TFJ(ListFormatPrototypeFormatToParts,                                \
       SharedFunctionInfo::kDontAdaptArgumentsSentinel)                 \
+  /* ecma402 #sec-intl.ListFormat.supportedlocalesof */                \
+  CPP(ListFormatSupportedLocalesOf)                                    \
   /* ecma402 #sec-intl-locale-constructor */                           \
   CPP(LocaleConstructor)                                               \
   CPP(LocalePrototypeLanguage)                                         \
@@ -1366,12 +1375,24 @@ namespace internal {
   CPP(LocalePrototypeMinimize)                                         \
   /* ecma402 #sec-number-format-functions */                           \
   CPP(NumberFormatInternalFormatNumber)                                \
+  /* ecma402 #sec-intl.numberformat.supportedlocalesof */              \
+  CPP(NumberFormatSupportedLocalesOf)                                  \
   /* ecma402 #sec-intl.numberformat.prototype.format */                \
   CPP(NumberFormatPrototypeFormatNumber)                               \
+  /* ecma402 #sec-datetime-format-functions */                         \
+  CPP(DateTimeFormatInternalFormat)                                    \
+  /* ecma402 #sec-intl.datetimeformat.supportedlocalesof */            \
+  CPP(DateTimeFormatSupportedLocalesOf)                                \
+  /* ecma402 #sec-intl.datetimeformat.prototype.format */              \
+  CPP(DateTimeFormatPrototypeFormat)                                   \
   /* ecma402 #sec-intl.pluralrules */                                  \
   CPP(PluralRulesConstructor)                                          \
+  /* ecma402 #sec-intl.pluralrules.supportedlocalesof */               \
+  CPP(PluralRulesSupportedLocalesOf)                                   \
   /* ecma402 #sec-intl.RelativeTimeFormat.constructor */               \
   CPP(RelativeTimeFormatConstructor)                                   \
+  /* ecma402 #sec-intl.RelativeTimeFormat.supportedlocalesof */        \
+  CPP(RelativeTimeFormatSupportedLocalesOf)                            \
   /* ecma402 #sec-intl.RelativeTimeFormat.prototype.resolvedOptions */ \
   CPP(RelativeTimeFormatPrototypeResolvedOptions)                      \
   /* ecma402 #sec-intl.RelativeTimeFormat.prototype.format */          \
@@ -1385,23 +1406,42 @@ namespace internal {
   /* ecma402 #sec-intl.collator.prototype.compare */                   \
   CPP(CollatorPrototypeCompare)                                        \
   /* ecma 402 #sec-collator-compare-functions*/                        \
-  CPP(CollatorInternalCompare)
+  CPP(CollatorInternalCompare)                                         \
+  CPP(BreakIteratorInternalAdoptText)                                  \
+  CPP(BreakIteratorPrototypeAdoptText)                                 \
+  CPP(BreakIteratorInternalFirst)                                      \
+  CPP(BreakIteratorPrototypeFirst)                                     \
+  CPP(BreakIteratorInternalNext)                                       \
+  CPP(BreakIteratorPrototypeNext)                                      \
+  CPP(BreakIteratorInternalCurrent)                                    \
+  CPP(BreakIteratorPrototypeCurrent)                                   \
+  CPP(BreakIteratorInternalBreakType)                                  \
+  CPP(BreakIteratorPrototypeBreakType)
 #else
-#define BUILTIN_LIST(CPP, API, TFJ, TFC, TFS, TFH, ASM)    \
-  BUILTIN_LIST_BASE(CPP, API, TFJ, TFC, TFS, TFH, ASM)     \
-  BUILTIN_LIST_FROM_DSL(CPP, API, TFJ, TFC, TFS, TFH, ASM) \
-                                                           \
-  /* no-op fallback version */                             \
-  CPP(StringPrototypeNormalize)                            \
-  /* same as toLowercase; fallback version */              \
-  CPP(StringPrototypeToLocaleLowerCase)                    \
-  /* same as toUppercase; fallback version */              \
-  CPP(StringPrototypeToLocaleUpperCase)                    \
-  /* (obsolete) Unibrow version */                         \
-  CPP(StringPrototypeToLowerCase)                          \
-  /* (obsolete) Unibrow version */                         \
+#define BUILTIN_LIST_INTL(CPP, TFJ, TFS)      \
+  /* no-op fallback version */                \
+  CPP(StringPrototypeNormalize)               \
+  /* same as toLowercase; fallback version */ \
+  CPP(StringPrototypeToLocaleLowerCase)       \
+  /* same as toUppercase; fallback version */ \
+  CPP(StringPrototypeToLocaleUpperCase)       \
+  /* (obsolete) Unibrow version */            \
+  CPP(StringPrototypeToLowerCase)             \
+  /* (obsolete) Unibrow version */            \
   CPP(StringPrototypeToUpperCase)
 #endif  // V8_INTL_SUPPORT
+
+#ifdef V8_EMBEDDED_BYTECODE_HANDLERS
+#define BUILTIN_LIST_BYTECODE_HANDLERS(BCH) BYTECODE_LIST(BCH)
+#else
+#define BUILTIN_LIST_BYTECODE_HANDLERS(BCH)
+#endif  // V8_EMBEDDED_BYTECODE_HANDLERS
+
+#define BUILTIN_LIST(CPP, API, TFJ, TFC, TFS, TFH, BCH, ASM) \
+  BUILTIN_LIST_BASE(CPP, API, TFJ, TFC, TFS, TFH, ASM)       \
+  BUILTIN_LIST_FROM_DSL(CPP, API, TFJ, TFC, TFS, TFH, ASM)   \
+  BUILTIN_LIST_INTL(CPP, TFJ, TFS)                           \
+  BUILTIN_LIST_BYTECODE_HANDLERS(BCH)
 
 // The exception thrown in the following builtins are caught
 // internally and result in a promise rejection.
@@ -1426,33 +1466,43 @@ namespace internal {
   V(PromiseRace)                                     \
   V(ResolvePromise)
 
+// Convenience macro listing all wasm runtime stubs. Note that the first few
+// elements of the list coincide with {compiler::TrapId}, order matters.
+#define WASM_RUNTIME_STUB_LIST(V, VTRAP) \
+  FOREACH_WASM_TRAPREASON(VTRAP)         \
+  V(WasmAllocateHeapNumber)              \
+  V(WasmArgumentsAdaptor)                \
+  V(WasmCallJavaScript)                  \
+  V(WasmGrowMemory)                      \
+  V(WasmStackGuard)                      \
+  V(WasmToNumber)                        \
+  V(DoubleToI)
+
 // The exception thrown in the following builtins are caught internally and will
 // not be propagated further or re-thrown
 #define BUILTIN_EXCEPTION_CAUGHT_PREDICTION_LIST(V) V(PromiseRejectReactionJob)
 
 #define IGNORE_BUILTIN(...)
 
-#define BUILTIN_LIST_ALL(V) BUILTIN_LIST(V, V, V, V, V, V, V)
-
 #define BUILTIN_LIST_C(V)                                            \
   BUILTIN_LIST(V, V, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, \
-               IGNORE_BUILTIN, IGNORE_BUILTIN)
+               IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN)
 
 #define BUILTIN_LIST_A(V)                                                      \
   BUILTIN_LIST(IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, \
-               IGNORE_BUILTIN, IGNORE_BUILTIN, V)
+               IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, V)
 
 #define BUILTIN_LIST_TFS(V)                                                    \
   BUILTIN_LIST(IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, \
-               V, IGNORE_BUILTIN, IGNORE_BUILTIN)
+               V, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN)
 
 #define BUILTIN_LIST_TFJ(V)                                       \
   BUILTIN_LIST(IGNORE_BUILTIN, IGNORE_BUILTIN, V, IGNORE_BUILTIN, \
-               IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN)
+               IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN)
 
 #define BUILTIN_LIST_TFC(V)                                       \
   BUILTIN_LIST(IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, V, \
-               IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN)
+               IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN)
 
 }  // namespace internal
 }  // namespace v8

@@ -484,16 +484,22 @@ class Heap {
   // by pointer size.
   static inline void CopyBlock(Address dst, Address src, int byte_size);
 
+  V8_EXPORT_PRIVATE static void WriteBarrierForCodeSlow(Code* host);
   V8_EXPORT_PRIVATE static void GenerationalBarrierSlow(HeapObject* object,
                                                         Address slot,
                                                         HeapObject* value);
   V8_EXPORT_PRIVATE static void GenerationalBarrierForElementsSlow(
       Heap* heap, FixedArray* array, int offset, int length);
+  V8_EXPORT_PRIVATE static void GenerationalBarrierForCodeSlow(
+      Code* host, RelocInfo* rinfo, HeapObject* value);
   V8_EXPORT_PRIVATE static void MarkingBarrierSlow(HeapObject* object,
                                                    Address slot,
                                                    HeapObject* value);
   V8_EXPORT_PRIVATE static void MarkingBarrierForElementsSlow(
       Heap* heap, HeapObject* object);
+  V8_EXPORT_PRIVATE static void MarkingBarrierForCodeSlow(Code* host,
+                                                          RelocInfo* rinfo,
+                                                          HeapObject* value);
   V8_EXPORT_PRIVATE static bool PageFlagsAreConsistent(HeapObject* object);
 
   // Notifies the heap that is ok to start marking or other activities that
@@ -685,7 +691,7 @@ class Heap {
   void ProcessMovedExternalString(Page* old_page, Page* new_page,
                                   ExternalString* string);
 
-  void CompactWeakArrayLists();
+  void CompactWeakArrayLists(PretenureFlag pretenure);
 
   void AddRetainedMap(Handle<Map> map);
 
@@ -982,12 +988,6 @@ class Heap {
   // Store buffer API. =========================================================
   // ===========================================================================
 
-  // Write barrier support for object[offset] = o;
-  // See heap/heap-write-barrier-inl.h for stand-alone methods.
-  inline void RecordWriteIntoCode(Code* host, RelocInfo* rinfo, Object* target);
-  void RecordWriteIntoCodeSlow(Code* host, RelocInfo* rinfo, Object* target);
-  void RecordWritesIntoCode(Code* code);
-
   // Used for query incremental marking status in generated code.
   Address* IsMarkingFlagAddress() {
     return reinterpret_cast<Address*>(&is_marking_flag_);
@@ -995,7 +995,9 @@ class Heap {
 
   void SetIsMarkingFlag(uint8_t flag) { is_marking_flag_ = flag; }
 
-  inline Address* store_buffer_top_address();
+  Address* store_buffer_top_address();
+  static intptr_t store_buffer_mask_constant();
+  static Address store_buffer_overflow_function_address();
 
   void ClearRecordedSlot(HeapObject* object, Object** slot);
   void ClearRecordedSlotRange(Address start, Address end);
@@ -1088,6 +1090,8 @@ class Heap {
   void SetEmbedderHeapTracer(EmbedderHeapTracer* tracer);
   void TracePossibleWrapper(JSObject* js_object);
   void RegisterExternallyReferencedObject(Object** object);
+  void SetEmbedderStackStateForNextFinalizaton(
+      EmbedderHeapTracer::EmbedderStackState stack_state);
 
   // ===========================================================================
   // External string table API. ================================================
@@ -1478,6 +1482,9 @@ class Heap {
   static const char* GarbageCollectionReasonToString(
       GarbageCollectionReason gc_reason);
 
+  // Calculates the nof entries for the full sized number to string cache.
+  inline int MaxNumberToStringCacheSize() const;
+
  private:
   class SkipStoreBufferScope;
 
@@ -1514,6 +1521,7 @@ class Heap {
 
    private:
     void Verify();
+    void VerifyNewSpace();
 
     Heap* const heap_;
 
@@ -1686,8 +1694,6 @@ class Heap {
   // Record statistics after garbage collection.
   void ReportStatisticsAfterGC();
 
-  // Creates and installs the full-sized number string cache.
-  int FullSizeNumberStringCacheLength();
   // Flush the number to string cache.
   void FlushNumberStringCache();
 

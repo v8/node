@@ -23,7 +23,7 @@
 
 #define TRACE_HEAP(...)                                   \
   do {                                                    \
-    if (FLAG_wasm_trace_native_heap) PrintF(__VA_ARGS__); \
+    if (FLAG_trace_wasm_native_heap) PrintF(__VA_ARGS__); \
   } while (false)
 
 namespace v8 {
@@ -199,7 +199,6 @@ void WasmCode::Validate() const {
       }
       case RelocInfo::JS_TO_WASM_CALL:
       case RelocInfo::EXTERNAL_REFERENCE:
-      case RelocInfo::OFF_HEAP_TARGET:
       case RelocInfo::COMMENT:
       case RelocInfo::CONST_POOL:
       case RelocInfo::VENEER_POOL:
@@ -236,12 +235,23 @@ void WasmCode::Disassemble(const char* name, std::ostream& os,
   if (safepoint_table_offset_ && safepoint_table_offset_ < instruction_size) {
     instruction_size = safepoint_table_offset_;
   }
+  if (handler_table_offset_ && handler_table_offset_ < instruction_size) {
+    instruction_size = handler_table_offset_;
+  }
   DCHECK_LT(0, instruction_size);
   os << "Instructions (size = " << instruction_size << ")\n";
   Disassembler::Decode(nullptr, &os, instructions().start(),
                        instructions().start() + instruction_size,
                        CodeReference(this), current_pc);
   os << "\n";
+
+  if (handler_table_offset_ > 0) {
+    HandlerTable table(instruction_start(), handler_table_offset_);
+    os << "Exception Handler Table (size = " << table.NumberOfReturnEntries()
+       << "):\n";
+    table.HandlerTableReturnPrint(os);
+    os << "\n";
+  }
 
   if (!protected_instructions_.is_empty()) {
     os << "Protected instructions:\n pc offset  land pad\n";
@@ -408,7 +418,9 @@ WasmCode* NativeModule::AddCodeCopy(Handle<Code> code, WasmCode::Kind kind,
 WasmCode* NativeModule::AddInterpreterEntry(Handle<Code> code, uint32_t index) {
   WasmCode* ret = AddAnonymousCode(code, WasmCode::kInterpreterEntry);
   ret->index_ = Just(index);
+  base::LockGuard<base::Mutex> lock(&allocation_mutex_);
   PatchJumpTable(index, ret->instruction_start(), WasmCode::kFlushICache);
+  set_code(index, ret);
   return ret;
 }
 
@@ -442,9 +454,13 @@ void NativeModule::SetRuntimeStubs(Isolate* isolate) {
 
 WasmCode* NativeModule::AddAnonymousCode(Handle<Code> code,
                                          WasmCode::Kind kind) {
-  OwnedVector<byte> reloc_info =
-      OwnedVector<byte>::New(code->relocation_size());
-  memcpy(reloc_info.start(), code->relocation_start(), code->relocation_size());
+  // For off-heap builtins, we create a copy of the off-heap instruction stream
+  // instead of the on-heap code object containing the trampoline. Ensure that
+  // we do not apply the on-heap reloc info to the off-heap instructions.
+  const size_t relocation_size =
+      code->is_off_heap_trampoline() ? 0 : code->relocation_size();
+  OwnedVector<byte> reloc_info = OwnedVector<byte>::New(relocation_size);
+  memcpy(reloc_info.start(), code->relocation_start(), relocation_size);
   Handle<ByteArray> source_pos_table(code->SourcePositionTable(),
                                      code->GetIsolate());
   OwnedVector<byte> source_pos =
@@ -572,9 +588,13 @@ WasmCode* NativeModule::AddDeserializedCode(
 }
 
 void NativeModule::PublishCode(WasmCode* code) {
-  // TODO(clemensh): Remove the need for locking here. Probably requires
-  // word-aligning the jump table slots.
   base::LockGuard<base::Mutex> lock(&allocation_mutex_);
+  // Skip publishing code if there is an active redirection to the interpreter
+  // for the given function index, in order to preserve the redirection.
+  if (has_code(code->index()) &&
+      this->code(code->index())->kind() == WasmCode::kInterpreterEntry) {
+    return;
+  }
   if (!code->protected_instructions_.is_empty()) {
     code->RegisterTrapHandlerData();
   }

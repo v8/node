@@ -28,6 +28,7 @@
 #include "src/objects/js-list-format.h"
 #include "src/objects/js-locale.h"
 #endif  // V8_INTL_SUPPORT
+#include "src/objects/js-array-buffer-inl.h"
 #include "src/objects/js-array-inl.h"
 #include "src/objects/js-regexp-string-iterator.h"
 #include "src/objects/js-regexp.h"
@@ -88,7 +89,7 @@ Handle<String> Bootstrapper::GetNativeSource(NativeType type, int index) {
       new NativesExternalStringResource(type, index);
   Handle<ExternalOneByteString> source_code =
       isolate_->factory()->NewNativeSourceString(resource);
-  DCHECK(source_code->is_short());
+  DCHECK(source_code->is_uncached());
   return source_code;
 }
 
@@ -167,7 +168,7 @@ class Genesis BASE_EMBEDDED {
   Handle<JSGlobalProxy> global_proxy() { return global_proxy_; }
 
  private:
-  Handle<Context> native_context() { return native_context_; }
+  Handle<NativeContext> native_context() { return native_context_; }
 
   // Creates some basic objects. Used for creating a context from scratch.
   void CreateRoots();
@@ -296,7 +297,7 @@ class Genesis BASE_EMBEDDED {
 
   Isolate* isolate_;
   Handle<Context> result_;
-  Handle<Context> native_context_;
+  Handle<NativeContext> native_context_;
   Handle<JSGlobalProxy> global_proxy_;
 
   // Temporary function maps needed only during bootstrapping.
@@ -1730,16 +1731,22 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                           Builtins::kArrayPrototypeFind, 1, false);
     SimpleInstallFunction(isolate_, proto, "findIndex",
                           Builtins::kArrayPrototypeFindIndex, 1, false);
+    SimpleInstallFunction(isolate_, proto, "lastIndexOf",
+                          Builtins::kArrayPrototypeLastIndexOf, 1, false);
     SimpleInstallFunction(isolate_, proto, "pop", Builtins::kArrayPrototypePop,
                           0, false);
     SimpleInstallFunction(isolate_, proto, "push",
                           Builtins::kArrayPrototypePush, 1, false);
+    SimpleInstallFunction(isolate_, proto, "reverse",
+                          Builtins::kArrayPrototypeReverse, 0, false);
     SimpleInstallFunction(isolate_, proto, "shift",
                           Builtins::kArrayPrototypeShift, 0, false);
     SimpleInstallFunction(isolate_, proto, "unshift", Builtins::kArrayUnshift,
                           1, false);
     SimpleInstallFunction(isolate_, proto, "slice",
                           Builtins::kArrayPrototypeSlice, 2, false);
+    SimpleInstallFunction(isolate_, proto, "sort",
+                          Builtins::kArrayPrototypeSort, 1, false);
     if (FLAG_enable_experimental_builtins) {
       SimpleInstallFunction(isolate_, proto, "splice",
                             Builtins::kArraySpliceTorque, 2, false);
@@ -2890,6 +2897,10 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
       native_context()->set_intl_date_time_format_function(
           *date_time_format_constructor);
 
+      SimpleInstallFunction(
+          isolate(), date_time_format_constructor, "supportedLocalesOf",
+          Builtins::kDateTimeFormatSupportedLocalesOf, 1, false);
+
       Handle<JSObject> prototype(
           JSObject::cast(date_time_format_constructor->prototype()), isolate_);
 
@@ -2902,6 +2913,17 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
       SimpleInstallFunction(isolate_, prototype, "formatToParts",
                             Builtins::kDateTimeFormatPrototypeFormatToParts, 1,
                             false);
+
+      SimpleInstallGetter(isolate_, prototype,
+                          factory->InternalizeUtf8String("format"),
+                          Builtins::kDateTimeFormatPrototypeFormat, false);
+
+      {
+        Handle<SharedFunctionInfo> info = SimpleCreateBuiltinSharedFunctionInfo(
+            isolate_, Builtins::kDateTimeFormatInternalFormat,
+            factory->empty_string(), 1);
+        native_context()->set_date_format_internal_format_shared_fun(*info);
+      }
     }
 
     {
@@ -2910,6 +2932,10 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
           0, factory->the_hole_value(), Builtins::kIllegal);
       native_context()->set_intl_number_format_function(
           *number_format_constructor);
+
+      SimpleInstallFunction(
+          isolate(), number_format_constructor, "supportedLocalesOf",
+          Builtins::kNumberFormatSupportedLocalesOf, 1, false);
 
       Handle<JSObject> prototype(
           JSObject::cast(number_format_constructor->prototype()), isolate_);
@@ -2944,6 +2970,10 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
       InstallWithIntrinsicDefaultProto(isolate_, collator_constructor,
                                        Context::INTL_COLLATOR_FUNCTION_INDEX);
 
+      SimpleInstallFunction(isolate(), collator_constructor,
+                            "supportedLocalesOf",
+                            Builtins::kCollatorSupportedLocalesOf, 1, false);
+
       Handle<JSObject> prototype(
           JSObject::cast(collator_constructor->prototype()), isolate_);
 
@@ -2973,6 +3003,10 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
       native_context()->set_intl_v8_break_iterator_function(
           *v8_break_iterator_constructor);
 
+      SimpleInstallFunction(
+          isolate(), v8_break_iterator_constructor, "supportedLocalesOf",
+          Builtins::kv8BreakIteratorSupportedLocalesOf, 1, false);
+
       Handle<JSObject> prototype(
           JSObject::cast(v8_break_iterator_constructor->prototype()), isolate_);
 
@@ -2981,6 +3015,63 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
           isolate_, prototype, factory->to_string_tag_symbol(),
           factory->Object_string(),
           static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+
+      SimpleInstallGetter(isolate_, prototype,
+                          factory->InternalizeUtf8String("adoptText"),
+                          Builtins::kBreakIteratorPrototypeAdoptText, false);
+
+      {
+        Handle<SharedFunctionInfo> info = SimpleCreateBuiltinSharedFunctionInfo(
+            isolate_, Builtins::kBreakIteratorInternalAdoptText,
+            factory->empty_string(), 1);
+        native_context()->set_break_iterator_internal_adopt_text_shared_fun(
+            *info);
+      }
+
+      SimpleInstallGetter(isolate_, prototype,
+                          factory->InternalizeUtf8String("first"),
+                          Builtins::kBreakIteratorPrototypeFirst, false);
+
+      {
+        Handle<SharedFunctionInfo> info = SimpleCreateBuiltinSharedFunctionInfo(
+            isolate_, Builtins::kBreakIteratorInternalFirst,
+            factory->empty_string(), 0);
+        native_context()->set_break_iterator_internal_first_shared_fun(*info);
+      }
+
+      SimpleInstallGetter(isolate_, prototype,
+                          factory->InternalizeUtf8String("next"),
+                          Builtins::kBreakIteratorPrototypeNext, false);
+
+      {
+        Handle<SharedFunctionInfo> info = SimpleCreateBuiltinSharedFunctionInfo(
+            isolate_, Builtins::kBreakIteratorInternalNext,
+            factory->empty_string(), 0);
+        native_context()->set_break_iterator_internal_next_shared_fun(*info);
+      }
+
+      SimpleInstallGetter(isolate_, prototype,
+                          factory->InternalizeUtf8String("current"),
+                          Builtins::kBreakIteratorPrototypeCurrent, false);
+
+      {
+        Handle<SharedFunctionInfo> info = SimpleCreateBuiltinSharedFunctionInfo(
+            isolate_, Builtins::kBreakIteratorInternalCurrent,
+            factory->empty_string(), 0);
+        native_context()->set_break_iterator_internal_current_shared_fun(*info);
+      }
+
+      SimpleInstallGetter(isolate_, prototype,
+                          factory->InternalizeUtf8String("breakType"),
+                          Builtins::kBreakIteratorPrototypeBreakType, false);
+
+      {
+        Handle<SharedFunctionInfo> info = SimpleCreateBuiltinSharedFunctionInfo(
+            isolate_, Builtins::kBreakIteratorInternalBreakType,
+            factory->empty_string(), 0);
+        native_context()->set_break_iterator_internal_break_type_shared_fun(
+            *info);
+      }
     }
 
     {
@@ -2992,6 +3083,10 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
       InstallWithIntrinsicDefaultProto(
           isolate_, plural_rules_constructor,
           Context::INTL_PLURAL_RULES_FUNCTION_INDEX);
+
+      SimpleInstallFunction(isolate(), plural_rules_constructor,
+                            "supportedLocalesOf",
+                            Builtins::kPluralRulesSupportedLocalesOf, 1, false);
 
       Handle<JSObject> prototype(
           JSObject::cast(plural_rules_constructor->prototype()), isolate_);
@@ -3946,7 +4041,7 @@ void Bootstrapper::ExportFromRuntime(Isolate* isolate,
                                      Handle<JSObject> container) {
   Factory* factory = isolate->factory();
   HandleScope scope(isolate);
-  Handle<Context> native_context = isolate->native_context();
+  Handle<NativeContext> native_context = isolate->native_context();
 #define EXPORT_PRIVATE_SYMBOL(NAME)                                       \
   Handle<String> NAME##_name = factory->NewStringFromAsciiChecked(#NAME); \
   JSObject::AddProperty(isolate, container, NAME##_name, factory->NAME(), NONE);
@@ -4558,6 +4653,9 @@ void Genesis::InitializeGlobal_harmony_intl_list_format() {
   list_format_fun->shared()->set_length(0);
   list_format_fun->shared()->DontAdaptArguments();
 
+  SimpleInstallFunction(isolate(), list_format_fun, "supportedLocalesOf",
+                        Builtins::kListFormatSupportedLocalesOf, 1, false);
+
   // Setup %ListFormatPrototype%.
   Handle<JSObject> prototype(
       JSObject::cast(list_format_fun->instance_prototype()), isolate());
@@ -4658,6 +4756,10 @@ void Genesis::InitializeGlobal_harmony_intl_relative_time_format() {
       Builtins::kRelativeTimeFormatConstructor);
   relative_time_format_fun->shared()->set_length(0);
   relative_time_format_fun->shared()->DontAdaptArguments();
+
+  SimpleInstallFunction(
+      isolate(), relative_time_format_fun, "supportedLocalesOf",
+      Builtins::kRelativeTimeFormatSupportedLocalesOf, 1, false);
 
   // Setup %RelativeTimeFormatPrototype%.
   Handle<JSObject> prototype(
@@ -5261,12 +5363,10 @@ bool Bootstrapper::InstallExtensions(Handle<Context> native_context,
 
 bool Genesis::InstallSpecialObjects(Isolate* isolate,
                                     Handle<Context> native_context) {
-  Factory* factory = isolate->factory();
   HandleScope scope(isolate);
 
   Handle<JSObject> Error = isolate->error_function();
-  Handle<String> name =
-      factory->InternalizeOneByteString(STATIC_CHAR_VECTOR("stackTraceLimit"));
+  Handle<String> name = isolate->factory()->stackTraceLimit_string();
   Handle<Smi> stack_trace_limit(Smi::FromInt(FLAG_stack_trace_limit), isolate);
   JSObject::AddProperty(isolate, Error, name, stack_trace_limit, NONE);
 
@@ -5649,12 +5749,15 @@ Genesis::Genesis(
   // We can only de-serialize a context if the isolate was initialized from
   // a snapshot. Otherwise we have to build the context from scratch.
   // Also create a context from scratch to expose natives, if required by flag.
-  if (!isolate->initialized_from_snapshot() ||
-      !Snapshot::NewContextFromSnapshot(isolate, global_proxy,
-                                        context_snapshot_index,
-                                        embedder_fields_deserializer)
-           .ToHandle(&native_context_)) {
-    native_context_ = Handle<Context>();
+  DCHECK(native_context_.is_null());
+  if (isolate->initialized_from_snapshot()) {
+    Handle<Context> context;
+    if (Snapshot::NewContextFromSnapshot(isolate, global_proxy,
+                                         context_snapshot_index,
+                                         embedder_fields_deserializer)
+            .ToHandle(&context)) {
+      native_context_ = Handle<NativeContext>::cast(context);
+    }
   }
 
   if (!native_context().is_null()) {

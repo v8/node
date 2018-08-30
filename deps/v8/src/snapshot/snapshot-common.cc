@@ -307,6 +307,10 @@ bool BuiltinAliasesOffHeapTrampolineRegister(Isolate* isolate, Code* code) {
     case Builtins::TFJ:
     case Builtins::TFS:
       break;
+
+    // Bytecode handlers will only ever be used by the interpreter and so there
+    // will never be a need to use trampolines with them.
+    case Builtins::BCH:
     case Builtins::API:
     case Builtins::ASM:
       // TODO(jgruber): Extend checks to remaining kinds.
@@ -346,6 +350,7 @@ void FinalizeEmbeddedCodeTargets(Isolate* isolate, EmbeddedData* blob) {
     // On X64, ARM, ARM64 we emit relative builtin-to-builtin jumps for isolate
     // independent builtins in the snapshot. This fixes up the relative jumps
     // to the right offsets in the snapshot.
+    // See also: Code::IsIsolateIndependent.
     while (!on_heap_it.done()) {
       DCHECK(!off_heap_it.done());
 
@@ -354,8 +359,10 @@ void FinalizeEmbeddedCodeTargets(Isolate* isolate, EmbeddedData* blob) {
       Code* target = Code::GetCodeFromTargetAddress(rinfo->target_address());
       CHECK(Builtins::IsIsolateIndependentBuiltin(target));
 
+      // Do not emit write-barrier for off-heap writes.
       off_heap_it.rinfo()->set_target_address(
-          blob->InstructionStartOfBuiltin(target->builtin_index()));
+          blob->InstructionStartOfBuiltin(target->builtin_index()),
+          SKIP_WRITE_BARRIER);
 
       on_heap_it.next();
       off_heap_it.next();
@@ -392,6 +399,16 @@ EmbeddedData EmbeddedData::FromIsolate(Isolate* isolate) {
       if (!code->IsIsolateIndependent(isolate)) {
         saw_unsafe_builtin = true;
         fprintf(stderr, "%s is not isolate-independent.\n", Builtins::name(i));
+      }
+      if (Builtins::IsWasmRuntimeStub(i) &&
+          RelocInfo::RequiresRelocation(code)) {
+        // Wasm additionally requires that its runtime stubs must be
+        // individually PIC (i.e. we must be able to copy each stub outside the
+        // embedded area without relocations). In particular, that means
+        // pc-relative calls to other builtins are disallowed.
+        saw_unsafe_builtin = true;
+        fprintf(stderr, "%s is a wasm runtime stub but needs relocation.\n",
+                Builtins::name(i));
       }
       if (BuiltinAliasesOffHeapTrampolineRegister(isolate, code)) {
         saw_unsafe_builtin = true;

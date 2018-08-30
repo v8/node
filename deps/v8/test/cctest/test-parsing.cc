@@ -71,6 +71,237 @@ void MockUseCounterCallback(v8::Isolate* isolate,
 
 }  // namespace
 
+bool TokenIsAnyIdentifier(Token::Value tok) {
+  switch (tok) {
+    case Token::IDENTIFIER:
+    case Token::ASYNC:
+    case Token::AWAIT:
+    case Token::ENUM:
+    case Token::LET:
+    case Token::STATIC:
+    case Token::YIELD:
+    case Token::FUTURE_STRICT_RESERVED_WORD:
+    case Token::ESCAPED_STRICT_RESERVED_WORD:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(AnyIdentifierToken) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value tok = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsAnyIdentifier(tok), Token::IsAnyIdentifier(tok));
+  }
+}
+
+bool TokenIsAssignmentOp(Token::Value tok) {
+  switch (tok) {
+    case Token::INIT:
+    case Token::ASSIGN:
+#define T(name, string, precedence) case Token::name:
+      BINARY_OP_TOKEN_LIST(T, EXPAND_BINOP_ASSIGN_TOKEN)
+#undef T
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(AssignmentOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value tok = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsAssignmentOp(tok), Token::IsAssignmentOp(tok));
+  }
+}
+
+bool TokenIsBinaryOp(Token::Value tok) {
+  switch (tok) {
+    case Token::COMMA:
+    case Token::OR:
+    case Token::AND:
+#define T(name, string, precedence) case Token::name:
+      BINARY_OP_TOKEN_LIST(T, EXPAND_BINOP_TOKEN)
+#undef T
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(BinaryOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value tok = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsBinaryOp(tok), Token::IsBinaryOp(tok));
+  }
+}
+
+bool TokenIsCompareOp(Token::Value tok) {
+  switch (tok) {
+    case Token::EQ:
+    case Token::EQ_STRICT:
+    case Token::NE:
+    case Token::NE_STRICT:
+    case Token::LT:
+    case Token::GT:
+    case Token::LTE:
+    case Token::GTE:
+    case Token::INSTANCEOF:
+    case Token::IN:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(CompareOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value tok = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsCompareOp(tok), Token::IsCompareOp(tok));
+  }
+}
+
+bool TokenIsOrderedRelationalCompareOp(Token::Value tok) {
+  switch (tok) {
+    case Token::LT:
+    case Token::GT:
+    case Token::LTE:
+    case Token::GTE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsOrderedRelationalCompareOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value tok = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsOrderedRelationalCompareOp(tok),
+             Token::IsOrderedRelationalCompareOp(tok));
+  }
+}
+
+bool TokenIsEqualityOp(Token::Value tok) {
+  switch (tok) {
+    case Token::EQ:
+    case Token::EQ_STRICT:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsEqualityOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value tok = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsEqualityOp(tok), Token::IsEqualityOp(tok));
+  }
+}
+
+bool TokenIsBitOp(Token::Value tok) {
+  switch (tok) {
+    case Token::BIT_OR:
+    case Token::BIT_XOR:
+    case Token::BIT_AND:
+    case Token::SHL:
+    case Token::SAR:
+    case Token::SHR:
+    case Token::BIT_NOT:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsBitOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value tok = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsBitOp(tok), Token::IsBitOp(tok));
+  }
+}
+
+bool TokenIsUnaryOp(Token::Value tok) {
+  switch (tok) {
+    case Token::NOT:
+    case Token::BIT_NOT:
+    case Token::DELETE:
+    case Token::TYPEOF:
+    case Token::VOID:
+    case Token::ADD:
+    case Token::SUB:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsUnaryOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value tok = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsUnaryOp(tok), Token::IsUnaryOp(tok));
+  }
+}
+
+bool TokenIsCountOp(Token::Value tok) {
+  switch (tok) {
+    case Token::INC:
+    case Token::DEC:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsCountOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value tok = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsCountOp(tok), Token::IsCountOp(tok));
+  }
+}
+
+bool TokenIsShiftOp(Token::Value tok) {
+  switch (tok) {
+    case Token::SHL:
+    case Token::SAR:
+    case Token::SHR:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsShiftOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value tok = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsShiftOp(tok), Token::IsShiftOp(tok));
+  }
+}
+
+bool TokenIsTrivialExpressionToken(Token::Value tok) {
+  switch (tok) {
+    case Token::SMI:
+    case Token::NUMBER:
+    case Token::BIGINT:
+    case Token::NULL_LITERAL:
+    case Token::TRUE_LITERAL:
+    case Token::FALSE_LITERAL:
+    case Token::STRING:
+    case Token::IDENTIFIER:
+    case Token::THIS:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsTrivialExpressionToken) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value tok = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsTrivialExpressionToken(tok),
+             Token::IsTrivialExpressionToken(tok));
+  }
+}
+
 TEST(ScanKeywords) {
   struct KeywordToken {
     const char* keyword;
@@ -92,16 +323,16 @@ TEST(ScanKeywords) {
     CHECK(static_cast<int>(sizeof(buffer)) >= length);
     {
       auto stream = i::ScannerStream::ForTesting(keyword, length);
-      i::Scanner scanner(&unicode_cache);
-      scanner.Initialize(stream.get(), false);
+      i::Scanner scanner(&unicode_cache, stream.get(), false);
+      scanner.Initialize();
       CHECK_EQ(key_token.token, scanner.Next());
       CHECK_EQ(i::Token::EOS, scanner.Next());
     }
     // Removing characters will make keyword matching fail.
     {
       auto stream = i::ScannerStream::ForTesting(keyword, length - 1);
-      i::Scanner scanner(&unicode_cache);
-      scanner.Initialize(stream.get(), false);
+      i::Scanner scanner(&unicode_cache, stream.get(), false);
+      scanner.Initialize();
       CHECK_EQ(i::Token::IDENTIFIER, scanner.Next());
       CHECK_EQ(i::Token::EOS, scanner.Next());
     }
@@ -111,8 +342,8 @@ TEST(ScanKeywords) {
       i::MemMove(buffer, keyword, length);
       buffer[length] = chars_to_append[j];
       auto stream = i::ScannerStream::ForTesting(buffer, length + 1);
-      i::Scanner scanner(&unicode_cache);
-      scanner.Initialize(stream.get(), false);
+      i::Scanner scanner(&unicode_cache, stream.get(), false);
+      scanner.Initialize();
       CHECK_EQ(i::Token::IDENTIFIER, scanner.Next());
       CHECK_EQ(i::Token::EOS, scanner.Next());
     }
@@ -121,8 +352,8 @@ TEST(ScanKeywords) {
       i::MemMove(buffer, keyword, length);
       buffer[length - 1] = '_';
       auto stream = i::ScannerStream::ForTesting(buffer, length);
-      i::Scanner scanner(&unicode_cache);
-      scanner.Initialize(stream.get(), false);
+      i::Scanner scanner(&unicode_cache, stream.get(), false);
+      scanner.Initialize();
       CHECK_EQ(i::Token::IDENTIFIER, scanner.Next());
       CHECK_EQ(i::Token::EOS, scanner.Next());
     }
@@ -188,8 +419,8 @@ TEST(ScanHTMLEndComments) {
   for (int i = 0; tests[i]; i++) {
     const char* source = tests[i];
     auto stream = i::ScannerStream::ForTesting(source);
-    i::Scanner scanner(i_isolate->unicode_cache());
-    scanner.Initialize(stream.get(), false);
+    i::Scanner scanner(i_isolate->unicode_cache(), stream.get(), false);
+    scanner.Initialize();
     i::Zone zone(i_isolate->allocator(), ZONE_NAME);
     i::AstValueFactory ast_value_factory(&zone,
                                          i_isolate->ast_string_constants(),
@@ -207,8 +438,8 @@ TEST(ScanHTMLEndComments) {
   for (int i = 0; fail_tests[i]; i++) {
     const char* source = fail_tests[i];
     auto stream = i::ScannerStream::ForTesting(source);
-    i::Scanner scanner(i_isolate->unicode_cache());
-    scanner.Initialize(stream.get(), false);
+    i::Scanner scanner(i_isolate->unicode_cache(), stream.get(), false);
+    scanner.Initialize();
     i::Zone zone(i_isolate->allocator(), ZONE_NAME);
     i::AstValueFactory ast_value_factory(&zone,
                                          i_isolate->ast_string_constants(),
@@ -232,8 +463,8 @@ TEST(ScanHtmlComments) {
   // Disallow HTML comments.
   {
     auto stream = i::ScannerStream::ForTesting(src);
-    i::Scanner scanner(&unicode_cache);
-    scanner.Initialize(stream.get(), true);
+    i::Scanner scanner(&unicode_cache, stream.get(), true);
+    scanner.Initialize();
     CHECK_EQ(i::Token::IDENTIFIER, scanner.Next());
     CHECK_EQ(i::Token::ILLEGAL, scanner.Next());
   }
@@ -241,8 +472,8 @@ TEST(ScanHtmlComments) {
   // Skip HTML comments:
   {
     auto stream = i::ScannerStream::ForTesting(src);
-    i::Scanner scanner(&unicode_cache);
-    scanner.Initialize(stream.get(), false);
+    i::Scanner scanner(&unicode_cache, stream.get(), false);
+    scanner.Initialize();
     CHECK_EQ(i::Token::IDENTIFIER, scanner.Next());
     CHECK_EQ(i::Token::EOS, scanner.Next());
   }
@@ -280,8 +511,8 @@ TEST(StandAlonePreParser) {
   uintptr_t stack_limit = i_isolate->stack_guard()->real_climit();
   for (int i = 0; programs[i]; i++) {
     auto stream = i::ScannerStream::ForTesting(programs[i]);
-    i::Scanner scanner(i_isolate->unicode_cache());
-    scanner.Initialize(stream.get(), false);
+    i::Scanner scanner(i_isolate->unicode_cache(), stream.get(), false);
+    scanner.Initialize();
 
     i::Zone zone(i_isolate->allocator(), ZONE_NAME);
     i::AstValueFactory ast_value_factory(&zone,
@@ -313,8 +544,8 @@ TEST(StandAlonePreParserNoNatives) {
   uintptr_t stack_limit = isolate->stack_guard()->real_climit();
   for (int i = 0; programs[i]; i++) {
     auto stream = i::ScannerStream::ForTesting(programs[i]);
-    i::Scanner scanner(isolate->unicode_cache());
-    scanner.Initialize(stream.get(), false);
+    i::Scanner scanner(isolate->unicode_cache(), stream.get(), false);
+    scanner.Initialize();
 
     // Preparser defaults to disallowing natives syntax.
     i::Zone zone(CcTest::i_isolate()->allocator(), ZONE_NAME);
@@ -348,8 +579,8 @@ TEST(RegressChromium62639) {
   // failed in debug mode, and sometimes crashed in release mode.
 
   auto stream = i::ScannerStream::ForTesting(program);
-  i::Scanner scanner(CcTest::i_isolate()->unicode_cache());
-  scanner.Initialize(stream.get(), false);
+  i::Scanner scanner(CcTest::i_isolate()->unicode_cache(), stream.get(), false);
+  scanner.Initialize();
   i::Zone zone(CcTest::i_isolate()->allocator(), ZONE_NAME);
   i::AstValueFactory ast_value_factory(
       &zone, CcTest::i_isolate()->ast_string_constants(),
@@ -381,8 +612,8 @@ TEST(PreParseOverflow) {
   uintptr_t stack_limit = isolate->stack_guard()->real_climit();
 
   auto stream = i::ScannerStream::ForTesting(program.get(), kProgramSize);
-  i::Scanner scanner(isolate->unicode_cache());
-  scanner.Initialize(stream.get(), false);
+  i::Scanner scanner(isolate->unicode_cache(), stream.get(), false);
+  scanner.Initialize();
 
   i::Zone zone(CcTest::i_isolate()->allocator(), ZONE_NAME);
   i::AstValueFactory ast_value_factory(
@@ -396,12 +627,12 @@ TEST(PreParseOverflow) {
   CHECK_EQ(i::PreParser::kPreParseStackOverflow, result);
 }
 
-void TestStreamScanner(i::CharacterStream<uint16_t>* stream,
+void TestStreamScanner(i::Utf16CharacterStream* stream,
                        i::Token::Value* expected_tokens,
                        int skip_pos = 0,  // Zero means not skipping.
                        int skip_to = 0) {
-  i::Scanner scanner(CcTest::i_isolate()->unicode_cache());
-  scanner.Initialize(stream, false);
+  i::Scanner scanner(CcTest::i_isolate()->unicode_cache(), stream, false);
+  scanner.Initialize();
 
   int i = 0;
   do {
@@ -419,7 +650,8 @@ void TestStreamScanner(i::CharacterStream<uint16_t>* stream,
 TEST(StreamScanner) {
   v8::V8::Initialize();
   const char* str1 = "{ foo get for : */ <- \n\n /*foo*/ bib";
-  auto stream1(i::ScannerStream::ForTesting(str1));
+  std::unique_ptr<i::Utf16CharacterStream> stream1(
+      i::ScannerStream::ForTesting(str1));
   i::Token::Value expectations1[] = {
       i::Token::LBRACE,
       i::Token::IDENTIFIER,
@@ -437,7 +669,8 @@ TEST(StreamScanner) {
   TestStreamScanner(stream1.get(), expectations1, 0, 0);
 
   const char* str2 = "case default const {THIS\nPART\nSKIPPED} do";
-  auto stream2(i::ScannerStream::ForTesting(str2));
+  std::unique_ptr<i::Utf16CharacterStream> stream2(
+      i::ScannerStream::ForTesting(str2));
   i::Token::Value expectations2[] = {
       i::Token::CASE,
       i::Token::DEFAULT,
@@ -467,7 +700,8 @@ TEST(StreamScanner) {
   for (int i = 0; i <= 4; i++) {
      expectations3[6 - i] = i::Token::ILLEGAL;
      expectations3[5 - i] = i::Token::EOS;
-     auto stream3(i::ScannerStream::ForTesting(str3));
+     std::unique_ptr<i::Utf16CharacterStream> stream3(
+         i::ScannerStream::ForTesting(str3));
      TestStreamScanner(stream3.get(), expectations3, 1, 1 + i);
   }
 }
@@ -475,8 +709,8 @@ TEST(StreamScanner) {
 void TestScanRegExp(const char* re_source, const char* expected) {
   auto stream = i::ScannerStream::ForTesting(re_source);
   i::HandleScope scope(CcTest::i_isolate());
-  i::Scanner scanner(CcTest::i_isolate()->unicode_cache());
-  scanner.Initialize(stream.get(), false);
+  i::Scanner scanner(CcTest::i_isolate()->unicode_cache(), stream.get(), false);
+  scanner.Initialize();
 
   i::Token::Value start = scanner.peek();
   CHECK(start == i::Token::DIV || start == i::Token::ASSIGN_DIV);
@@ -1155,7 +1389,6 @@ void SetParserFlags(i::PreParser* parser, i::EnumSet<ParserFlag> flags) {
       flags.Contains(kAllowHarmonyNumericSeparator));
 }
 
-template <typename Char>
 void TestParserSyncWithFlags(i::Handle<i::String> source,
                              i::EnumSet<ParserFlag> flags,
                              ParserSyncTestResult result,
@@ -1169,9 +1402,9 @@ void TestParserSyncWithFlags(i::Handle<i::String> source,
   // Preparse the data.
   i::PendingCompilationErrorHandler pending_error_handler;
   if (test_preparser) {
-    i::Scanner scanner(isolate->unicode_cache());
-    std::unique_ptr<i::ScannerStream> stream(
+    std::unique_ptr<i::Utf16CharacterStream> stream(
         i::ScannerStream::For(isolate, source));
+    i::Scanner scanner(isolate->unicode_cache(), stream.get(), is_module);
     i::Zone zone(CcTest::i_isolate()->allocator(), ZONE_NAME);
     i::AstValueFactory ast_value_factory(
         &zone, CcTest::i_isolate()->ast_string_constants(),
@@ -1181,8 +1414,7 @@ void TestParserSyncWithFlags(i::Handle<i::String> source,
                            isolate->counters()->runtime_call_stats(),
                            isolate->logger(), -1, is_module);
     SetParserFlags(&preparser, flags);
-    scanner.Initialize(static_cast<CharacterStream<Char>*>(stream.get()),
-                       is_module);
+    scanner.Initialize();
     i::PreParser::PreParseResult result = preparser.PreParseProgram();
     CHECK_EQ(i::PreParser::kPreParseSuccess, result);
   }
@@ -1292,15 +1524,8 @@ void TestParserSync(const char* source, const ParserFlag* varying_flags,
          ++flag_index) {
       flags.Remove(always_false_flags[flag_index]);
     }
-    if (str->IsSeqOneByteString()) {
-      // TODO(verwaest): Switch to uint8_t.
-      TestParserSyncWithFlags<uint16_t>(str, flags, result, is_module,
-                                        test_preparser, ignore_error_msg);
-    } else {
-      DCHECK(str->IsSeqTwoByteString());
-      TestParserSyncWithFlags<uint16_t>(str, flags, result, is_module,
-                                        test_preparser, ignore_error_msg);
-    }
+    TestParserSyncWithFlags(str, flags, result, is_module, test_preparser,
+                            ignore_error_msg);
   }
 }
 

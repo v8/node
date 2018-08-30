@@ -257,7 +257,7 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
 // Use macro to include both inlined and non-inlined version of an intrinsic.
 #define INTRINSIC_WHITELIST(V)                \
   /* Conversions */                           \
-  V(NumberToStringSkipCache)                  \
+  V(NumberToString)                           \
   V(ToBigInt)                                 \
   V(ToInteger)                                \
   V(ToLength)                                 \
@@ -270,8 +270,6 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   V(IsFunction)                               \
   V(IsJSProxy)                                \
   V(IsJSReceiver)                             \
-  V(IsJSWeakMap)                              \
-  V(IsJSWeakSet)                              \
   V(IsRegExp)                                 \
   V(IsSmi)                                    \
   V(IsTypedArray)                             \
@@ -294,6 +292,7 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   V(ReThrow)                                  \
   V(ThrowCalledNonCallable)                   \
   V(ThrowInvalidStringLength)                 \
+  V(ThrowIteratorError)                       \
   V(ThrowIteratorResultNotAnObject)           \
   V(ThrowReferenceError)                      \
   V(ThrowSymbolIteratorInvalid)               \
@@ -311,6 +310,7 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   V(BigIntToNumber)                           \
   /* Literals */                              \
   V(CreateArrayLiteral)                       \
+  V(CreateArrayLiteralWithoutAllocationSite)  \
   V(CreateObjectLiteral)                      \
   V(CreateObjectLiteralWithoutAllocationSite) \
   V(CreateRegExpLiteral)                      \
@@ -478,6 +478,7 @@ bool BytecodeHasNoSideEffect(interpreter::Bytecode bytecode) {
     // Literals.
     case Bytecode::kCreateArrayLiteral:
     case Bytecode::kCreateEmptyArrayLiteral:
+    case Bytecode::kCreateArrayFromIterable:
     case Bytecode::kCreateObjectLiteral:
     case Bytecode::kCreateEmptyObjectLiteral:
     case Bytecode::kCreateRegExpLiteral:
@@ -562,7 +563,9 @@ DebugInfo::SideEffectState BuiltinGetSideEffectState(Builtins::Name id) {
     case Builtins::kArrayPrototypeFlat:
     case Builtins::kArrayPrototypeFlatMap:
     case Builtins::kArrayPrototypeKeys:
+    case Builtins::kArrayPrototypeLastIndexOf:
     case Builtins::kArrayPrototypeSlice:
+    case Builtins::kArrayPrototypeSort:
     case Builtins::kArrayForEach:
     case Builtins::kArrayEvery:
     case Builtins::kArraySome:
@@ -817,6 +820,7 @@ DebugInfo::SideEffectState BuiltinGetSideEffectState(Builtins::Name id) {
     case Builtins::kArrayIteratorPrototypeNext:
     case Builtins::kArrayPrototypePop:
     case Builtins::kArrayPrototypePush:
+    case Builtins::kArrayPrototypeReverse:
     case Builtins::kArrayPrototypeShift:
     case Builtins::kArraySplice:
     case Builtins::kArrayUnshift:

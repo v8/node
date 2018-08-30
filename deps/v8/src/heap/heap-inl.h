@@ -17,11 +17,9 @@
 #include "src/counters-inl.h"
 #include "src/feedback-vector.h"
 
-// TODO(mstarzinger): There are 3 more includes to remove in order to no longer
+// TODO(mstarzinger): There is one more include to remove in order to no longer
 // leak heap internals to users of this interface!
-#include "src/heap/incremental-marking-inl.h"
 #include "src/heap/spaces-inl.h"
-#include "src/heap/store-buffer-inl.h"
 #include "src/isolate.h"
 #include "src/log.h"
 #include "src/msan.h"
@@ -429,16 +427,6 @@ bool Heap::ShouldBePromoted(Address old_address) {
          (!page->ContainsLimit(age_mark) || old_address < age_mark);
 }
 
-void Heap::RecordWriteIntoCode(Code* host, RelocInfo* rinfo, Object* value) {
-  if (InNewSpace(value)) {
-    RecordWriteIntoCodeSlow(host, rinfo, value);
-  }
-}
-
-Address* Heap::store_buffer_top_address() {
-  return store_buffer()->top_address();
-}
-
 void Heap::CopyBlock(Address dst, Address src, int byte_size) {
   CopyWords(reinterpret_cast<Object**>(dst), reinterpret_cast<Object**>(src),
             static_cast<size_t>(byte_size / kPointerSize));
@@ -581,6 +569,18 @@ int Heap::GetNextTemplateSerialNumber() {
   return next_serial_number;
 }
 
+int Heap::MaxNumberToStringCacheSize() const {
+  // Compute the size of the number string cache based on the max newspace size.
+  // The number string cache has a minimum size based on twice the initial cache
+  // size to ensure that it is bigger after being made 'full size'.
+  size_t number_string_cache_size = max_semi_space_size_ / 512;
+  number_string_cache_size =
+      Max(static_cast<size_t>(kInitialNumberStringCacheSize * 2),
+          Min<size_t>(0x4000u, number_string_cache_size));
+  // There is a string and a number per entry so the length is twice the number
+  // of entries.
+  return static_cast<int>(number_string_cache_size * 2);
+}
 AlwaysAllocateScope::AlwaysAllocateScope(Isolate* isolate)
     : heap_(isolate->heap()) {
   heap_->always_allocate_scope_count_++;

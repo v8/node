@@ -14,7 +14,6 @@
 #include "src/globals.h"
 #include "src/parsing/parser-base.h"
 #include "src/parsing/parsing.h"
-#include "src/parsing/preparse-data.h"
 #include "src/parsing/preparser.h"
 #include "src/utils.h"
 #include "src/zone/zone-chunk-list.h"
@@ -156,6 +155,10 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
 
   void ParseOnBackground(ParseInfo* info);
 
+  // Initializes an empty scope chain for top-level scripts, or scopes which
+  // consist of only the native context.
+  void InitializeEmptyScopeChain(ParseInfo* info);
+
   // Deserialize the scope chain prior to parsing in which the script is going
   // to be executed. If the script is a top-level script, or the scope chain
   // consists of only a native context, maybe_outer_scope_info should be an
@@ -233,8 +236,6 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
   ZonePtrList<const AstRawString>* PrepareWrappedArguments(Isolate* isolate,
                                                            ParseInfo* info,
                                                            Zone* zone);
-
-  void StitchAst(ParseInfo* top_level_parse_info, Isolate* isolate);
 
   PreParser* reusable_preparser() {
     if (reusable_preparser_ == nullptr) {

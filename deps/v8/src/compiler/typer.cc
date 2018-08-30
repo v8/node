@@ -1215,6 +1215,10 @@ Type Typer::Visitor::TypeJSCreateEmptyLiteralArray(Node* node) {
   return Type::Array();
 }
 
+Type Typer::Visitor::TypeJSCreateArrayFromIterable(Node* node) {
+  return Type::Array();
+}
+
 Type Typer::Visitor::TypeJSCreateLiteralObject(Node* node) {
   return Type::OtherObject();
 }
@@ -1419,10 +1423,10 @@ Type Typer::Visitor::JSCallTyper(Type fun, Typer* t) {
     return Type::NonInternal();
   }
   JSFunctionRef function = fun.AsHeapConstant()->Ref().AsJSFunction();
-  if (!function.HasBuiltinFunctionId()) {
+  if (!function.shared().HasBuiltinFunctionId()) {
     return Type::NonInternal();
   }
-  switch (function.GetBuiltinFunctionId()) {
+  switch (function.shared().builtin_function_id()) {
     case BuiltinFunctionId::kMathRandom:
       return Type::PlainNumber();
     case BuiltinFunctionId::kMathFloor:
@@ -2000,6 +2004,8 @@ Type Typer::Visitor::TypeCheckSymbol(Node* node) {
   Type arg = Operand(node, 0);
   return Type::Intersect(arg, Type::Symbol(), zone());
 }
+
+Type Typer::Visitor::TypeCheckStringAdd(Node* node) { return Type::String(); }
 
 Type Typer::Visitor::TypeCheckFloat64Hole(Node* node) {
   return typer_->operation_typer_.CheckFloat64Hole(Operand(node, 0));

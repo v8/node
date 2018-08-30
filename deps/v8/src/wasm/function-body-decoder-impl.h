@@ -223,6 +223,7 @@ struct BlockTypeImmediate {
         decoder->error(pc + 1, "invalid block type");
         return;
       }
+      if (!VALIDATE(decoder->ok())) return;
       int32_t index =
           decoder->read_i32v<validate>(pc + 1, &length, "block arity");
       if (!VALIDATE(length > 0 && index >= 0)) {
@@ -732,6 +733,13 @@ class WasmDecoder : public Decoder {
         case kLocalAnyRef:
           if (enabled.anyref) {
             type = kWasmAnyRef;
+            break;
+          }
+          decoder->error(decoder->pc() - 1, "invalid local type");
+          return false;
+        case kLocalExceptRef:
+          if (enabled.eh) {
+            type = kWasmExceptRef;
             break;
           }
           decoder->error(decoder->pc() - 1, "invalid local type");

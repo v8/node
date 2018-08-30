@@ -21,6 +21,7 @@
 #include "src/objects/debug-objects.h"
 #include "src/objects/descriptor-array.h"
 #include "src/objects/dictionary.h"
+#include "src/objects/literal-objects-inl.h"
 #include "src/objects/map.h"
 #include "src/objects/microtask.h"
 #include "src/objects/module.h"
@@ -389,8 +390,8 @@ bool Heap::CreateInitialMaps() {
 
     {  // Create a separate external one byte string map for native sources.
       AllocationResult allocation =
-          AllocateMap(SHORT_EXTERNAL_ONE_BYTE_STRING_TYPE,
-                      ExternalOneByteString::kShortSize);
+          AllocateMap(UNCACHED_EXTERNAL_ONE_BYTE_STRING_TYPE,
+                      ExternalOneByteString::kUncachedSize);
       if (!allocation.To(&obj)) return false;
       Map* map = Map::cast(obj);
       map->SetConstructorFunctionIndex(Context::STRING_FUNCTION_INDEX);
@@ -521,6 +522,20 @@ bool Heap::CreateInitialMaps() {
   }
   set_empty_object_boilerplate_description(
       ObjectBoilerplateDescription::cast(obj));
+
+  {
+    // Empty array boilerplate description
+    AllocationResult alloc =
+        Allocate(roots.array_boilerplate_description_map(), RO_SPACE);
+    if (!alloc.To(&obj)) return false;
+
+    ArrayBoilerplateDescription::cast(obj)->set_constant_elements(
+        roots.empty_fixed_array());
+    ArrayBoilerplateDescription::cast(obj)->set_elements_kind(
+        ElementsKind::PACKED_SMI_ELEMENTS);
+  }
+  set_empty_array_boilerplate_description(
+      ArrayBoilerplateDescription::cast(obj));
 
   {
     AllocationResult allocation = Allocate(roots.boolean_map(), RO_SPACE);

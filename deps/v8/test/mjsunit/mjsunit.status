@@ -154,17 +154,23 @@
   'asm/poppler/*': [PASS, SLOW, NO_VARIANTS],
   'asm/sqlite3/*': [PASS, SLOW, NO_VARIANTS],
 
+  # OOM flakes in isolates tests because too many largish heaps are created.
+  'asm/asm-heap': [PASS, NO_VARIANTS, ['isolates', SKIP]],
+
   # Slow tests.
   'copy-on-write-assert': [PASS, SLOW],
   'es6/typedarray-construct-offset-not-smi': [PASS, SLOW],
   'harmony/regexp-property-script-extensions': [PASS, SLOW],
+  'md5': [PASS, SLOW],
   'numops-fuzz-part*': [PASS, ['mode == debug', SLOW]],
   'readonly': [PASS, SLOW],
   'regress/regress-1122': [PASS, SLOW],
   'regress/regress-605470': [PASS, SLOW],
   'regress/regress-655573': [PASS, SLOW],
   'regress/regress-1200351': [PASS, SLOW],
+  'string-replace-gc': [PASS, SLOW],
   'wasm/asm-wasm-f32': [PASS, SLOW],
+  'wasm/asm-wasm-f64': [PASS, SLOW],
   'wasm/embenchen/*': [PASS, SLOW],
   'wasm/grow-memory': [PASS, SLOW],
   'wasm/unreachable-validation': [PASS, SLOW],
@@ -369,7 +375,6 @@
   'math-floor-of-div': [PASS, SLOW],
   'messages': [PASS, SLOW],
   'packed-elements': [PASS, SLOW],
-  'regress/regress-2185': [PASS, SLOW],
   'regress/regress-2790': [PASS, SLOW],
   'regress/regress-331444': [PASS, SLOW],
   'regress/regress-490': [PASS, SLOW],
@@ -459,6 +464,9 @@
 
   # BUG(v8:7042). Uses a lot of memory.
   'regress/regress-678917': [SKIP],
+
+  # BUG(v8:8103). Uses a lot of memory.
+  'regress/regress-852258': [SKIP],
 
   # BUG(v8:6924). The test uses a lot of memory.
   'regress/wasm/regress-694433': [SKIP],
@@ -638,13 +646,10 @@
 ##############################################################################
 ['system == android', {
   # Tests consistently failing on Android.
-  # Precision:
-  'es6/math-log2-log10': [FAIL],
-  # Timezone issues:
+  # Unable to change locale on Android:
   'icu-date-to-string': [FAIL],
   'regress/regress-6288': [FAIL],
   # OOM:
-  'regress/regress-599414-array-concat-fast-path': [FAIL],
   'regress/regress-748069': [FAIL],
   'regress/regress-752764': [FAIL],
   'regress/regress-779407': [FAIL],
@@ -786,15 +791,26 @@
   # Too slow for TSAN in stress mode.
   'es6/classes': [PASS, ['tsan', SKIP]],
   'regress/regress-1122': [PASS, ['tsan', SKIP]],
+
+  # Slow on arm64 simulator: https://crbug.com/v8/7783
+  'string-replace-gc': [PASS, ['arch == arm64 and simulator_run', SKIP]],
 }],  # variant == stress
 
 ##############################################################################
 ['variant == nooptimization and (arch == arm or arch == arm64) and simulator_run', {
   # Slow tests: https://crbug.com/v8/7783
   'lexicographic-compare': [SKIP],
-  'regress/regress-2185': [SKIP],
+  'md5': [SKIP],
+  'wasm/asm-wasm-f32': [SKIP],
+  'wasm/asm-wasm-f64': [SKIP],
   'wasm/grow-memory': [SKIP],
 }],  # variant == nooptimization and (arch == arm or arch == arm64) and simulator_run
+
+##############################################################################
+['(arch == arm or arch == arm64)', {
+  # Flaky tests: https://crbug.com/v8/8090
+  'regress/regress-752764': [SKIP],
+}],  # (arch == arm or arch == arm64)
 
 ##############################################################################
 ['gcov_coverage', {

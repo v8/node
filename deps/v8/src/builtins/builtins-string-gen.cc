@@ -39,11 +39,11 @@ Node* StringBuiltinsAssembler::DirectStringData(Node* string,
   BIND(&if_external);
   {
     // This is only valid for ExternalStrings where the resource data
-    // pointer is cached (i.e. no short external strings).
-    CSA_ASSERT(
-        this, Word32NotEqual(Word32And(string_instance_type,
-                                       Int32Constant(kShortExternalStringMask)),
-                             Int32Constant(kShortExternalStringTag)));
+    // pointer is cached (i.e. no uncached external strings).
+    CSA_ASSERT(this, Word32NotEqual(
+                         Word32And(string_instance_type,
+                                   Int32Constant(kUncachedExternalStringMask)),
+                         Int32Constant(kUncachedExternalStringTag)));
     var_data.Bind(LoadObjectField(string, ExternalString::kResourceDataOffset,
                                   MachineType::Pointer()));
     Goto(&if_join);
@@ -191,11 +191,11 @@ void StringBuiltinsAssembler::StringEqual_Core(
 
   // Check if both {lhs} and {rhs} are direct strings, and that in case of
   // ExternalStrings the data pointer is cached.
-  STATIC_ASSERT(kShortExternalStringTag != 0);
+  STATIC_ASSERT(kUncachedExternalStringTag != 0);
   STATIC_ASSERT(kIsIndirectStringTag != 0);
   int const kBothDirectStringMask =
-      kIsIndirectStringMask | kShortExternalStringMask |
-      ((kIsIndirectStringMask | kShortExternalStringMask) << 8);
+      kIsIndirectStringMask | kUncachedExternalStringMask |
+      ((kIsIndirectStringMask | kUncachedExternalStringMask) << 8);
   GotoIfNot(Word32Equal(Word32And(both_instance_types,
                                   Int32Constant(kBothDirectStringMask)),
                         Int32Constant(0)),
@@ -1640,7 +1640,8 @@ class StringPadAssembler : public StringBuiltinsAssembler {
     TVARIABLE(String, var_fill_string, StringConstant(" "));
     TVARIABLE(IntPtrT, var_fill_length, IntPtrConstant(1));
 
-    Label argc_2(this), dont_pad(this), invalid_string_length(this), pad(this);
+    Label check_fill(this), dont_pad(this), invalid_string_length(this),
+        pad(this);
 
     // If no max_length was provided, return the string.
     GotoIf(IntPtrEqual(argc, IntPtrConstant(0)), &dont_pad);
@@ -1649,41 +1650,41 @@ class StringPadAssembler : public StringBuiltinsAssembler {
         ToLength_Inline(context, arguments.AtIndex(0));
     CSA_ASSERT(this, IsNumberNormalized(max_length));
 
-    // Throw if max_length is not a smi or greater than the max string length.
-    GotoIfNot(TaggedIsSmi(max_length), &invalid_string_length);
-    TNode<Smi> smi_max_length = CAST(max_length);
-    GotoIfNot(
-        SmiLessThanOrEqual(smi_max_length, SmiConstant(String::kMaxLength)),
-        &invalid_string_length);
+    // If max_length <= string_length, return the string.
+    GotoIfNot(TaggedIsSmi(max_length), &check_fill);
+    Branch(SmiLessThanOrEqual(CAST(max_length), string_length), &dont_pad,
+           &check_fill);
 
-    // If the max_length is less than length of the string, return the string.
-    CSA_ASSERT(this, TaggedIsPositiveSmi(smi_max_length));
-    GotoIf(SmiLessThanOrEqual(smi_max_length, string_length), &dont_pad);
-
-    Branch(IntPtrEqual(argc, IntPtrConstant(1)), &pad, &argc_2);
-    BIND(&argc_2);
+    BIND(&check_fill);
     {
+      GotoIf(IntPtrEqual(argc, IntPtrConstant(1)), &pad);
       Node* const fill = arguments.AtIndex(1);
       GotoIf(IsUndefined(fill), &pad);
 
       var_fill_string = ToString_Inline(context, fill);
       var_fill_length = LoadStringLengthAsWord(var_fill_string.value());
-
-      Branch(IntPtrGreaterThan(var_fill_length.value(), IntPtrConstant(0)),
-             &pad, &dont_pad);
+      Branch(WordEqual(var_fill_length.value(), IntPtrConstant(0)), &dont_pad,
+             &pad);
     }
+
     BIND(&pad);
     {
       CSA_ASSERT(this,
                  IntPtrGreaterThan(var_fill_length.value(), IntPtrConstant(0)));
-      CSA_ASSERT(this, SmiGreaterThan(smi_max_length, string_length));
+
+      // Throw if max_length is greater than String::kMaxLength.
+      GotoIfNot(TaggedIsSmi(max_length), &invalid_string_length);
+      TNode<Smi> smi_max_length = CAST(max_length);
+      GotoIfNot(
+          SmiLessThanOrEqual(smi_max_length, SmiConstant(String::kMaxLength)),
+          &invalid_string_length);
 
       Callable stringadd_callable =
           CodeFactory::StringAdd(isolate(), STRING_ADD_CHECK_NONE, NOT_TENURED);
+      CSA_ASSERT(this, SmiGreaterThan(smi_max_length, string_length));
       TNode<Smi> const pad_length = SmiSub(smi_max_length, string_length);
 
       VARIABLE(var_pad, MachineRepresentation::kTagged);
-
       Label single_char_fill(this), multi_char_fill(this), return_result(this);
       Branch(IntPtrEqual(var_fill_length.value(), IntPtrConstant(1)),
              &single_char_fill, &multi_char_fill);

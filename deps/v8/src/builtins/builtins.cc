@@ -51,10 +51,13 @@ struct BuiltinMetadata {
 #define DECL_TFC(Name, ...) { #Name, Builtins::TFC, {} },
 #define DECL_TFS(Name, ...) { #Name, Builtins::TFS, {} },
 #define DECL_TFH(Name, ...) { #Name, Builtins::TFH, {} },
+#define DECL_BCH(Name, ...) { #Name "Handler", Builtins::BCH, {} }, \
+                            { #Name "WideHandler", Builtins::BCH, {} }, \
+                            { #Name "ExtraWideHandler", Builtins::BCH, {} },
 #define DECL_ASM(Name, ...) { #Name, Builtins::ASM, {} },
 const BuiltinMetadata builtin_metadata[] = {
   BUILTIN_LIST(DECL_CPP, DECL_API, DECL_TFJ, DECL_TFC, DECL_TFS, DECL_TFH,
-               DECL_ASM)
+               DECL_BCH, DECL_ASM)
 };
 #undef DECL_CPP
 #undef DECL_API
@@ -62,6 +65,7 @@ const BuiltinMetadata builtin_metadata[] = {
 #undef DECL_TFC
 #undef DECL_TFS
 #undef DECL_TFH
+#undef DECL_BCH
 #undef DECL_ASM
 // clang-format on
 
@@ -162,10 +166,11 @@ Callable Builtins::CallableFor(Isolate* isolate, Name name) {
     break;                                             \
   }
     BUILTIN_LIST(IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, CASE_OTHER,
-                 CASE_OTHER, CASE_OTHER, IGNORE_BUILTIN)
+                 CASE_OTHER, CASE_OTHER, IGNORE_BUILTIN, IGNORE_BUILTIN)
 #undef CASE_OTHER
     default:
       Builtins::Kind kind = Builtins::KindOf(name);
+      DCHECK_NE(kind, BCH);
       if (kind == TFJ || kind == CPP) {
         return Callable(code, JSTrampolineDescriptor{});
       }
@@ -309,6 +314,7 @@ bool Builtins::IsLazy(int index) {
 // static
 bool Builtins::IsIsolateIndependent(int index) {
   DCHECK(IsBuiltinId(index));
+#ifndef V8_TARGET_ARCH_IA32
   switch (index) {
     // TODO(jgruber): There's currently two blockers for moving
     // InterpreterEntryTrampoline into the binary:
@@ -326,6 +332,40 @@ bool Builtins::IsIsolateIndependent(int index) {
       return false;
     default:
       return true;
+  }
+#else   // V8_TARGET_ARCH_IA32
+  // TODO(jgruber, v8:6666): Implement support.
+  // ia32 is a work-in-progress. This will let us make builtins
+  // isolate-independent one-by-one.
+  switch (index) {
+    case kContinueToCodeStubBuiltin:
+    case kContinueToCodeStubBuiltinWithResult:
+    case kContinueToJavaScriptBuiltin:
+    case kContinueToJavaScriptBuiltinWithResult:
+    case kWasmAllocateHeapNumber:
+    case kWasmCallJavaScript:
+    case kWasmToNumber:
+    case kDoubleToI:
+      return true;
+    default:
+      return false;
+  }
+#endif  // V8_TARGET_ARCH_IA32
+  UNREACHABLE();
+}
+
+// static
+bool Builtins::IsWasmRuntimeStub(int index) {
+  DCHECK(IsBuiltinId(index));
+  switch (index) {
+#define CASE_TRAP(Name) case kThrowWasm##Name:
+#define CASE(Name) case k##Name:
+    WASM_RUNTIME_STUB_LIST(CASE, CASE_TRAP)
+#undef CASE_TRAP
+#undef CASE
+    return true;
+    default:
+      return false;
   }
   UNREACHABLE();
 }
@@ -371,6 +411,7 @@ const char* Builtins::KindNameOf(int index) {
     case TFC: return "TFC";
     case TFS: return "TFS";
     case TFH: return "TFH";
+    case BCH: return "BCH";
     case ASM: return "ASM";
   }
   // clang-format on

@@ -6,7 +6,7 @@
 
 #include "src/heap/heap-inl.h"
 #include "src/objects-inl.h"
-#include "src/objects/js-array-inl.h"
+#include "src/objects/js-array-buffer-inl.h"
 #include "src/wasm/wasm-engine.h"
 #include "src/wasm/wasm-limits.h"
 #include "src/wasm/wasm-memory.h"
@@ -179,7 +179,10 @@ WasmMemoryTracker::AllocationData WasmMemoryTracker::ReleaseAllocation(
     DCHECK_LE(num_bytes, allocated_address_space_);
     reserved_address_space_ -= num_bytes;
     allocated_address_space_ -= num_bytes;
-    AddAddressSpaceSample(isolate);
+    // ReleaseAllocation might be called with a nullptr as isolate if the
+    // embedder is releasing the allocation and not a specific isolate. This
+    // happens if the allocation was shared between multiple isolates (threads).
+    if (isolate) AddAddressSpaceSample(isolate);
 
     AllocationData allocation_data = find_result->second;
     allocations_.erase(find_result);

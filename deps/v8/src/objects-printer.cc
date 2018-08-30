@@ -14,13 +14,18 @@
 #include "src/interpreter/bytecodes.h"
 #include "src/objects-inl.h"
 #include "src/objects/arguments-inl.h"
-#ifdef V8_INTL_SUPPORT
-#include "src/objects/js-collator-inl.h"
-#endif  // V8_INTL_SUPPORT
 #include "src/objects/data-handler-inl.h"
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/js-array-buffer-inl.h"
+#include "src/objects/js-array-inl.h"
+#ifdef V8_INTL_SUPPORT
+#include "src/objects/js-collator-inl.h"
+#endif  // V8_INTL_SUPPORT
 #include "src/objects/js-collection-inl.h"
+#ifdef V8_INTL_SUPPORT
+#include "src/objects/js-date-time-format-inl.h"
+#endif  // V8_INTL_SUPPORT
 #include "src/objects/js-generator-inl.h"
 #ifdef V8_INTL_SUPPORT
 #include "src/objects/js-list-format-inl.h"
@@ -187,9 +192,11 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
     // TODO(titzer): debug printing for more wasm objects
     case WASM_GLOBAL_TYPE:
     case WASM_MEMORY_TYPE:
-    case WASM_MODULE_TYPE:
     case WASM_TABLE_TYPE:
       JSObject::cast(this)->JSObjectPrint(os);
+      break;
+    case WASM_MODULE_TYPE:
+      WasmModuleObject::cast(this)->WasmModuleObjectPrint(os);
       break;
     case WASM_INSTANCE_TYPE:
       WasmInstanceObject::cast(this)->WasmInstanceObjectPrint(os);
@@ -308,6 +315,9 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
     case JS_INTL_COLLATOR_TYPE:
       JSCollator::cast(this)->JSCollatorPrint(os);
       break;
+    case JS_INTL_DATE_TIME_FORMAT_TYPE:
+      JSDateTimeFormat::cast(this)->JSDateTimeFormatPrint(os);
+      break;
     case JS_INTL_LIST_FORMAT_TYPE:
       JSListFormat::cast(this)->JSListFormatPrint(os);
       break;
@@ -354,9 +364,9 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
     case ONE_BYTE_INTERNALIZED_STRING_TYPE:
     case EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE:
     case EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE:
-    case SHORT_EXTERNAL_INTERNALIZED_STRING_TYPE:
-    case SHORT_EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE:
-    case SHORT_EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE:
+    case UNCACHED_EXTERNAL_INTERNALIZED_STRING_TYPE:
+    case UNCACHED_EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE:
+    case UNCACHED_EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE:
     case STRING_TYPE:
     case CONS_STRING_TYPE:
     case EXTERNAL_STRING_TYPE:
@@ -368,9 +378,9 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
     case SLICED_ONE_BYTE_STRING_TYPE:
     case THIN_ONE_BYTE_STRING_TYPE:
     case EXTERNAL_STRING_WITH_ONE_BYTE_DATA_TYPE:
-    case SHORT_EXTERNAL_STRING_TYPE:
-    case SHORT_EXTERNAL_ONE_BYTE_STRING_TYPE:
-    case SHORT_EXTERNAL_STRING_WITH_ONE_BYTE_DATA_TYPE:
+    case UNCACHED_EXTERNAL_STRING_TYPE:
+    case UNCACHED_EXTERNAL_ONE_BYTE_STRING_TYPE:
+    case UNCACHED_EXTERNAL_STRING_WITH_ONE_BYTE_DATA_TYPE:
     case SMALL_ORDERED_HASH_MAP_TYPE:
     case SMALL_ORDERED_HASH_SET_TYPE:
     case JS_ASYNC_FROM_SYNC_ITERATOR_TYPE:
@@ -1764,14 +1774,17 @@ void WasmExportedFunctionData::WasmExportedFunctionDataPrint(
 }
 
 void WasmModuleObject::WasmModuleObjectPrint(std::ostream& os) {  // NOLINT
-  JSObjectPrintHeader(os, this, "WasmModuleObject");
-  JSObjectPrintBody(os, this);
+  HeapObject::PrintHeader(os, "WasmModuleObject");
   os << "\n - module: " << module();
   os << "\n - native module: " << native_module();
   os << "\n - export wrappers: " << Brief(export_wrappers());
   os << "\n - script: " << Brief(script());
-  os << "\n - asm_js_offset_table: " << Brief(asm_js_offset_table());
-  os << "\n - breakpoint_infos: " << Brief(breakpoint_infos());
+  if (has_asm_js_offset_table()) {
+    os << "\n - asm_js_offset_table: " << Brief(asm_js_offset_table());
+  }
+  if (has_breakpoint_infos()) {
+    os << "\n - breakpoint_infos: " << Brief(breakpoint_infos());
+  }
   os << "\n";
 }
 
@@ -1948,10 +1961,13 @@ void Script::ScriptPrint(std::ostream& os) {  // NOLINT
 #ifdef V8_INTL_SUPPORT
 void JSCollator::JSCollatorPrint(std::ostream& os) {  // NOLINT
   JSObjectPrintHeader(os, this, "JSCollator");
-  os << "\n - usage: " << JSCollator::UsageToString(usage());
   os << "\n - icu collator: " << Brief(icu_collator());
   os << "\n - bound compare: " << Brief(bound_compare());
   os << "\n";
+}
+
+void JSDateTimeFormat::JSDateTimeFormatPrint(std::ostream& os) {  // NOLINT
+  JSObjectPrintHeader(os, this, "JSDateTimeFormat");
 }
 
 void JSListFormat::JSListFormatPrint(std::ostream& os) {  // NOLINT
@@ -2425,11 +2441,11 @@ void JSObject::PrintTransitions(std::ostream& os) {  // NOLINT
 //
 // The following functions are used by our gdb macros.
 //
-extern void _v8_internal_Print_Object(void* object) {
+V8_EXPORT_PRIVATE extern void _v8_internal_Print_Object(void* object) {
   reinterpret_cast<i::Object*>(object)->Print();
 }
 
-extern void _v8_internal_Print_Code(void* object) {
+V8_EXPORT_PRIVATE extern void _v8_internal_Print_Code(void* object) {
   i::Address address = reinterpret_cast<i::Address>(object);
   i::Isolate* isolate = i::Isolate::Current();
 
@@ -2464,7 +2480,8 @@ extern void _v8_internal_Print_Code(void* object) {
 #endif  // ENABLE_DISASSEMBLER
 }
 
-extern void _v8_internal_Print_LayoutDescriptor(void* object) {
+V8_EXPORT_PRIVATE extern void _v8_internal_Print_LayoutDescriptor(
+    void* object) {
   i::Object* o = reinterpret_cast<i::Object*>(object);
   if (!o->IsLayoutDescriptor()) {
     printf("Please provide a layout descriptor\n");
@@ -2473,12 +2490,12 @@ extern void _v8_internal_Print_LayoutDescriptor(void* object) {
   }
 }
 
-extern void _v8_internal_Print_StackTrace() {
+V8_EXPORT_PRIVATE extern void _v8_internal_Print_StackTrace() {
   i::Isolate* isolate = i::Isolate::Current();
   isolate->PrintStack(stdout);
 }
 
-extern void _v8_internal_Print_TransitionTree(void* object) {
+V8_EXPORT_PRIVATE extern void _v8_internal_Print_TransitionTree(void* object) {
   i::Object* o = reinterpret_cast<i::Object*>(object);
   if (!o->IsMap()) {
     printf("Please provide a valid Map\n");

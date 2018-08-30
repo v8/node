@@ -89,6 +89,7 @@ bool NeedsCheckHeapObject(Node* receiver) {
     case IrOpcode::kJSCreateIterResultObject:
     case IrOpcode::kJSCreateLiteralArray:
     case IrOpcode::kJSCreateEmptyLiteralArray:
+    case IrOpcode::kJSCreateArrayFromIterable:
     case IrOpcode::kJSCreateLiteralObject:
     case IrOpcode::kJSCreateEmptyLiteralObject:
     case IrOpcode::kJSCreateLiteralRegExp:
@@ -192,8 +193,7 @@ Node* PropertyAccessBuilder::TryBuildLoadConstantDataField(
     // here, once we have the immutable bit in the access_info.
 
     // TODO(turbofan): Given that we already have the field_index here, we
-    // might be smarter in the future and not rely on the LookupIterator,
-    // but for now let's just do what Crankshaft does.
+    // might be smarter in the future and not rely on the LookupIterator.
     LookupIterator it(isolate(), m.Value(), name,
                       LookupIterator::OWN_SKIP_INTERCEPTOR);
     if (it.state() == LookupIterator::DATA) {

@@ -169,66 +169,9 @@ void SetResolvedDateSettings(Isolate* isolate, const icu::Locale& icu_locale,
                              Handle<JSObject> resolved) {
   Factory* factory = isolate->factory();
   UErrorCode status = U_ZERO_ERROR;
-  icu::UnicodeString pattern;
-  date_format->toPattern(pattern);
-  JSObject::SetProperty(
-      isolate, resolved, factory->intl_pattern_symbol(),
-      factory
-          ->NewStringFromTwoByte(Vector<const uint16_t>(
-              reinterpret_cast<const uint16_t*>(pattern.getBuffer()),
-              pattern.length()))
-          .ToHandleChecked(),
-      LanguageMode::kSloppy)
-      .Assert();
-
-  // Set time zone and calendar.
-  const icu::Calendar* calendar = date_format->getCalendar();
-  // getType() returns legacy calendar type name instead of LDML/BCP47 calendar
-  // key values. intl.js maps them to BCP47 values for key "ca".
-  // TODO(jshin): Consider doing it here, instead.
-  const char* calendar_name = calendar->getType();
-  JSObject::SetProperty(
-      isolate, resolved, factory->NewStringFromStaticChars("calendar"),
-      factory->NewStringFromAsciiChecked(calendar_name), LanguageMode::kSloppy)
-      .Assert();
-
-  const icu::TimeZone& tz = calendar->getTimeZone();
-  icu::UnicodeString time_zone;
-  tz.getID(time_zone);
-
-  icu::UnicodeString canonical_time_zone;
-  icu::TimeZone::getCanonicalID(time_zone, canonical_time_zone, status);
-  if (U_SUCCESS(status)) {
-    // In CLDR (http://unicode.org/cldr/trac/ticket/9943), Etc/UTC is made
-    // a separate timezone ID from Etc/GMT even though they're still the same
-    // timezone. We have Etc/UTC because 'UTC', 'Etc/Universal',
-    // 'Etc/Zulu' and others are turned to 'Etc/UTC' by ICU. Etc/GMT comes
-    // from Etc/GMT0, Etc/GMT+0, Etc/GMT-0, Etc/Greenwich.
-    // ecma402##sec-canonicalizetimezonename step 3
-    if (canonical_time_zone == UNICODE_STRING_SIMPLE("Etc/UTC") ||
-        canonical_time_zone == UNICODE_STRING_SIMPLE("Etc/GMT")) {
-      JSObject::SetProperty(
-          isolate, resolved, factory->NewStringFromStaticChars("timeZone"),
-          factory->NewStringFromStaticChars("UTC"), LanguageMode::kSloppy)
-          .Assert();
-    } else {
-      JSObject::SetProperty(isolate, resolved,
-                            factory->NewStringFromStaticChars("timeZone"),
-                            factory
-                                ->NewStringFromTwoByte(Vector<const uint16_t>(
-                                    reinterpret_cast<const uint16_t*>(
-                                        canonical_time_zone.getBuffer()),
-                                    canonical_time_zone.length()))
-                                .ToHandleChecked(),
-                            LanguageMode::kSloppy)
-          .Assert();
-    }
-  }
-
   // Ugly hack. ICU doesn't expose numbering system in any way, so we have
   // to assume that for given locale NumberingSystem constructor produces the
   // same digits as NumberFormat/Calendar would.
-  status = U_ZERO_ERROR;
   icu::NumberingSystem* numbering_system =
       icu::NumberingSystem::createInstance(icu_locale, status);
   if (U_SUCCESS(status)) {
@@ -552,6 +495,23 @@ void SetResolvedBreakIteratorSettings(Isolate* isolate,
         .Assert();
   }
 }
+
+MaybeHandle<JSObject> CachedOrNewService(Isolate* isolate,
+                                         Handle<String> service,
+                                         Handle<Object> locales,
+                                         Handle<Object> options,
+                                         Handle<Object> internal_options) {
+  Handle<Object> result;
+  Handle<Object> undefined_value(ReadOnlyRoots(isolate).undefined_value(),
+                                 isolate);
+  Handle<Object> args[] = {service, locales, options, internal_options};
+  ASSIGN_RETURN_ON_EXCEPTION(
+      isolate, result,
+      Execution::Call(isolate, isolate->cached_or_new_service(),
+                      undefined_value, arraysize(args), args),
+      JSArray);
+  return Handle<JSObject>::cast(result);
+}
 }  // namespace
 
 icu::Locale Intl::CreateICULocale(Isolate* isolate,
@@ -581,6 +541,21 @@ icu::Locale Intl::CreateICULocale(Isolate* isolate,
   }
 
   return icu_locale;
+}
+
+bool DateFormat::IsValidTimeZone(icu::SimpleDateFormat* date_format) {
+  UErrorCode status = U_ZERO_ERROR;
+  // Set time zone and calendar.
+  const icu::Calendar* calendar = date_format->getCalendar();
+  const icu::TimeZone& tz = calendar->getTimeZone();
+  icu::UnicodeString time_zone;
+  tz.getID(time_zone);
+  icu::UnicodeString canonical_time_zone;
+  icu::TimeZone::getCanonicalID(time_zone, canonical_time_zone, status);
+  std::string timezone_str;
+  canonical_time_zone.toUTF8String(timezone_str);
+  if (U_SUCCESS(status)) return timezone_str != "Etc/Unknown";
+  return true;
 }
 
 // static
@@ -613,12 +588,29 @@ icu::SimpleDateFormat* DateFormat::InitializeDateTimeFormat(
 }
 
 icu::SimpleDateFormat* DateFormat::UnpackDateFormat(Handle<JSObject> obj) {
-  return reinterpret_cast<icu::SimpleDateFormat*>(obj->GetEmbedderField(0));
+  return reinterpret_cast<icu::SimpleDateFormat*>(
+      obj->GetEmbedderField(DateFormat::kSimpleDateFormatIndex));
 }
 
 void DateFormat::DeleteDateFormat(const v8::WeakCallbackInfo<void>& data) {
   delete reinterpret_cast<icu::SimpleDateFormat*>(data.GetInternalField(0));
   GlobalHandles::Destroy(reinterpret_cast<Object**>(data.GetParameter()));
+}
+
+MaybeHandle<JSObject> DateFormat::Unwrap(Isolate* isolate,
+                                         Handle<JSReceiver> receiver,
+                                         const char* method_name) {
+  Handle<Context> native_context =
+      Handle<Context>(isolate->context()->native_context(), isolate);
+  Handle<JSFunction> constructor = Handle<JSFunction>(
+      JSFunction::cast(native_context->intl_date_time_format_function()),
+      isolate);
+  Handle<String> method_name_str =
+      isolate->factory()->NewStringFromAsciiChecked(method_name);
+
+  return Intl::UnwrapReceiver(isolate, receiver, constructor,
+                              Intl::Type::kDateTimeFormat, method_name_str,
+                              true);
 }
 
 // ecma402/#sec-formatdatetime
@@ -649,6 +641,11 @@ MaybeHandle<String> DateFormat::FormatDateTime(
 MaybeHandle<String> DateFormat::DateTimeFormat(
     Isolate* isolate, Handle<JSObject> date_time_format_holder,
     Handle<Object> date) {
+  // 2. Assert: Type(dtf) is Object and dtf has an [[InitializedDateTimeFormat]]
+  // internal slot.
+  DCHECK(Intl::IsObjectOfType(isolate, date_time_format_holder,
+                              Intl::Type::kDateTimeFormat));
+
   // 3. If date is not provided or is undefined, then
   double x;
   if (date->IsUndefined()) {
@@ -664,6 +661,44 @@ MaybeHandle<String> DateFormat::DateTimeFormat(
   }
   // 5. Return FormatDateTime(dtf, x).
   return DateFormat::FormatDateTime(isolate, date_time_format_holder, x);
+}
+
+MaybeHandle<String> DateFormat::ToLocaleDateTime(
+    Isolate* isolate, Handle<Object> date, Handle<Object> locales,
+    Handle<Object> options, const char* required, const char* defaults,
+    const char* service) {
+  Factory* factory = isolate->factory();
+  // 1. Let x be ? thisTimeValue(this value);
+  if (!date->IsJSDate()) {
+    THROW_NEW_ERROR(isolate,
+                    NewTypeError(MessageTemplate::kMethodInvokedOnWrongType,
+                                 factory->NewStringFromStaticChars("Date")),
+                    String);
+  }
+
+  double const x = Handle<JSDate>::cast(date)->value()->Number();
+  // 2. If x is NaN, return "Invalid Date"
+  if (std::isnan(x)) {
+    return factory->NewStringFromStaticChars("Invalid Date");
+  }
+
+  // 3. Let options be ? ToDateTimeOptions(options, required, defaults).
+  Handle<JSObject> internal_options;
+  ASSIGN_RETURN_ON_EXCEPTION(
+      isolate, internal_options,
+      DateFormat::ToDateTimeOptions(isolate, options, required, defaults),
+      String);
+
+  // 4. Let dateFormat be ? Construct(%DateTimeFormat%, « locales, options »).
+  Handle<JSObject> date_format;
+  ASSIGN_RETURN_ON_EXCEPTION(
+      isolate, date_format,
+      CachedOrNewService(isolate, factory->NewStringFromAsciiChecked(service),
+                         locales, options, internal_options),
+      String);
+
+  // 5. Return FormatDateTime(dateFormat, x).
+  return DateFormat::FormatDateTime(isolate, date_format, x);
 }
 
 icu::DecimalFormat* NumberFormat::InitializeNumberFormat(
@@ -736,7 +771,8 @@ icu::BreakIterator* V8BreakIterator::InitializeBreakIterator(
 }
 
 icu::BreakIterator* V8BreakIterator::UnpackBreakIterator(Handle<JSObject> obj) {
-  return reinterpret_cast<icu::BreakIterator*>(obj->GetEmbedderField(0));
+  return reinterpret_cast<icu::BreakIterator*>(
+      obj->GetEmbedderField(V8BreakIterator::kBreakIteratorIndex));
 }
 
 void V8BreakIterator::DeleteBreakIterator(
@@ -744,6 +780,31 @@ void V8BreakIterator::DeleteBreakIterator(
   delete reinterpret_cast<icu::BreakIterator*>(data.GetInternalField(0));
   delete reinterpret_cast<icu::UnicodeString*>(data.GetInternalField(1));
   GlobalHandles::Destroy(reinterpret_cast<Object**>(data.GetParameter()));
+}
+
+void V8BreakIterator::AdoptText(Isolate* isolate,
+                                Handle<JSObject> break_iterator_holder,
+                                Handle<String> text) {
+  icu::BreakIterator* break_iterator =
+      V8BreakIterator::UnpackBreakIterator(break_iterator_holder);
+  CHECK_NOT_NULL(break_iterator);
+
+  icu::UnicodeString* u_text = reinterpret_cast<icu::UnicodeString*>(
+      break_iterator_holder->GetEmbedderField(
+          V8BreakIterator::kUnicodeStringIndex));
+  delete u_text;
+
+  int length = text->length();
+  text = String::Flatten(isolate, text);
+  DisallowHeapAllocation no_gc;
+  String::FlatContent flat = text->GetFlatContent();
+  std::unique_ptr<uc16[]> sap;
+  const UChar* text_value = GetUCharBufferFromFlat(flat, &sap, length);
+  u_text = new icu::UnicodeString(text_value, length);
+  break_iterator_holder->SetEmbedderField(V8BreakIterator::kUnicodeStringIndex,
+                                          reinterpret_cast<Smi*>(u_text));
+
+  break_iterator->setText(*u_text);
 }
 
 MaybeHandle<String> Intl::ToString(Isolate* isolate,
@@ -815,6 +876,110 @@ bool Intl::RemoveLocaleScriptTag(const std::string& icu_locale,
   const char* icu_name = short_locale.getName();
   *locale_less_script = std::string(icu_name);
   return true;
+}
+
+namespace {
+
+Maybe<bool> IsPropertyUndefined(Isolate* isolate, Handle<JSObject> options,
+                                const char* property) {
+  Factory* factory = isolate->factory();
+  // i. Let prop be the property name.
+  // ii. Let value be ? Get(options, prop).
+  Handle<Object> value;
+  ASSIGN_RETURN_ON_EXCEPTION_VALUE(
+      isolate, value,
+      Object::GetPropertyOrElement(
+          isolate, options, factory->NewStringFromAsciiChecked(property)),
+      Nothing<bool>());
+  return Just(value->IsUndefined(isolate));
+}
+
+}  // namespace
+
+// ecma-402/#sec-todatetimeoptions
+MaybeHandle<JSObject> DateFormat::ToDateTimeOptions(
+    Isolate* isolate, Handle<Object> input_options, const char* required,
+    const char* defaults) {
+  Factory* factory = isolate->factory();
+  // 1. If options is undefined, let options be null; otherwise let options be ?
+  //    ToObject(options).
+  Handle<JSObject> options;
+  if (input_options->IsUndefined(isolate)) {
+    options = factory->NewJSObjectWithNullProto();
+  } else {
+    Handle<JSReceiver> options_obj;
+    ASSIGN_RETURN_ON_EXCEPTION(isolate, options_obj,
+                               Object::ToObject(isolate, input_options),
+                               JSObject);
+    // 2. Let options be ObjectCreate(options).
+    ASSIGN_RETURN_ON_EXCEPTION(isolate, options,
+                               JSObject::ObjectCreate(isolate, options_obj),
+                               JSObject);
+  }
+
+  // 3. Let needDefaults be true.
+  bool needs_default = true;
+
+  bool required_is_any = strcmp(required, "any") == 0;
+  // 4. If required is "date" or "any", then
+  if (required_is_any || (strcmp(required, "date") == 0)) {
+    // a. For each of the property names "weekday", "year", "month", "day", do
+    for (auto& prop : {"weekday", "year", "month", "day"}) {
+      //  i. Let prop be the property name.
+      // ii. Let value be ? Get(options, prop)
+      Maybe<bool> maybe_undefined = IsPropertyUndefined(isolate, options, prop);
+      MAYBE_RETURN(maybe_undefined, Handle<JSObject>());
+      // iii. If value is not undefined, let needDefaults be false.
+      if (!maybe_undefined.FromJust()) {
+        needs_default = false;
+      }
+    }
+  }
+
+  // 5. If required is "time" or "any", then
+  if (required_is_any || (strcmp(required, "time") == 0)) {
+    // a. For each of the property names "hour", "minute", "second", do
+    for (auto& prop : {"hour", "minute", "second"}) {
+      //  i. Let prop be the property name.
+      // ii. Let value be ? Get(options, prop)
+      Maybe<bool> maybe_undefined = IsPropertyUndefined(isolate, options, prop);
+      MAYBE_RETURN(maybe_undefined, Handle<JSObject>());
+      // iii. If value is not undefined, let needDefaults be false.
+      if (!maybe_undefined.FromJust()) {
+        needs_default = false;
+      }
+    }
+  }
+
+  // 6. If needDefaults is true and defaults is either "date" or "all", then
+  if (needs_default) {
+    bool default_is_all = strcmp(defaults, "all") == 0;
+    if (default_is_all || (strcmp(defaults, "date") == 0)) {
+      // a. For each of the property names "year", "month", "day", do
+      // i. Perform ? CreateDataPropertyOrThrow(options, prop, "numeric").
+      for (auto& prop : {"year", "month", "day"}) {
+        MAYBE_RETURN(
+            JSReceiver::CreateDataProperty(
+                isolate, options, factory->NewStringFromAsciiChecked(prop),
+                factory->numeric_string(), kThrowOnError),
+            Handle<JSObject>());
+      }
+    }
+    // 7. If needDefaults is true and defaults is either "time" or "all", then
+    if (default_is_all || (strcmp(defaults, "time") == 0)) {
+      // a. For each of the property names "hour", "minute", "second", do
+      // i. Perform ? CreateDataPropertyOrThrow(options, prop, "numeric").
+      for (auto& prop : {"hour", "minute", "second"}) {
+        MAYBE_RETURN(
+            JSReceiver::CreateDataProperty(
+                isolate, options, factory->NewStringFromAsciiChecked(prop),
+                factory->numeric_string(), kThrowOnError),
+            Handle<JSObject>());
+      }
+    }
+  }
+  // 8. Return options.
+  return options;
 }
 
 std::set<std::string> Intl::GetAvailableLocales(const IcuService& service) {
@@ -1734,28 +1899,6 @@ bool IsAToZ(char ch) {
   return IsInRange(AsciiAlphaToLower(ch), 'a', 'z');
 }
 
-// The following are temporary function calling back into js code in
-// src/js/intl.js to call pre-existing functions until they are all moved to C++
-// under src/objects/*.
-// TODO(ftang): remove these temp function after bstell move them from js into
-// C++
-
-MaybeHandle<JSObject> CachedOrNewService(Isolate* isolate,
-                                         Handle<String> service,
-                                         Handle<Object> locales,
-                                         Handle<Object> options) {
-  Handle<Object> result;
-  Handle<Object> undefined_value(ReadOnlyRoots(isolate).undefined_value(),
-                                 isolate);
-  Handle<Object> args[] = {service, locales, options};
-  ASSIGN_RETURN_ON_EXCEPTION(
-      isolate, result,
-      Execution::Call(isolate, isolate->cached_or_new_service(),
-                      undefined_value, arraysize(args), args),
-      JSArray);
-  return Handle<JSObject>::cast(result);
-}
-
 }  // namespace
 
 // Verifies that the input is a well-formed ISO 4217 currency code.
@@ -1830,7 +1973,7 @@ MaybeHandle<Object> Intl::StringLocaleCompare(Isolate* isolate,
   ASSIGN_RETURN_ON_EXCEPTION(
       isolate, collator,
       CachedOrNewService(isolate, factory->NewStringFromStaticChars("collator"),
-                         locales, options),
+                         locales, options, factory->undefined_value()),
       Object);
   CHECK(collator->IsJSCollator());
   return Intl::CompareStrings(isolate, Handle<JSCollator>::cast(collator),
@@ -1882,7 +2025,7 @@ MaybeHandle<String> Intl::NumberToLocaleString(Isolate* isolate,
       isolate, number_format_holder,
       CachedOrNewService(isolate,
                          factory->NewStringFromStaticChars("numberformat"),
-                         locales, options),
+                         locales, options, factory->undefined_value()),
       String);
   DCHECK(
       Intl::IsObjectOfType(isolate, number_format_holder, Intl::kNumberFormat));
@@ -2255,9 +2398,12 @@ MaybeHandle<JSObject> SupportedLocales(
 }
 }  // namespace
 
-// ECMA 402 10.2.2 Intl.Collator.supportedLocalesOf
+// ECMA 402 Intl.*.supportedLocalesOf
 // https://tc39.github.io/ecma402/#sec-intl.collator.supportedlocalesof
-// of Intl::SupportedLocalesOf thru JS
+// https://tc39.github.io/ecma402/#sec-intl.numberformat.supportedlocalesof
+// https://tc39.github.io/ecma402/#sec-intl.datetimeformat.supportedlocalesof
+// https://tc39.github.io/ecma402/#sec-intl.pluralrules.supportedlocalesof
+// http://tc39.github.io/proposal-intl-relative-time/#sec-Intl.RelativeTimeFormat.supportedLocalesOf
 MaybeHandle<JSObject> Intl::SupportedLocalesOf(Isolate* isolate,
                                                Handle<String> service,
                                                Handle<Object> locales_in,
@@ -2277,6 +2423,53 @@ MaybeHandle<JSObject> Intl::SupportedLocalesOf(Isolate* isolate,
   std::string service_str(service->ToCString().get());
   return SupportedLocales(isolate, service_str, available_locales,
                           requested_locales, options_in);
+}
+
+std::map<std::string, std::string> Intl::LookupUnicodeExtensions(
+    const icu::Locale& icu_locale, const std::set<std::string>& relevant_keys) {
+  std::map<std::string, std::string> extensions;
+
+  UErrorCode status = U_ZERO_ERROR;
+  std::unique_ptr<icu::StringEnumeration> keywords(
+      icu_locale.createKeywords(status));
+  if (U_FAILURE(status)) return extensions;
+
+  if (!keywords) return extensions;
+  char value[ULOC_FULLNAME_CAPACITY];
+
+  int32_t length;
+  status = U_ZERO_ERROR;
+  for (const char* keyword = keywords->next(&length, status);
+       keyword != nullptr; keyword = keywords->next(&length, status)) {
+    // Ignore failures in ICU and skip to the next keyword.
+    //
+    // This is fine.™
+    if (U_FAILURE(status)) {
+      status = U_ZERO_ERROR;
+      continue;
+    }
+
+    icu_locale.getKeywordValue(keyword, value, ULOC_FULLNAME_CAPACITY, status);
+
+    // Ignore failures in ICU and skip to the next keyword.
+    //
+    // This is fine.™
+    if (U_FAILURE(status)) {
+      status = U_ZERO_ERROR;
+      continue;
+    }
+
+    const char* bcp47_key = uloc_toUnicodeLocaleKey(keyword);
+
+    // Ignore keywords that we don't recognize - spec allows that.
+    if (bcp47_key && (relevant_keys.find(bcp47_key) != relevant_keys.end())) {
+      const char* bcp47_value = uloc_toUnicodeLocaleType(bcp47_key, value);
+      extensions.insert(
+          std::pair<std::string, std::string>(bcp47_key, bcp47_value));
+    }
+  }
+
+  return extensions;
 }
 
 }  // namespace internal

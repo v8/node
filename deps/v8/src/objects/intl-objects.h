@@ -45,6 +45,9 @@ class DateFormat {
   // Unpacks date format object from corresponding JavaScript object.
   static icu::SimpleDateFormat* UnpackDateFormat(Handle<JSObject> obj);
 
+  // Determine the TimeZone is valid.
+  static bool IsValidTimeZone(icu::SimpleDateFormat* date_format);
+
   // Release memory we allocated for the DateFormat once the JS object that
   // holds the pointer gets garbage collected.
   static void DeleteDateFormat(const v8::WeakCallbackInfo<void>& data);
@@ -60,9 +63,39 @@ class DateFormat {
       Isolate* isolate, Handle<JSObject> date_time_format_holder,
       Handle<Object> date);
 
+  // The UnwrapDateTimeFormat abstract operation gets the underlying
+  // DateTimeFormat operation for various methods which implement ECMA-402 v1
+  // semantics for supporting initializing existing Intl objects.
+  //
+  // ecma402/#sec-unwrapdatetimeformat
+  V8_WARN_UNUSED_RESULT static MaybeHandle<JSObject> Unwrap(
+      Isolate* isolate, Handle<JSReceiver> receiver, const char* method_name);
+
+  // ecma-402/#sec-todatetimeoptions
+  V8_WARN_UNUSED_RESULT static MaybeHandle<JSObject> ToDateTimeOptions(
+      Isolate* isolate, Handle<Object> input_options, const char* required,
+      const char* defaults);
+
+  V8_WARN_UNUSED_RESULT static MaybeHandle<String> ToLocaleDateTime(
+      Isolate* isolate, Handle<Object> date, Handle<Object> locales,
+      Handle<Object> options, const char* required, const char* defaults,
+      const char* service);
+
   // Layout description.
-  static const int kSimpleDateFormat = JSObject::kHeaderSize;
-  static const int kSize = kSimpleDateFormat + kPointerSize;
+#define DATE_FORMAT_FIELDS(V)        \
+  V(kSimpleDateFormat, kPointerSize) \
+  V(kBoundFormat, kPointerSize)      \
+  V(kSize, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(JSObject::kHeaderSize, DATE_FORMAT_FIELDS)
+#undef DATE_FORMAT_FIELDS
+
+  // TODO(ryzokuken): Remove this and use regular accessors once DateFormat is a
+  // subclass of JSObject
+  //
+  // This needs to be consistent with the above Layout Description
+  static const int kSimpleDateFormatIndex = 0;
+  static const int kBoundFormatIndex = 1;
 
  private:
   DateFormat();
@@ -109,16 +142,6 @@ class NumberFormat {
   DEFINE_FIELD_OFFSET_CONSTANTS(JSObject::kHeaderSize, NUMBER_FORMAT_FIELDS)
 #undef NUMBER_FORMAT_FIELDS
 
-  // ContextSlot defines the context structure for the bound
-  // NumberFormat.prototype.format function.
-  enum ContextSlot {
-    // The number format instance that the function holding this
-    // context is bound to.
-    kNumberFormat = Context::MIN_CONTEXT_SLOTS,
-
-    kLength
-  };
-
   // TODO(gsathya): Remove this and use regular accessors once
   // NumberFormat is a sub class of JSObject.
   //
@@ -146,10 +169,36 @@ class V8BreakIterator {
   // holds the pointer gets garbage collected.
   static void DeleteBreakIterator(const v8::WeakCallbackInfo<void>& data);
 
+  static void AdoptText(Isolate* isolate,
+                        Handle<JSObject> break_iterator_holder,
+                        Handle<String> text);
+
   // Layout description.
-  static const int kBreakIterator = JSObject::kHeaderSize;
-  static const int kUnicodeString = kBreakIterator + kPointerSize;
-  static const int kSize = kUnicodeString + kPointerSize;
+#define BREAK_ITERATOR_FIELDS(V)   \
+  /* Pointer fields. */            \
+  V(kBreakIterator, kPointerSize)  \
+  V(kUnicodeString, kPointerSize)  \
+  V(kBoundAdoptText, kPointerSize) \
+  V(kBoundFirst, kPointerSize)     \
+  V(kBoundNext, kPointerSize)      \
+  V(kBoundCurrent, kPointerSize)   \
+  V(kBoundBreakType, kPointerSize) \
+  V(kSize, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(JSObject::kHeaderSize, BREAK_ITERATOR_FIELDS)
+#undef BREAK_ITERATOR_FIELDS
+
+  // TODO(ryzokuken): Remove this and use regular accessors once v8BreakIterator
+  // is a subclass of JSObject
+  //
+  // This needs to be consistent with the above Layour Description
+  static const int kBreakIteratorIndex = 0;
+  static const int kUnicodeStringIndex = 1;
+  static const int kBoundAdoptTextIndex = 2;
+  static const int kBoundFirstIndex = 3;
+  static const int kBoundNextIndex = 4;
+  static const int kBoundCurrentIndex = 5;
+  static const int kBoundBreakTypeIndex = 6;
 
  private:
   V8BreakIterator();
@@ -166,6 +215,11 @@ class Intl {
     kLocale,
 
     kTypeCount
+  };
+
+  enum class BoundFunctionContextSlot {
+    kBoundFunction = Context::MIN_CONTEXT_SLOTS,
+    kLength
   };
 
   inline static Intl::Type TypeFromInt(int type);
@@ -370,6 +424,10 @@ class Intl {
                          Handle<String> field_type_string, Handle<String> value,
                          Handle<String> additional_property_name,
                          Handle<String> additional_property_value);
+
+  // A helper function to help handle Unicode Extensions in locale.
+  static std::map<std::string, std::string> LookupUnicodeExtensions(
+    const icu::Locale& icu_locale, const std::set<std::string>& relevant_keys);
 };
 
 }  // namespace internal

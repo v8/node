@@ -16,8 +16,7 @@
 namespace v8 {
 namespace internal {
 
-template <typename Char>
-class CharacterStream;
+class Utf16CharacterStream;
 
 // A custom scanner to extract the token stream needed to parse valid
 // asm.js: http://asmjs.org/spec/latest/
@@ -32,7 +31,7 @@ class V8_EXPORT_PRIVATE AsmJsScanner {
  public:
   typedef int32_t token_t;
 
-  AsmJsScanner(CharacterStream<uint16_t>* stream, int start);
+  explicit AsmJsScanner(Utf16CharacterStream* stream);
 
   // Get current token.
   token_t Token() const { return token_; }
@@ -137,7 +136,7 @@ class V8_EXPORT_PRIVATE AsmJsScanner {
   // clang-format on
 
  private:
-  CharacterStream<uint16_t>* stream_;
+  Utf16CharacterStream* stream_;
   token_t token_;
   token_t preceding_token_;
   token_t next_token_;         // Only set when in {rewind} state.

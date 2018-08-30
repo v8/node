@@ -148,7 +148,7 @@ void Assembler::deserialization_set_target_internal_reference_at(
     set_target_internal_reference_encoded_at(pc, target);
   } else {
     DCHECK(mode == RelocInfo::INTERNAL_REFERENCE);
-    Memory::Address_at(pc) = target;
+    Memory<Address>(pc) = target;
   }
 }
 
@@ -171,11 +171,8 @@ void RelocInfo::set_target_object(Heap* heap, HeapObject* target,
   Assembler::set_target_address_at(pc_, constant_pool_,
                                    reinterpret_cast<Address>(target),
                                    icache_flush_mode);
-  if (write_barrier_mode == UPDATE_WRITE_BARRIER && host() != nullptr &&
-      target->IsHeapObject()) {
-    heap->incremental_marking()->RecordWriteIntoCode(host(), this,
-                                                     HeapObject::cast(target));
-    heap->RecordWriteIntoCode(host(), this, target);
+  if (write_barrier_mode == UPDATE_WRITE_BARRIER && host() != nullptr) {
+    WriteBarrierForCode(host(), this, target);
   }
 }
 
@@ -194,7 +191,7 @@ void RelocInfo::set_target_external_reference(
 
 Address RelocInfo::target_internal_reference() {
   if (rmode_ == INTERNAL_REFERENCE) {
-    return Memory::Address_at(pc_);
+    return Memory<Address>(pc_);
   } else {
     // Encoded internal references are j/jal instructions.
     DCHECK(rmode_ == INTERNAL_REFERENCE_ENCODED);
@@ -236,7 +233,7 @@ void RelocInfo::WipeOut() {
          IsInternalReference(rmode_) || IsInternalReferenceEncoded(rmode_) ||
          IsOffHeapTarget(rmode_));
   if (IsInternalReference(rmode_)) {
-    Memory::Address_at(pc_) = kNullAddress;
+    Memory<Address>(pc_) = kNullAddress;
   } else if (IsInternalReferenceEncoded(rmode_)) {
     Assembler::set_target_internal_reference_encoded_at(pc_, kNullAddress);
   } else {

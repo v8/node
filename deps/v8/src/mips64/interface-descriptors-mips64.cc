@@ -88,9 +88,9 @@ void CallVarargsDescriptor::InitializePlatformSpecific(
     CallInterfaceDescriptorData* data) {
   // a0 : number of arguments (on the stack, not including receiver)
   // a1 : the target to call
-  // a2 : arguments list (FixedArray)
   // a4 : arguments list length (untagged)
-  Register registers[] = {a1, a0, a2, a4};
+  // a2 : arguments list (FixedArray)
+  Register registers[] = {a1, a0, a4, a2};
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }
 
@@ -125,9 +125,9 @@ void ConstructVarargsDescriptor::InitializePlatformSpecific(
   // a0 : number of arguments (on the stack, not including receiver)
   // a1 : the target to call
   // a3 : the new target
-  // a2 : arguments list (FixedArray)
   // a4 : arguments list length (untagged)
-  Register registers[] = {a1, a3, a0, a2, a4};
+  // a2 : arguments list (FixedArray)
+  Register registers[] = {a1, a3, a0, a4, a2};
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }
 
@@ -194,7 +194,7 @@ void BinaryOpDescriptor::InitializePlatformSpecific(
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }
 
-void ArgumentAdaptorDescriptor::InitializePlatformSpecific(
+void ArgumentsAdaptorDescriptor::InitializePlatformSpecific(
     CallInterfaceDescriptorData* data) {
   Register registers[] = {
       a1,  // JSFunction
@@ -244,30 +244,6 @@ void InterpreterPushArgsThenConstructDescriptor::InitializePlatformSpecific(
       a4   // address of the first argument
   };
   data->InitializePlatformSpecific(arraysize(registers), registers);
-}
-
-namespace {
-
-void InterpreterCEntryDescriptor_InitializePlatformSpecific(
-    CallInterfaceDescriptorData* data) {
-  Register registers[] = {
-      a0,  // argument count (argc)
-      a2,  // address of first argument (argv)
-      a1   // the runtime function to call
-  };
-  data->InitializePlatformSpecific(arraysize(registers), registers);
-}
-
-}  // namespace
-
-void InterpreterCEntry1Descriptor::InitializePlatformSpecific(
-    CallInterfaceDescriptorData* data) {
-  InterpreterCEntryDescriptor_InitializePlatformSpecific(data);
-}
-
-void InterpreterCEntry2Descriptor::InitializePlatformSpecific(
-    CallInterfaceDescriptorData* data) {
-  InterpreterCEntryDescriptor_InitializePlatformSpecific(data);
 }
 
 void ResumeGeneratorDescriptor::InitializePlatformSpecific(

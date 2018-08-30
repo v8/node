@@ -485,7 +485,7 @@ void Assembler::AllocateAndInstallRequestedHeapObjects(Isolate* isolate) {
         break;
     }
     Address pc = reinterpret_cast<Address>(buffer_) + request.offset();
-    Memory::Address_at(constant_pool_entry_address(pc, 0 /* unused */)) =
+    Memory<Address>(constant_pool_entry_address(pc, 0 /* unused */)) =
         object.address();
   }
 }
@@ -2238,6 +2238,30 @@ void Assembler::strexh(Register src1, Register src2, Register dst,
   DCHECK(src1 != src2);
   emit(cond | B24 | B23 | B22 | B21 | dst.code() * B16 | src1.code() * B12 |
        0xF9 * B4 | src2.code());
+}
+
+void Assembler::ldrexd(Register dst1, Register dst2, Register src,
+                       Condition cond) {
+  // cond(31-28) | 00011011(27-20) | Rn(19-16) | Rt(15-12) | 111110011111(11-0)
+  DCHECK(dst1 != lr);  // r14.
+  // The pair of destination registers is restricted to being an even-numbered
+  // register and the odd-numbered register that immediately follows it.
+  DCHECK_EQ(0, dst1.code() % 2);
+  DCHECK_EQ(dst1.code() + 1, dst2.code());
+  emit(cond | B24 | B23 | B21 | B20 | src.code() * B16 | dst1.code() * B12 |
+       0xF9F);
+}
+
+void Assembler::strexd(Register res, Register src1, Register src2, Register dst,
+                       Condition cond) {
+  // cond(31-28) | 00011010(27-20) | Rn(19-16) | Rt(15-12) | 111110011111(11-0)
+  DCHECK(src1 != lr);  // r14.
+  // The pair of source registers is restricted to being an even-numbered
+  // register and the odd-numbered register that immediately follows it.
+  DCHECK_EQ(0, src1.code() % 2);
+  DCHECK_EQ(src1.code() + 1, src2.code());
+  emit(cond | B24 | B23 | B21 | dst.code() * B16 | res.code() * B12 |
+       0xF9 * B4 | src1.code());
 }
 
 // Preload instructions.

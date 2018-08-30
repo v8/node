@@ -487,6 +487,15 @@ class SeqString : public String {
   DISALLOW_IMPLICIT_CONSTRUCTORS(SeqString);
 };
 
+class InternalizedString : public String {
+ public:
+  DECL_CAST(InternalizedString)
+  // TODO(neis): Possibly move some stuff from String here.
+
+ private:
+  DISALLOW_IMPLICIT_CONSTRUCTORS(InternalizedString);
+};
+
 // The OneByteString class captures sequential one-byte string objects.
 // Each character in the OneByteString is an one-byte character.
 class SeqOneByteString : public SeqString {
@@ -721,12 +730,12 @@ class ExternalString : public String {
 
   // Layout description.
   static const int kResourceOffset = POINTER_SIZE_ALIGN(String::kSize);
-  static const int kShortSize = kResourceOffset + kPointerSize;
+  static const int kUncachedSize = kResourceOffset + kPointerSize;
   static const int kResourceDataOffset = kResourceOffset + kPointerSize;
   static const int kSize = kResourceDataOffset + kPointerSize;
 
-  // Return whether external string is short (data pointer is not cached).
-  inline bool is_short() const;
+  // Return whether the external string data pointer is not cached.
+  inline bool is_uncached() const;
   // Size in bytes of the external payload.
   int ExternalPayloadSize() const;
 

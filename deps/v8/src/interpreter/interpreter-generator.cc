@@ -9,6 +9,7 @@
 
 #include "src/builtins/builtins-arguments-gen.h"
 #include "src/builtins/builtins-constructor-gen.h"
+#include "src/builtins/builtins-iterator-gen.h"
 #include "src/code-events.h"
 #include "src/code-factory.h"
 #include "src/debug/debug.h"
@@ -2381,6 +2382,21 @@ IGNITION_HANDLER(CreateEmptyArrayLiteral, InterpreterAssembler) {
   Dispatch();
 }
 
+// CreateArrayFromIterable
+//
+// Spread the given iterable from the accumulator into a new JSArray.
+IGNITION_HANDLER(CreateArrayFromIterable, InterpreterAssembler) {
+  Node* iterable = GetAccumulator();
+  Node* context = GetContext();
+  IteratorBuiltinsAssembler iterator_assembler(state());
+
+  Node* method = iterator_assembler.GetIteratorMethod(context, iterable);
+  Node* result =
+      CallBuiltin(Builtins::kIterableToList, context, iterable, method);
+  SetAccumulator(result);
+  Dispatch();
+}
+
 // CreateObjectLiteral <element_idx> <literal_idx> <flags>
 //
 // Creates an object literal for literal index <literal_idx> with
@@ -3127,14 +3143,17 @@ IGNITION_HANDLER(ResumeGenerator, InterpreterAssembler) {
 }  // namespace
 
 Handle<Code> GenerateBytecodeHandler(Isolate* isolate, Bytecode bytecode,
-                                     OperandScale operand_scale) {
+                                     OperandScale operand_scale,
+                                     int builtin_index,
+                                     const AssemblerOptions& options) {
   Zone zone(isolate->allocator(), ZONE_NAME);
   compiler::CodeAssemblerState state(
       isolate, &zone, InterpreterDispatchDescriptor{}, Code::BYTECODE_HANDLER,
       Bytecodes::ToString(bytecode),
       FLAG_untrusted_code_mitigations
           ? PoisoningMitigationLevel::kPoisonCriticalOnly
-          : PoisoningMitigationLevel::kDontPoison);
+          : PoisoningMitigationLevel::kDontPoison,
+      0, builtin_index);
 
   switch (bytecode) {
 #define CALL_GENERATOR(Name, ...)                     \
@@ -3145,8 +3164,7 @@ Handle<Code> GenerateBytecodeHandler(Isolate* isolate, Bytecode bytecode,
 #undef CALL_GENERATOR
   }
 
-  Handle<Code> code = compiler::CodeAssembler::GenerateCode(
-      &state, AssemblerOptions::Default(isolate));
+  Handle<Code> code = compiler::CodeAssembler::GenerateCode(&state, options);
   PROFILE(isolate, CodeCreateEvent(
                        CodeEventListener::BYTECODE_HANDLER_TAG,
                        AbstractCode::cast(*code),

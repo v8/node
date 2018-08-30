@@ -269,7 +269,16 @@ namespace compiler {
   V(ArmS1x8AnyTrue)                \
   V(ArmS1x8AllTrue)                \
   V(ArmS1x16AnyTrue)               \
-  V(ArmS1x16AllTrue)
+  V(ArmS1x16AllTrue)               \
+  V(ArmWord32AtomicPairLoad)       \
+  V(ArmWord32AtomicPairStore)      \
+  V(ArmWord32AtomicPairAdd)        \
+  V(ArmWord32AtomicPairSub)        \
+  V(ArmWord32AtomicPairAnd)        \
+  V(ArmWord32AtomicPairOr)         \
+  V(ArmWord32AtomicPairXor)        \
+  V(ArmWord32AtomicPairExchange)   \
+  V(ArmWord32AtomicPairCompareExchange)
 
 // Addressing modes represent the "shape" of inputs to an instruction.
 // Many instructions support multiple addressing modes. Addressing modes

@@ -5,6 +5,8 @@
 #ifndef V8_HEAP_FACTORY_H_
 #define V8_HEAP_FACTORY_H_
 
+// Clients of this interface shouldn't depend on lots of heap internals.
+// Do not include anything from src/heap here!
 #include "src/builtins/builtins.h"
 #include "src/globals.h"
 #include "src/handles.h"
@@ -14,6 +16,7 @@
 #include "src/objects/code.h"
 #include "src/objects/dictionary.h"
 #include "src/objects/hash-table.h"
+#include "src/objects/js-array-buffer.h"
 #include "src/objects/js-array.h"
 #include "src/objects/js-regexp.h"
 #include "src/objects/ordered-hash-table.h"
@@ -47,6 +50,7 @@ class JSSetIterator;
 class JSWeakMap;
 class LoadHandler;
 class ModuleInfo;
+class NativeContext;
 class NewFunctionArgs;
 class PreParsedScopeData;
 class PromiseResolveThenableJobTask;
@@ -358,17 +362,18 @@ class V8_EXPORT_PRIVATE Factory {
   Handle<Symbol> NewPrivateFieldSymbol();
 
   // Create a global (but otherwise uninitialized) context.
-  Handle<Context> NewNativeContext();
+  Handle<NativeContext> NewNativeContext();
 
   // Create a script context.
-  Handle<Context> NewScriptContext(Handle<Context> outer,
+  Handle<Context> NewScriptContext(Handle<NativeContext> outer,
                                    Handle<ScopeInfo> scope_info);
 
   // Create an empty script context table.
   Handle<ScriptContextTable> NewScriptContextTable();
 
   // Create a module context.
-  Handle<Context> NewModuleContext(Handle<Module> module, Handle<Context> outer,
+  Handle<Context> NewModuleContext(Handle<Module> module,
+                                   Handle<NativeContext> outer,
                                    Handle<ScopeInfo> scope_info);
 
   // Create a function or eval context.
@@ -400,7 +405,8 @@ class V8_EXPORT_PRIVATE Factory {
   // These are similar to function context but don't have a previous
   // context or any scope info. These are used to store spec defined
   // context values.
-  Handle<Context> NewBuiltinContext(Handle<Context> native_context, int length);
+  Handle<Context> NewBuiltinContext(Handle<NativeContext> native_context,
+                                    int length);
 
   Handle<Struct> NewStruct(InstanceType type,
                            PretenureFlag pretenure = NOT_TENURED);
@@ -819,10 +825,11 @@ class V8_EXPORT_PRIVATE Factory {
   DECLARE_ERROR(WasmRuntimeError)
 #undef DECLARE_ERROR
 
-  Handle<String> NumberToString(Handle<Object> number,
-                                bool check_number_string_cache = true);
+  Handle<String> NumberToString(Handle<Object> number, bool check_cache = true);
+  Handle<String> NumberToString(Smi* number, bool check_cache = true);
 
-  inline Handle<String> Uint32ToString(uint32_t value);
+  inline Handle<String> Uint32ToString(uint32_t value,
+                                       bool check_cache = false);
 
 #define ROOT_ACCESSOR(type, name, camel_name) inline Handle<type> name();
   ROOT_LIST(ROOT_ACCESSOR)
@@ -910,7 +917,7 @@ class V8_EXPORT_PRIVATE Factory {
 
   // Return a map for given number of properties using the map cache in the
   // native context.
-  Handle<Map> ObjectLiteralMapFromCache(Handle<Context> native_context,
+  Handle<Map> ObjectLiteralMapFromCache(Handle<NativeContext> native_context,
                                         int number_of_properties);
 
   Handle<LoadHandler> NewLoadHandler(int data_count);
@@ -997,10 +1004,11 @@ class V8_EXPORT_PRIVATE Factory {
 
   // Attempt to find the number in a small cache.  If we finds it, return
   // the string representation of the number.  Otherwise return undefined.
-  Handle<Object> GetNumberStringCache(Handle<Object> number);
+  Handle<Object> NumberToStringCacheGet(Object* number, int hash);
 
   // Update the cache with a new number-string pair.
-  void SetNumberStringCache(Handle<Object> number, Handle<String> string);
+  Handle<String> NumberToStringCacheSet(Handle<Object> number, int hash,
+                                        const char* string, bool check_cache);
 
   // Create a JSArray with no elements and no length.
   Handle<JSArray> NewJSArray(ElementsKind elements_kind,

@@ -48,6 +48,40 @@ class InitialMapDependency final : public CompilationDependencies::Dependency {
   MapRef initial_map_;
 };
 
+class PrototypePropertyDependency final
+    : public CompilationDependencies::Dependency {
+ public:
+  // TODO(neis): Once the concurrent compiler frontend is always-on, we no
+  // longer need to explicitly store the prototype.
+  PrototypePropertyDependency(const JSFunctionRef& function,
+                              const ObjectRef& prototype)
+      : function_(function), prototype_(prototype) {
+    DCHECK(function_.has_prototype());
+    DCHECK(!function_.PrototypeRequiresRuntimeLookup());
+    DCHECK(function_.prototype().equals(prototype_));
+  }
+
+  bool IsValid() const override {
+    Handle<JSFunction> function = function_.object<JSFunction>();
+    return function->has_prototype_slot() && function->has_prototype() &&
+           !function->PrototypeRequiresRuntimeLookup() &&
+           function->prototype() == *prototype_.object();
+  }
+
+  void Install(MaybeObjectHandle code) override {
+    SLOW_DCHECK(IsValid());
+    Handle<JSFunction> function = function_.object<JSFunction>();
+    if (!function->has_initial_map()) JSFunction::EnsureHasInitialMap(function);
+    Handle<Map> initial_map(function->initial_map(), function_.isolate());
+    DependentCode::InstallDependency(function_.isolate(), code, initial_map,
+                                     DependentCode::kInitialMapChangedGroup);
+  }
+
+ private:
+  JSFunctionRef function_;
+  ObjectRef prototype_;
+};
+
 class StableMapDependency final : public CompilationDependencies::Dependency {
  public:
   explicit StableMapDependency(const MapRef& map) : map_(map) {
@@ -203,7 +237,7 @@ class ElementsKindDependency final
       : site_(site), kind_(kind) {
     DCHECK(AllocationSite::ShouldTrack(kind_));
     DCHECK_EQ(kind_, site_.PointsToLiteral()
-                         ? site_.boilerplate().GetElementsKind()
+                         ? site_.boilerplate().value().GetElementsKind()
                          : site_.GetElementsKind());
   }
 
@@ -261,6 +295,14 @@ MapRef CompilationDependencies::DependOnInitialMap(
   return map;
 }
 
+ObjectRef CompilationDependencies::DependOnPrototypeProperty(
+    const JSFunctionRef& function) {
+  ObjectRef prototype = function.prototype();
+  dependencies_.push_front(
+      new (zone_) PrototypePropertyDependency(function, prototype));
+  return prototype;
+}
+
 void CompilationDependencies::DependOnStableMap(const MapRef& map) {
   if (map.CanTransition()) {
     dependencies_.push_front(new (zone_) StableMapDependency(map));
@@ -309,7 +351,7 @@ void CompilationDependencies::DependOnElementsKind(
     const AllocationSiteRef& site) {
   // Do nothing if the object doesn't have any useful element transitions left.
   ElementsKind kind = site.PointsToLiteral()
-                          ? site.boilerplate().GetElementsKind()
+                          ? site.boilerplate().value().GetElementsKind()
                           : site.GetElementsKind();
   if (AllocationSite::ShouldTrack(kind)) {
     dependencies_.push_front(new (zone_) ElementsKindDependency(site, kind));

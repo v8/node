@@ -715,6 +715,10 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
       // Type is Array.
       CheckTypeIs(node, Type::Array());
       break;
+    case IrOpcode::kJSCreateArrayFromIterable:
+      // Type is Array.
+      CheckTypeIs(node, Type::Array());
+      break;
     case IrOpcode::kJSCreateLiteralObject:
     case IrOpcode::kJSCreateEmptyLiteralObject:
     case IrOpcode::kJSCloneObject:
@@ -1430,7 +1434,11 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
       CheckValueInputIs(node, 0, Type::Any());
       CheckTypeIs(node, Type::Symbol());
       break;
-
+    case IrOpcode::kCheckStringAdd:
+      CheckValueInputIs(node, 0, Type::String());
+      CheckValueInputIs(node, 1, Type::String());
+      CheckTypeIs(node, Type::String());
+      break;
     case IrOpcode::kConvertReceiver:
       // (Any, Any) -> Receiver
       CheckValueInputIs(node, 0, Type::Any());
@@ -1747,13 +1755,6 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
     case IrOpcode::kWord32AtomicPairXor:
     case IrOpcode::kWord32AtomicPairExchange:
     case IrOpcode::kWord32AtomicPairCompareExchange:
-    case IrOpcode::kWord64AtomicNarrowAdd:
-    case IrOpcode::kWord64AtomicNarrowSub:
-    case IrOpcode::kWord64AtomicNarrowAnd:
-    case IrOpcode::kWord64AtomicNarrowOr:
-    case IrOpcode::kWord64AtomicNarrowXor:
-    case IrOpcode::kWord64AtomicNarrowExchange:
-    case IrOpcode::kWord64AtomicNarrowCompareExchange:
     case IrOpcode::kSpeculationFence:
     case IrOpcode::kSignExtendWord8ToInt32:
     case IrOpcode::kSignExtendWord16ToInt32:

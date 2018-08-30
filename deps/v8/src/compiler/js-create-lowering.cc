@@ -258,7 +258,7 @@ Reduction JSCreateLowering::ReduceJSCreateArguments(Node* node) {
                              arguments_frame, rest_length, effect);
         // Load the JSArray object map.
         Node* const jsarray_map = jsgraph()->Constant(
-            native_context_ref().js_array_fast_elements_map());
+            native_context_ref().js_array_packed_elements_map());
         // Actually allocate and initialize the jsarray.
         AllocationBuilder a(jsgraph(), effect, control);
         Node* properties = jsgraph()->EmptyFixedArrayConstant();
@@ -377,7 +377,7 @@ Reduction JSCreateLowering::ReduceJSCreateArguments(Node* node) {
       effect = elements->op()->EffectOutputCount() > 0 ? elements : effect;
       // Load the JSArray object map.
       Node* const jsarray_map = jsgraph()->Constant(
-          native_context_ref().js_array_fast_elements_map());
+          native_context_ref().js_array_packed_elements_map());
       // Actually allocate and initialize the jsarray.
       AllocationBuilder a(jsgraph(), effect, control);
       Node* properties = jsgraph()->EmptyFixedArrayConstant();
@@ -426,8 +426,8 @@ Reduction JSCreateLowering::ReduceJSCreateGeneratorObject(Node* node) {
     SharedFunctionInfoRef shared = js_function.shared();
     DCHECK(shared.HasBytecodeArray());
     int parameter_count_no_receiver = shared.internal_formal_parameter_count();
-    int size =
-        parameter_count_no_receiver + shared.GetBytecodeArrayRegisterCount();
+    int size = parameter_count_no_receiver +
+               shared.GetBytecodeArray().register_count();
     AllocationBuilder ab(jsgraph(), effect, control);
     ab.AllocateArray(size, factory()->fixed_array_map());
     for (int i = 0; i < size; ++i) {
@@ -1070,7 +1070,7 @@ Reduction JSCreateLowering::ReduceJSCreateKeyValueArray(Node* node) {
   Node* effect = NodeProperties::GetEffectInput(node);
 
   Node* array_map =
-      jsgraph()->Constant(native_context_ref().js_array_fast_elements_map());
+      jsgraph()->Constant(native_context_ref().js_array_packed_elements_map());
   Node* properties = jsgraph()->EmptyFixedArrayConstant();
   Node* length = jsgraph()->Constant(2);
 
@@ -1097,7 +1097,7 @@ Reduction JSCreateLowering::ReduceJSCreatePromise(Node* node) {
   DCHECK_EQ(IrOpcode::kJSCreatePromise, node->opcode());
   Node* effect = NodeProperties::GetEffectInput(node);
 
-  MapRef promise_map = native_context_ref().promise_function_initial_map();
+  MapRef promise_map = native_context_ref().promise_function().initial_map();
 
   AllocationBuilder a(jsgraph(), effect, graph()->start());
   a.Allocate(promise_map.instance_size());
@@ -1138,7 +1138,7 @@ Reduction JSCreateLowering::ReduceJSCreateLiteralArrayOrObject(Node* node) {
         pretenure = dependencies()->DependOnPretenureMode(site);
       }
       dependencies()->DependOnElementsKinds(site);
-      JSObjectRef boilerplate = site.boilerplate();
+      JSObjectRef boilerplate = site.boilerplate().value();
       Node* value = effect =
           AllocateFastLiteral(effect, control, boilerplate, pretenure);
       ReplaceWithValue(node, value, effect, control);
@@ -1176,7 +1176,7 @@ Reduction JSCreateLowering::ReduceJSCreateEmptyLiteralObject(Node* node) {
   Node* control = NodeProperties::GetControlInput(node);
 
   // Retrieve the initial map for the object.
-  MapRef map = native_context_ref().ObjectLiteralMapFromCache();
+  MapRef map = native_context_ref().object_function().initial_map();
   DCHECK(!map.is_dictionary_map());
   DCHECK(!map.IsInobjectSlackTrackingInProgress());
   Node* js_object_map = jsgraph()->Constant(map);
@@ -1648,7 +1648,7 @@ Node* JSCreateLowering::AllocateFastLiteral(Node* effect, Node* control,
         MaybeHandle<Map>(), Type::Any(),    MachineType::AnyTagged(),
         kFullWriteBarrier};
     Node* value;
-    if (boilerplate.IsUnboxedDoubleField(index)) {
+    if (boilerplate.map().IsUnboxedDoubleField(index)) {
       access.machine_type = MachineType::Float64();
       access.type = Type::Number();
       value = jsgraph()->Constant(boilerplate.RawFastDoublePropertyAt(index));
@@ -1744,16 +1744,12 @@ Node* JSCreateLowering::AllocateFastLiteralElements(Node* effect, Node* control,
   } else {
     FixedArrayRef elements = boilerplate_elements.AsFixedArray();
     for (int i = 0; i < elements_length; ++i) {
-      if (elements.is_the_hole(i)) {
-        elements_values[i] = jsgraph()->TheHoleConstant();
+      ObjectRef element_value = elements.get(i);
+      if (element_value.IsJSObject()) {
+        elements_values[i] = effect = AllocateFastLiteral(
+            effect, control, element_value.AsJSObject(), pretenure);
       } else {
-        ObjectRef element_value = elements.get(i);
-        if (element_value.IsJSObject()) {
-          elements_values[i] = effect = AllocateFastLiteral(
-              effect, control, element_value.AsJSObject(), pretenure);
-        } else {
-          elements_values[i] = jsgraph()->Constant(element_value);
-        }
+        elements_values[i] = jsgraph()->Constant(element_value);
       }
     }
   }

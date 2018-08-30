@@ -26,6 +26,7 @@ CAST_ACCESSOR(ConsString)
 CAST_ACCESSOR(ExternalOneByteString)
 CAST_ACCESSOR(ExternalString)
 CAST_ACCESSOR(ExternalTwoByteString)
+CAST_ACCESSOR(InternalizedString)
 CAST_ACCESSOR(SeqOneByteString)
 CAST_ACCESSOR(SeqString)
 CAST_ACCESSOR(SeqTwoByteString)
@@ -535,9 +536,9 @@ HeapObject* ThinString::unchecked_actual() const {
   return reinterpret_cast<HeapObject*>(READ_FIELD(this, kActualOffset));
 }
 
-bool ExternalString::is_short() const {
+bool ExternalString::is_uncached() const {
   InstanceType type = map()->instance_type();
-  return (type & kShortExternalStringMask) == kShortExternalStringTag;
+  return (type & kUncachedExternalStringMask) == kUncachedExternalStringTag;
 }
 
 Address ExternalString::resource_as_address() {
@@ -561,7 +562,7 @@ uint32_t ExternalString::resource_as_uint32() {
 
 void ExternalString::set_uint32_as_resource(uint32_t value) {
   *reinterpret_cast<uintptr_t*>(FIELD_ADDR(this, kResourceOffset)) = value;
-  if (is_short()) return;
+  if (is_uncached()) return;
   const char** data_field =
       reinterpret_cast<const char**>(FIELD_ADDR(this, kResourceDataOffset));
   *data_field = nullptr;
@@ -572,7 +573,7 @@ const ExternalOneByteString::Resource* ExternalOneByteString::resource() {
 }
 
 void ExternalOneByteString::update_data_cache() {
-  if (is_short()) return;
+  if (is_uncached()) return;
   const char** data_field =
       reinterpret_cast<const char**>(FIELD_ADDR(this, kResourceDataOffset));
   *data_field = resource()->data();
@@ -608,7 +609,7 @@ const ExternalTwoByteString::Resource* ExternalTwoByteString::resource() {
 }
 
 void ExternalTwoByteString::update_data_cache() {
-  if (is_short()) return;
+  if (is_uncached()) return;
   const uint16_t** data_field =
       reinterpret_cast<const uint16_t**>(FIELD_ADDR(this, kResourceDataOffset));
   *data_field = resource()->data();

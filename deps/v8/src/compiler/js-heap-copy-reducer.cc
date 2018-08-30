@@ -45,10 +45,26 @@ Reduction JSHeapCopyReducer::Reduce(Node* node) {
       HeapObjectRef(broker(), p.code());
       break;
     }
+    case IrOpcode::kJSCreateEmptyLiteralArray: {
+      FeedbackParameter const& p = FeedbackParameterOf(node->op());
+      FeedbackVectorRef(broker(), p.feedback().vector()).SerializeSlots();
+      break;
+    }
     case IrOpcode::kJSCreateFunctionContext: {
       CreateFunctionContextParameters const& p =
           CreateFunctionContextParametersOf(node->op());
       ScopeInfoRef(broker(), p.scope_info());
+      break;
+    }
+    case IrOpcode::kJSCreateLiteralArray:
+    case IrOpcode::kJSCreateLiteralObject: {
+      CreateLiteralParameters const& p = CreateLiteralParametersOf(node->op());
+      FeedbackVectorRef(broker(), p.feedback().vector()).SerializeSlots();
+      break;
+    }
+    case IrOpcode::kJSCreateLiteralRegExp: {
+      CreateLiteralParameters const& p = CreateLiteralParametersOf(node->op());
+      FeedbackVectorRef(broker(), p.feedback().vector()).SerializeSlots();
       break;
     }
     case IrOpcode::kJSLoadNamed:

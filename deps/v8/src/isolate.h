@@ -435,9 +435,6 @@ class ThreadLocalTop BASE_EMBEDDED {
   Context* context_ = nullptr;
   ThreadId thread_id_ = ThreadId::Invalid();
   Object* pending_exception_ = nullptr;
-  // TODO(kschimpf): Change this to a stack of caught exceptions (rather than
-  // just innermost catching try block).
-  Object* wasm_caught_exception_ = nullptr;
 
   // Communication channel between Isolate::FindHandler and the CEntry.
   Context* pending_handler_context_ = nullptr;
@@ -716,11 +713,6 @@ class Isolate : private HiddenFactory {
   inline void set_pending_exception(Object* exception_obj);
   inline void clear_pending_exception();
 
-  // Interface to wasm caught exception.
-  inline Object* get_wasm_caught_exception();
-  inline void set_wasm_caught_exception(Object* exception);
-  inline void clear_wasm_caught_exception();
-
   bool AreWasmThreadsEnabled(Handle<Context> context);
 
   THREAD_LOCAL_TOP_ADDRESS(Object*, pending_exception)
@@ -757,7 +749,6 @@ class Isolate : private HiddenFactory {
   bool IsExternalHandlerOnTop(Object* exception);
 
   inline bool is_catchable_by_javascript(Object* exception);
-  bool is_catchable_by_wasm(Object* exception);
 
   // JS execution stack (see frames.h).
   static Address c_entry_fp(ThreadLocalTop* thread) {
@@ -955,12 +946,8 @@ class Isolate : private HiddenFactory {
   void IterateThread(ThreadVisitor* v, char* t);
 
   // Returns the current native context.
-  inline Handle<Context> native_context();
-  inline Context* raw_native_context();
-
-  // Returns the native context of the calling JavaScript code.  That
-  // is, the native context of the top-most JavaScript frame.
-  Handle<Context> GetCallingNativeContext();
+  inline Handle<NativeContext> native_context();
+  inline NativeContext* raw_native_context();
 
   Handle<Context> GetIncumbentContext();
 
@@ -1140,6 +1127,8 @@ class Isolate : private HiddenFactory {
   bool initialized_from_snapshot() { return initialized_from_snapshot_; }
 
   bool NeedsSourcePositionsForProfiling() const;
+
+  bool NeedsDetailedOptimizedCodeLineInfo() const;
 
   bool is_best_effort_code_coverage() const {
     return code_coverage_mode() == debug::Coverage::kBestEffort;
@@ -1877,9 +1866,6 @@ class Isolate : private HiddenFactory {
   friend class v8::Locker;
   friend class v8::SnapshotCreator;
   friend class v8::Unlocker;
-  friend v8::StartupData v8::V8::CreateSnapshotDataBlob(const char*);
-  friend v8::StartupData v8::V8::WarmUpSnapshotDataBlob(v8::StartupData,
-                                                        const char*);
 
   DISALLOW_COPY_AND_ASSIGN(Isolate);
 };

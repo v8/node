@@ -31,12 +31,23 @@ constexpr Register kJavaScriptCallArgCountRegister = eax;
 constexpr Register kJavaScriptCallCodeStartRegister = ecx;
 constexpr Register kJavaScriptCallTargetRegister = kJSFunctionRegister;
 constexpr Register kJavaScriptCallNewTargetRegister = edx;
-constexpr Register kJavaScriptCallExtraArg1Register = ebx;
 
-constexpr Register kOffHeapTrampolineRegister = ecx;
-constexpr Register kRuntimeCallFunctionRegister = ebx;
+// The ExtraArg1Register not part of the real JS calling convention and is
+// mostly there to simplify consistent interface descriptor definitions across
+// platforms. Note that on ia32 it aliases kJavaScriptCallCodeStartRegister.
+constexpr Register kJavaScriptCallExtraArg1Register = ecx;
+
+// The off-heap trampoline does not need a register on ia32 (it uses a
+// pc-relative call instead).
+constexpr Register kOffHeapTrampolineRegister = no_reg;
+
+constexpr Register kRuntimeCallFunctionRegister = edx;
 constexpr Register kRuntimeCallArgCountRegister = eax;
+constexpr Register kRuntimeCallArgvRegister = ecx;
 constexpr Register kWasmInstanceRegister = esi;
+
+// TODO(v8:6666): Implement full support.
+constexpr Register kRootRegister = ebx;
 
 // Convenience for platform-independent signatures.  We do not normally
 // distinguish memory operands from other operands on ia32.
@@ -95,18 +106,30 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   // Check that the stack is aligned.
   void CheckStackAlignment();
 
-  // Nop, because ia32 does not have a root register.
-  void InitializeRootRegister() {}
+  void InitializeRootRegister() {
+    // For now, only check sentinel value for root register.
+    // TODO(jgruber,v8:6666): Implement root register.
+    if (FLAG_ia32_verify_root_register && FLAG_embedded_builtins) {
+      mov(kRootRegister, kRootRegisterSentinel);
+    }
+  }
+
+  void VerifyRootRegister() {
+    if (FLAG_ia32_verify_root_register && FLAG_embedded_builtins) {
+      Label root_register_ok;
+      cmp(kRootRegister, kRootRegisterSentinel);
+      j(equal, &root_register_ok);
+      int3();
+      bind(&root_register_ok);
+    }
+  }
 
   // Move a constant into a destination using the most efficient encoding.
-  void Move(Register dst, const Immediate& x);
-
-  void Move(Register dst, Smi* source) { Move(dst, Immediate(source)); }
-
-  // Move if the registers are not identical.
-  void Move(Register target, Register source);
-
-  void Move(Operand dst, const Immediate& x);
+  void Move(Register dst, const Immediate& src);
+  void Move(Register dst, Smi* src) { Move(dst, Immediate(src)); }
+  void Move(Register dst, Handle<HeapObject> src);
+  void Move(Register dst, Register src);
+  void Move(Operand dst, const Immediate& src);
 
   // Move an immediate into an XMM register.
   void Move(XMMRegister dst, uint32_t src);
@@ -114,11 +137,11 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   void Move(XMMRegister dst, float src) { Move(dst, bit_cast<uint32_t>(src)); }
   void Move(XMMRegister dst, double src) { Move(dst, bit_cast<uint64_t>(src)); }
 
-  void Move(Register dst, Handle<HeapObject> handle);
-
   void Call(Register reg) { call(reg); }
-  void Call(Handle<Code> target, RelocInfo::Mode rmode) { call(target, rmode); }
   void Call(Label* target) { call(target); }
+  void Call(Handle<Code> code_object, RelocInfo::Mode rmode);
+
+  void Jump(Handle<Code> code_object, RelocInfo::Mode rmode);
 
   void RetpolineCall(Register reg);
   void RetpolineCall(Address destination, RelocInfo::Mode rmode);
@@ -217,17 +240,37 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
 
   void LoadRoot(Register destination, Heap::RootListIndex index) override;
 
-  // TODO(jgruber,v8:6666): Implement embedded builtins.
+  void MoveForRootRegisterRefactoring(Register dst, Register src) {
+    // TODO(v8:6666): When rewriting ia32 ASM builtins to not clobber the
+    // kRootRegister ebx, most call sites of this wrapper function can probably
+    // be removed.
+    Move(dst, src);
+  }
+
+  // Indirect root-relative loads.
   void LoadFromConstantsTable(Register destination,
-                              int constant_index) override {
-    UNREACHABLE();
+                              int constant_index) override;
+  void LoadRootRegisterOffset(Register destination, intptr_t offset) override;
+  void LoadRootRelative(Register destination, int32_t offset) override;
+
+  void LoadAddress(Register destination, ExternalReference source);
+
+  void PushRootRegister() {
+    // Check that a NoRootArrayScope exists.
+    CHECK(!root_array_available());
+    push(kRootRegister);
   }
-  void LoadRootRegisterOffset(Register destination, intptr_t offset) override {
-    UNREACHABLE();
+  void PopRootRegister() {
+    // Check that a NoRootArrayScope exists.
+    CHECK(!root_array_available());
+    pop(kRootRegister);
   }
-  void LoadRootRelative(Register destination, int32_t offset) override {
-    UNREACHABLE();
-  }
+
+  // Wrapper functions to ensure external reference operands produce
+  // isolate-independent code if needed.
+  Operand StaticVariable(const ExternalReference& ext);
+  Operand StaticArray(Register index, ScaleFactor scale,
+                      const ExternalReference& ext);
 
   // Return and drop arguments from stack, where the number of arguments
   // may be bigger than 2^16 - 1.  Requires a scratch register.
@@ -688,7 +731,6 @@ class MacroAssembler : public TurboAssembler {
   // from the stack, clobbering only the esp register.
   void Drop(int element_count);
 
-  void Jump(Handle<Code> target, RelocInfo::Mode rmode) { jmp(target, rmode); }
   void Pop(Register dst) { pop(dst); }
   void Pop(Operand dst) { pop(dst); }
   void PushReturnAddressFrom(Register src) { push(src); }

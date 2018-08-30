@@ -151,6 +151,7 @@
   V(JSCreateTypedArray)         \
   V(JSCreateLiteralArray)       \
   V(JSCreateEmptyLiteralArray)  \
+  V(JSCreateArrayFromIterable)  \
   V(JSCreateLiteralObject)      \
   V(JSCreateEmptyLiteralObject) \
   V(JSCloneObject)              \
@@ -372,6 +373,7 @@
   V(CheckNotTaggedHole)                 \
   V(CheckEqualsInternalizedString)      \
   V(CheckEqualsSymbol)                  \
+  V(CheckStringAdd)                     \
   V(CompareMaps)                        \
   V(ConvertReceiver)                    \
   V(ConvertTaggedHoleToUndefined)       \
@@ -571,14 +573,7 @@
   V(Word64AtomicOr)                      \
   V(Word64AtomicXor)                     \
   V(Word64AtomicExchange)                \
-  V(Word64AtomicCompareExchange)         \
-  V(Word64AtomicNarrowAdd)               \
-  V(Word64AtomicNarrowSub)               \
-  V(Word64AtomicNarrowAnd)               \
-  V(Word64AtomicNarrowOr)                \
-  V(Word64AtomicNarrowXor)               \
-  V(Word64AtomicNarrowExchange)          \
-  V(Word64AtomicNarrowCompareExchange)
+  V(Word64AtomicCompareExchange)
 
 #define MACHINE_OP_LIST(V)           \
   MACHINE_UNOP_32_LIST(V)            \

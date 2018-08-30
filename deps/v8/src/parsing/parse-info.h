@@ -31,7 +31,7 @@ class RuntimeCallStats;
 class Logger;
 class SourceRangeMap;
 class UnicodeCache;
-class ScannerStream;
+class Utf16CharacterStream;
 class Zone;
 
 // A container for the inputs, configuration options, and outputs of parsing.
@@ -53,12 +53,6 @@ class V8_EXPORT_PRIVATE ParseInfo {
   AstValueFactory* GetOrCreateAstValueFactory();
 
   Zone* zone() const { return zone_.get(); }
-
-  // Sets this parse info to share the same zone as |other|
-  void ShareZone(ParseInfo* other);
-
-  // Sets this parse info to share the same ast value factory as |other|
-  void ShareAstValueFactory(ParseInfo* other);
 
 // Convenience accessor methods for flags.
 #define FLAG_ACCESSOR(flag, getter, setter)     \
@@ -101,8 +95,11 @@ class V8_EXPORT_PRIVATE ParseInfo {
                                       : NO_PARSE_RESTRICTION;
   }
 
-  ScannerStream* character_stream() const { return character_stream_.get(); }
-  void set_character_stream(std::unique_ptr<ScannerStream> character_stream);
+  Utf16CharacterStream* character_stream() const {
+    return character_stream_.get();
+  }
+  void set_character_stream(
+      std::unique_ptr<Utf16CharacterStream> character_stream);
   void ResetCharacterStream();
 
   v8::Extension* extension() const { return extension_; }
@@ -201,6 +198,8 @@ class V8_EXPORT_PRIVATE ParseInfo {
   // TODO(titzer): these should not be part of ParseInfo.
   //--------------------------------------------------------------------------
   Handle<Script> script() const { return script_; }
+  void set_script(Handle<Script> script);
+  void ClearScriptHandle() { script_ = Handle<Script>(); }
   MaybeHandle<ScopeInfo> maybe_outer_scope_info() const {
     return maybe_outer_scope_info_;
   }
@@ -219,12 +218,8 @@ class V8_EXPORT_PRIVATE ParseInfo {
     set_strict_mode(is_strict(language_mode));
   }
 
-  void EmitBackgroundParseStatisticsOnBackgroundThread();
-  void UpdateBackgroundParseStatisticsOnMainThread(Isolate* isolate);
-
  private:
   void SetScriptForToplevelCompile(Isolate* isolate, Handle<Script> script);
-  void set_script(Handle<Script> script);
 
   // Various configuration flags for parsing.
   enum Flag {
@@ -250,7 +245,7 @@ class V8_EXPORT_PRIVATE ParseInfo {
   };
 
   //------------- Inputs to parsing and scope analysis -----------------------
-  std::shared_ptr<Zone> zone_;
+  std::unique_ptr<Zone> zone_;
   unsigned flags_;
   v8::Extension* extension_;
   DeclarationScope* script_scope_;
@@ -270,9 +265,9 @@ class V8_EXPORT_PRIVATE ParseInfo {
   MaybeHandle<ScopeInfo> maybe_outer_scope_info_;
 
   //----------- Inputs+Outputs of parsing and scope analysis -----------------
-  std::unique_ptr<ScannerStream> character_stream_;
+  std::unique_ptr<Utf16CharacterStream> character_stream_;
   ConsumedPreParsedScopeData consumed_preparsed_scope_data_;
-  std::shared_ptr<AstValueFactory> ast_value_factory_;
+  std::unique_ptr<AstValueFactory> ast_value_factory_;
   const class AstStringConstants* ast_string_constants_;
   const AstRawString* function_name_;
   RuntimeCallStats* runtime_call_stats_;
@@ -281,7 +276,6 @@ class V8_EXPORT_PRIVATE ParseInfo {
 
   //----------- Output of parsing and scope analysis ------------------------
   FunctionLiteral* literal_;
-  std::shared_ptr<DeferredHandles> deferred_handles_;
   PendingCompilationErrorHandler pending_error_handler_;
 
   void SetFlag(Flag f) { flags_ |= f; }

@@ -68,6 +68,10 @@ class ArrayBuiltinsAssembler : public BaseBuiltinsFromDSLAssembler {
 
   void NullPostLoopAction();
 
+  // Uses memset to effectively initialize the given FixedArray with Smi zeroes.
+  void FillFixedArrayWithSmiZero(TNode<FixedArray> array,
+                                 TNode<Smi> smi_length);
+
  protected:
   TNode<Context> context() { return context_; }
   TNode<Object> receiver() { return receiver_; }
@@ -140,9 +144,6 @@ class ArrayBuiltinsAssembler : public BaseBuiltinsFromDSLAssembler {
 
   void GenerateInternalArrayNoArgumentConstructor(ElementsKind kind);
   void GenerateInternalArraySingleArgumentConstructor(ElementsKind kind);
-
-  TNode<Object> GenerateFastArrayShift(TNode<Context> context,
-                                       TNode<Object> receiver, Label* slow);
 
  private:
   static ElementsKind ElementsKindForInstanceType(InstanceType type);

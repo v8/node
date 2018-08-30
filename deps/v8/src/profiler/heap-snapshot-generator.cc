@@ -16,6 +16,7 @@
 #include "src/objects-inl.h"
 #include "src/objects/api-callbacks.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/js-array-buffer-inl.h"
 #include "src/objects/js-array-inl.h"
 #include "src/objects/js-collection-inl.h"
 #include "src/objects/js-generator-inl.h"
@@ -248,6 +249,9 @@ HeapEntry* HeapSnapshot::AddGcSubrootEntry(Root root, SnapshotObjectId id) {
   return entry;
 }
 
+void HeapSnapshot::AddLocation(int entry, int scriptId, int line, int col) {
+  locations_.emplace_back(entry, scriptId, line, col);
+}
 
 HeapEntry* HeapSnapshot::AddEntry(HeapEntry::Type type,
                                   const char* name,
@@ -610,6 +614,33 @@ HeapEntry* V8HeapExplorer::AllocateEntry(HeapThing ptr) {
   return AddEntry(reinterpret_cast<HeapObject*>(ptr));
 }
 
+void V8HeapExplorer::ExtractLocation(int entry, HeapObject* object) {
+  if (object->IsJSFunction()) {
+    JSFunction* func = JSFunction::cast(object);
+    ExtractLocationForJSFunction(entry, func);
+
+  } else if (object->IsJSGeneratorObject()) {
+    JSGeneratorObject* gen = JSGeneratorObject::cast(object);
+    ExtractLocationForJSFunction(entry, gen->function());
+
+  } else if (object->IsJSObject()) {
+    JSObject* obj = JSObject::cast(object);
+    JSFunction* maybe_constructor = GetConstructor(obj);
+
+    if (maybe_constructor)
+      ExtractLocationForJSFunction(entry, maybe_constructor);
+  }
+}
+
+void V8HeapExplorer::ExtractLocationForJSFunction(int entry, JSFunction* func) {
+  if (!func->shared()->script()->IsScript()) return;
+  Script* script = Script::cast(func->shared()->script());
+  int scriptId = script->id();
+  int start = func->shared()->StartPosition();
+  int line = script->GetLineNumber(start);
+  int col = script->GetColumnNumber(start);
+  snapshot_->AddLocation(entry, scriptId, line, col);
+}
 
 HeapEntry* V8HeapExplorer::AddEntry(HeapObject* object) {
   if (object->IsJSFunction()) {
@@ -1046,8 +1077,8 @@ void V8HeapExplorer::ExtractEphemeronHashTableReferences(
     Object* value = table->get(value_index);
     SetWeakReference(table, entry, key_index, key,
                      table->OffsetOfElementAt(key_index));
-    SetInternalReference(table, entry, value_index, value,
-                         table->OffsetOfElementAt(value_index));
+    SetWeakReference(table, entry, value_index, value,
+                     table->OffsetOfElementAt(value_index));
     HeapEntry* key_entry = GetEntry(key);
     int key_entry_index = key_entry->index();
     HeapEntry* value_entry = GetEntry(value);
@@ -1513,6 +1544,17 @@ void V8HeapExplorer::ExtractInternalReferences(JSObject* js_obj, int entry) {
   }
 }
 
+JSFunction* V8HeapExplorer::GetConstructor(JSReceiver* receiver) {
+  Isolate* isolate = receiver->GetIsolate();
+  DisallowHeapAllocation no_gc;
+  HandleScope scope(isolate);
+  MaybeHandle<JSFunction> maybe_constructor =
+      JSReceiver::GetConstructor(handle(receiver, isolate));
+
+  if (maybe_constructor.is_null()) return nullptr;
+
+  return *maybe_constructor.ToHandleChecked();
+}
 
 String* V8HeapExplorer::GetConstructorName(JSObject* object) {
   Isolate* isolate = object->GetIsolate();
@@ -1601,6 +1643,9 @@ bool V8HeapExplorer::IterateAndExtractReferences(SnapshotFiller* filler) {
     for (size_t i = 0; i < max_pointer; ++i) {
       DCHECK(!visited_fields_[i]);
     }
+
+    // Extract location for specific object types
+    ExtractLocation(entry, obj);
 
     if (!progress_->ProgressReport(false)) interrupted = true;
   }
@@ -2630,6 +2675,11 @@ void HeapSnapshotJSONSerializer::SerializeImpl() {
   if (writer_->aborted()) return;
   writer_->AddString("],\n");
 
+  writer_->AddString("\"locations\":[");
+  SerializeLocations();
+  if (writer_->aborted()) return;
+  writer_->AddString("],\n");
+
   writer_->AddString("\"strings\":[");
   SerializeStrings();
   if (writer_->aborted()) return;
@@ -2709,7 +2759,7 @@ void HeapSnapshotJSONSerializer::SerializeEdge(HeapGraphEdge* edge,
   buffer[buffer_pos++] = ',';
   buffer_pos = utoa(edge_name_or_index, buffer, buffer_pos);
   buffer[buffer_pos++] = ',';
-  buffer_pos = utoa(entry_index(edge->to()), buffer, buffer_pos);
+  buffer_pos = utoa(to_node_index(edge->to()), buffer, buffer_pos);
   buffer[buffer_pos++] = '\n';
   buffer[buffer_pos++] = '\0';
   writer_->AddString(buffer.start());
@@ -2734,7 +2784,7 @@ void HeapSnapshotJSONSerializer::SerializeNode(const HeapEntry* entry) {
       + 6 + 1 + 1;
   EmbeddedVector<char, kBufferSize> buffer;
   int buffer_pos = 0;
-  if (entry_index(entry) != 0) {
+  if (to_node_index(entry) != 0) {
     buffer[buffer_pos++] = ',';
   }
   buffer_pos = utoa(entry->type(), buffer, buffer_pos);
@@ -2767,6 +2817,8 @@ void HeapSnapshotJSONSerializer::SerializeSnapshot() {
   writer_->AddString("\"meta\":");
   // The object describing node serialization layout.
   // We use a set of macros to improve readability.
+
+// clang-format off
 #define JSON_A(s) "[" s "]"
 #define JSON_O(s) "{" s "}"
 #define JSON_S(s) "\"" s "\""
@@ -2830,7 +2882,13 @@ void HeapSnapshotJSONSerializer::SerializeSnapshot() {
         JSON_S("children")) ","
     JSON_S("sample_fields") ":" JSON_A(
         JSON_S("timestamp_us") ","
-        JSON_S("last_assigned_id"))));
+        JSON_S("last_assigned_id")) ","
+    JSON_S("location_fields") ":" JSON_A(
+        JSON_S("object_index") ","
+        JSON_S("script_id") ","
+        JSON_S("line") ","
+        JSON_S("column"))));
+// clang-format on
 #undef JSON_S
 #undef JSON_O
 #undef JSON_A
@@ -3037,6 +3095,33 @@ void HeapSnapshotJSONSerializer::SerializeStrings() {
   }
 }
 
+void HeapSnapshotJSONSerializer::SerializeLocation(
+    const SourceLocation& location) {
+  // The buffer needs space for 4 unsigned ints, 3 commas, \n and \0
+  static const int kBufferSize =
+      MaxDecimalDigitsIn<sizeof(unsigned)>::kUnsigned * 4 + 3 + 2;
+  EmbeddedVector<char, kBufferSize> buffer;
+  int buffer_pos = 0;
+  buffer_pos = utoa(to_node_index(location.entry_index), buffer, buffer_pos);
+  buffer[buffer_pos++] = ',';
+  buffer_pos = utoa(location.scriptId, buffer, buffer_pos);
+  buffer[buffer_pos++] = ',';
+  buffer_pos = utoa(location.line, buffer, buffer_pos);
+  buffer[buffer_pos++] = ',';
+  buffer_pos = utoa(location.col, buffer, buffer_pos);
+  buffer[buffer_pos++] = '\n';
+  buffer[buffer_pos++] = '\0';
+  writer_->AddString(buffer.start());
+}
+
+void HeapSnapshotJSONSerializer::SerializeLocations() {
+  const std::vector<SourceLocation>& locations = snapshot_->locations();
+  for (size_t i = 0; i < locations.size(); i++) {
+    if (i > 0) writer_->AddCharacter(',');
+    SerializeLocation(locations[i]);
+    if (writer_->aborted()) return;
+  }
+}
 
 }  // namespace internal
 }  // namespace v8
