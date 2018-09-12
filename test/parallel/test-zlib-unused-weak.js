@@ -13,6 +13,6 @@ const afterCreation = process.memoryUsage().external;
 global.gc();
 const afterGC = process.memoryUsage().external;
 
-assert((afterGC - before) / (afterCreation - before) <= 0.05,
-       `Expected after-GC delta ${afterGC - before} to be less than 5 %` +
+assert((afterGC - before) / (afterCreation - before) <= 0.1,
+       `Expected after-GC delta ${afterGC - before} to be less than 10 %` +
        ` of before-GC delta ${afterCreation - before}`);
