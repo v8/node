@@ -13,6 +13,7 @@ bool BuiltinSnapshotUtils::IsBuiltinIndex(int maybe_index) {
           maybe_index < kFirstBuiltinIndex + kNumberOfBuiltins);
 }
 
+#ifndef V8_EMBEDDED_BYTECODE_HANDLERS
 // static
 bool BuiltinSnapshotUtils::IsHandlerIndex(int maybe_index) {
   return (kFirstHandlerIndex <= maybe_index &&
@@ -49,7 +50,7 @@ BuiltinSnapshotUtils::BytecodeFromIndex(int index) {
 
 // static
 void BuiltinSnapshotUtils::ForEachBytecode(
-    std::function<void(Bytecode, OperandScale)> f) {
+    const std::function<void(Bytecode, OperandScale)>& f) {
   static const OperandScale kOperandScales[] = {
 #define VALUE(Name, _) OperandScale::k##Name,
       OPERAND_SCALE_LIST(VALUE)
@@ -62,6 +63,7 @@ void BuiltinSnapshotUtils::ForEachBytecode(
     }
   }
 }
+#endif  // V8_EMBEDDED_BYTECODE_HANDLERS
 
 }  // namespace internal
 }  // namespace v8

@@ -84,13 +84,13 @@ CodeAssemblerState::CodeAssemblerState(Isolate* isolate, Zone* zone,
       code_generated_(false),
       variables_(zone) {}
 
-CodeAssemblerState::~CodeAssemblerState() {}
+CodeAssemblerState::~CodeAssemblerState() = default;
 
 int CodeAssemblerState::parameter_count() const {
   return static_cast<int>(raw_assembler_->call_descriptor()->ParameterCount());
 }
 
-CodeAssembler::~CodeAssembler() {}
+CodeAssembler::~CodeAssembler() = default;
 
 #if DEBUG
 void CodeAssemblerState::PrintCurrentBlock(std::ostream& os) {
@@ -922,6 +922,17 @@ TNode<UintPtrT> CodeAssembler::ChangeFloat64ToUintPtr(
   }
   return ReinterpretCast<UintPtrT>(
       raw_assembler()->ChangeFloat64ToUint32(value));
+}
+
+TNode<Float64T> CodeAssembler::ChangeUintPtrToFloat64(TNode<UintPtrT> value) {
+  if (raw_assembler()->machine()->Is64()) {
+    // TODO(turbofan): Maybe we should introduce a ChangeUint64ToFloat64
+    // machine operator to TurboFan here?
+    return ReinterpretCast<Float64T>(
+        raw_assembler()->RoundUint64ToFloat64(value));
+  }
+  return ReinterpretCast<Float64T>(
+      raw_assembler()->ChangeUint32ToFloat64(value));
 }
 
 Node* CodeAssembler::RoundIntPtrToFloat64(Node* value) {

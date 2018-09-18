@@ -29,7 +29,7 @@ namespace interpreter {
 // Scoped class tracking context objects created by the visitor. Represents
 // mutations of the context chain within the function body, allowing pushing and
 // popping of the current {context_register} during visitation.
-class BytecodeGenerator::ContextScope BASE_EMBEDDED {
+class BytecodeGenerator::ContextScope {
  public:
   ContextScope(BytecodeGenerator* generator, Scope* scope)
       : generator_(generator),
@@ -94,7 +94,7 @@ class BytecodeGenerator::ContextScope BASE_EMBEDDED {
 
 // Scoped class for tracking control statements entered by the
 // visitor. The pattern derives AstGraphBuilder::ControlScope.
-class BytecodeGenerator::ControlScope BASE_EMBEDDED {
+class BytecodeGenerator::ControlScope {
  public:
   explicit ControlScope(BytecodeGenerator* generator)
       : generator_(generator), outer_(generator->execution_control()),
@@ -402,7 +402,7 @@ class BytecodeGenerator::ControlScopeForIteration final
         loop_builder_(loop_builder) {
     generator->loop_depth_++;
   }
-  ~ControlScopeForIteration() { generator()->loop_depth_--; }
+  ~ControlScopeForIteration() override { generator()->loop_depth_--; }
 
  protected:
   bool Execute(Command command, Statement* statement,
@@ -1859,6 +1859,7 @@ void BytecodeGenerator::BuildClassLiteral(ClassLiteral* expr) {
         DCHECK_NE(property->kind(), ClassLiteral::Property::PRIVATE_FIELD);
         Register key = register_allocator()->GrowRegisterList(&args);
 
+        builder()->SetExpressionAsStatementPosition(property->key());
         BuildLoadPropertyKey(property, key);
         if (property->is_static()) {
           // The static prototype property is read only. We handle the non
@@ -1968,13 +1969,13 @@ void BytecodeGenerator::VisitClassLiteral(ClassLiteral* expr) {
 }
 
 void BytecodeGenerator::VisitInitializeClassFieldsStatement(
-    InitializeClassFieldsStatement* expr) {
+    InitializeClassFieldsStatement* stmt) {
   RegisterList args = register_allocator()->NewRegisterList(3);
   Register constructor = args[0], key = args[1], value = args[2];
   builder()->MoveRegister(builder()->Receiver(), constructor);
 
-  for (int i = 0; i < expr->fields()->length(); i++) {
-    ClassLiteral::Property* property = expr->fields()->at(i);
+  for (int i = 0; i < stmt->fields()->length(); i++) {
+    ClassLiteral::Property* property = stmt->fields()->at(i);
 
     if (property->is_computed_name()) {
       DCHECK_EQ(property->kind(), ClassLiteral::Property::PUBLIC_FIELD);
@@ -1993,6 +1994,7 @@ void BytecodeGenerator::VisitInitializeClassFieldsStatement(
       BuildLoadPropertyKey(property, key);
     }
 
+    builder()->SetExpressionAsStatementPosition(property->value());
     VisitForRegisterValue(property->value(), value);
     VisitSetHomeObject(value, constructor, property);
 
@@ -2231,7 +2233,7 @@ void BytecodeGenerator::VisitObjectLiteral(ObjectLiteral* expr) {
             builder()
                 ->LoadLiteral(Smi::FromEnum(LanguageMode::kSloppy))
                 .StoreAccumulatorInRegister(args[3])
-                .CallRuntime(Runtime::kSetProperty, args);
+                .CallRuntime(Runtime::kSetKeyedProperty, args);
             Register value = args[2];
             VisitSetHomeObject(value, literal, property);
           }
@@ -2894,7 +2896,7 @@ void BytecodeGenerator::BuildStoreNamedProperty(Property* property,
         .StoreAccumulatorInRegister(args[1])
         .LoadLiteral(Smi::FromEnum(language_mode()))
         .StoreAccumulatorInRegister(args[3])
-        .CallRuntime(Runtime::kSetProperty, args);
+        .CallRuntime(Runtime::kSetNamedProperty, args);
   } else {
     FeedbackSlot slot = GetCachedStoreICSlot(property->obj(), name);
     builder()->StoreNamedProperty(object, name, feedback_index(slot),
@@ -3593,6 +3595,7 @@ void BytecodeGenerator::VisitCall(Call* expr) {
   // When a call contains a spread, a Call AST node is only created if there is
   // exactly one spread, and it is the last argument.
   bool is_spread_call = expr->only_last_arg_is_spread();
+  bool optimize_as_one_shot = ShouldOptimizeAsOneShot();
 
   // TODO(petermarshall): We have a lot of call bytecodes that are very similar,
   // see if we can reduce the number by adding a separate argument which
@@ -3617,7 +3620,7 @@ void BytecodeGenerator::VisitCall(Call* expr) {
     }
     case Call::GLOBAL_CALL: {
       // Receiver is undefined for global calls.
-      if (!is_spread_call) {
+      if (!is_spread_call && !optimize_as_one_shot) {
         implicit_undefined_receiver = true;
       } else {
         // TODO(leszeks): There's no special bytecode for tail calls or spread
@@ -3653,7 +3656,7 @@ void BytecodeGenerator::VisitCall(Call* expr) {
     }
     case Call::OTHER_CALL: {
       // Receiver is undefined for other calls.
-      if (!is_spread_call) {
+      if (!is_spread_call && !optimize_as_one_shot) {
         implicit_undefined_receiver = true;
       } else {
         // TODO(leszeks): There's no special bytecode for tail calls or spread
@@ -3717,20 +3720,25 @@ void BytecodeGenerator::VisitCall(Call* expr) {
 
   builder()->SetExpressionPosition(expr);
 
-  int feedback_slot_index = feedback_index(feedback_spec()->AddCallICSlot());
-
   if (is_spread_call) {
     DCHECK(!implicit_undefined_receiver);
-    builder()->CallWithSpread(callee, args, feedback_slot_index);
+    builder()->CallWithSpread(callee, args,
+                              feedback_index(feedback_spec()->AddCallICSlot()));
+  } else if (optimize_as_one_shot) {
+    DCHECK(!implicit_undefined_receiver);
+    builder()->CallNoFeedback(callee, args);
   } else if (call_type == Call::NAMED_PROPERTY_CALL ||
              call_type == Call::KEYED_PROPERTY_CALL ||
              call_type == Call::RESOLVED_PROPERTY_CALL) {
     DCHECK(!implicit_undefined_receiver);
-    builder()->CallProperty(callee, args, feedback_slot_index);
+    builder()->CallProperty(callee, args,
+                            feedback_index(feedback_spec()->AddCallICSlot()));
   } else if (implicit_undefined_receiver) {
-    builder()->CallUndefinedReceiver(callee, args, feedback_slot_index);
+    builder()->CallUndefinedReceiver(
+        callee, args, feedback_index(feedback_spec()->AddCallICSlot()));
   } else {
-    builder()->CallAnyReceiver(callee, args, feedback_slot_index);
+    builder()->CallAnyReceiver(
+        callee, args, feedback_index(feedback_spec()->AddCallICSlot()));
   }
 }
 

@@ -538,17 +538,18 @@ RUNTIME_FUNCTION(Runtime_DebugPrint) {
   MaybeObject* maybe_object = reinterpret_cast<MaybeObject*>(args[0]);
 
   StdoutStream os;
-  if (maybe_object->IsClearedWeakHeapObject()) {
+  if (maybe_object->IsCleared()) {
     os << "[weak cleared]";
   } else {
     Object* object;
+    HeapObject* heap_object;
     bool weak = false;
-    if (maybe_object->IsWeakHeapObject()) {
+    if (maybe_object->GetHeapObjectIfWeak(&heap_object)) {
       weak = true;
-      object = maybe_object->ToWeakHeapObject();
+      object = heap_object;
     } else {
       // Strong reference or SMI.
-      object = maybe_object->ToObject();
+      object = maybe_object->cast<Object>();
     }
 
 #ifdef DEBUG
@@ -835,10 +836,37 @@ RUNTIME_FUNCTION(Runtime_IsWasmTrapHandlerEnabled) {
 }
 
 RUNTIME_FUNCTION(Runtime_GetWasmRecoveredTrapCount) {
-  HandleScope shs(isolate);
+  HandleScope scope(isolate);
   DCHECK_EQ(0, args.length());
   size_t trap_count = trap_handler::GetRecoveredTrapCount();
   return *isolate->factory()->NewNumberFromSize(trap_count);
+}
+
+RUNTIME_FUNCTION(Runtime_GetWasmExceptionId) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(2, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(JSReceiver, exception, 0);
+  CONVERT_ARG_HANDLE_CHECKED(WasmInstanceObject, instance, 1);
+  Handle<Object> tag;
+  if (JSReceiver::GetProperty(isolate, exception,
+                              isolate->factory()->wasm_exception_tag_symbol())
+          .ToHandle(&tag)) {
+    Handle<FixedArray> exceptions_table(instance->exceptions_table(), isolate);
+    for (int index = 0; index < exceptions_table->length(); ++index) {
+      if (exceptions_table->get(index) == *tag) return Smi::FromInt(index);
+    }
+  }
+  return ReadOnlyRoots(isolate).undefined_value();
+}
+
+RUNTIME_FUNCTION(Runtime_GetWasmExceptionValues) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(1, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(JSReceiver, exception, 0);
+  RETURN_RESULT_OR_FAILURE(
+      isolate, JSReceiver::GetProperty(
+                   isolate, exception,
+                   isolate->factory()->wasm_exception_values_symbol()));
 }
 
 namespace {
@@ -942,9 +970,9 @@ RUNTIME_FUNCTION(Runtime_DeserializeWasmModule) {
       wasm::DeserializeNativeModule(
           isolate,
           {reinterpret_cast<uint8_t*>(buffer->backing_store()),
-           static_cast<size_t>(buffer->byte_length()->Number())},
+           buffer->byte_length()},
           {reinterpret_cast<uint8_t*>(wire_bytes->backing_store()),
-           static_cast<size_t>(wire_bytes->byte_length()->Number())});
+           wire_bytes->byte_length()});
   Handle<WasmModuleObject> module_object;
   if (!maybe_module_object.ToHandle(&module_object)) {
     return ReadOnlyRoots(isolate).undefined_value();
@@ -976,7 +1004,7 @@ RUNTIME_FUNCTION(Runtime_WasmGetNumberOfInstances) {
   int instance_count = 0;
   WeakArrayList* weak_instance_list = module_obj->weak_instance_list();
   for (int i = 0; i < weak_instance_list->length(); ++i) {
-    if (weak_instance_list->Get(i)->IsWeakHeapObject()) instance_count++;
+    if (weak_instance_list->Get(i)->IsWeak()) instance_count++;
   }
   return Smi::FromInt(instance_count);
 }
@@ -985,7 +1013,7 @@ RUNTIME_FUNCTION(Runtime_WasmNumInterpretedCalls) {
   DCHECK_EQ(1, args.length());
   HandleScope scope(isolate);
   CONVERT_ARG_HANDLE_CHECKED(WasmInstanceObject, instance, 0);
-  if (!instance->has_debug_info()) return 0;
+  if (!instance->has_debug_info()) return nullptr;
   uint64_t num = instance->debug_info()->NumInterpretedCalls();
   return *isolate->factory()->NewNumberFromSize(static_cast<size_t>(num));
 }

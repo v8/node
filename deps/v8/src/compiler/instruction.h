@@ -1321,7 +1321,7 @@ class FrameStateDescriptor : public ZoneObject {
 // frame state descriptor that we have to go back to.
 class DeoptimizationEntry final {
  public:
-  DeoptimizationEntry() {}
+  DeoptimizationEntry() = default;
   DeoptimizationEntry(FrameStateDescriptor* descriptor, DeoptimizeKind kind,
                       DeoptimizeReason reason, VectorSlotPair const& feedback)
       : descriptor_(descriptor),
@@ -1520,13 +1520,20 @@ class V8_EXPORT_PRIVATE InstructionSequence final
   }
   MachineRepresentation GetRepresentation(int virtual_register) const;
   void MarkAsRepresentation(MachineRepresentation rep, int virtual_register);
-  int representation_mask() const { return representation_mask_; }
 
   bool IsReference(int virtual_register) const {
     return CanBeTaggedPointer(GetRepresentation(virtual_register));
   }
   bool IsFP(int virtual_register) const {
     return IsFloatingPoint(GetRepresentation(virtual_register));
+  }
+  int representation_mask() const { return representation_mask_; }
+  bool HasFPVirtualRegisters() const {
+    constexpr int kFPRepMask =
+        RepresentationBit(MachineRepresentation::kFloat32) |
+        RepresentationBit(MachineRepresentation::kFloat64) |
+        RepresentationBit(MachineRepresentation::kSimd128);
+    return (representation_mask() & kFPRepMask) != 0;
   }
 
   Instruction* GetBlockStart(RpoNumber rpo) const;

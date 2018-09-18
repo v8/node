@@ -510,6 +510,12 @@ RUNTIME_FUNCTION(Runtime_IncrementUseCounter) {
 
 RUNTIME_FUNCTION(Runtime_GetAndResetRuntimeCallStats) {
   HandleScope scope(isolate);
+
+  // Append any worker thread runtime call stats to the main table before
+  // printing.
+  isolate->counters()->worker_thread_runtime_call_stats()->AddToMainTable(
+      isolate->counters()->runtime_call_stats());
+
   if (args.length() == 0) {
     // Without arguments, the result is returned as a string.
     DCHECK_EQ(0, args.length());
@@ -625,5 +631,14 @@ RUNTIME_FUNCTION(Runtime_ReportMessage) {
   return ReadOnlyRoots(isolate).undefined_value();
 }
 
+RUNTIME_FUNCTION(Runtime_GetInitializerFunction) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(1, args.length());
+
+  CONVERT_ARG_HANDLE_CHECKED(JSReceiver, constructor, 0);
+  Handle<Symbol> key = isolate->factory()->class_fields_symbol();
+  Handle<Object> initializer = JSReceiver::GetDataProperty(constructor, key);
+  return *initializer;
+}
 }  // namespace internal
 }  // namespace v8

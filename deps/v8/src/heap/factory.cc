@@ -27,6 +27,7 @@
 #include "src/objects/js-regexp-inl.h"
 #include "src/objects/literal-objects-inl.h"
 #include "src/objects/microtask-inl.h"
+#include "src/objects/microtask-queue-inl.h"
 #include "src/objects/module-inl.h"
 #include "src/objects/promise-inl.h"
 #include "src/objects/scope-info.h"
@@ -63,9 +64,9 @@ void InitializeCode(Heap* heap, Handle<Code> code, int object_size,
                     bool is_turbofanned, int stack_slots,
                     int safepoint_table_offset, int handler_table_offset) {
   DCHECK(IsAligned(code->address(), kCodeAlignment));
-  DCHECK(!heap->memory_allocator()->code_range()->valid() ||
-         heap->memory_allocator()->code_range()->contains(code->address()) ||
-         object_size <= heap->code_space()->AreaSize());
+  DCHECK_IMPLIES(
+      !heap->memory_allocator()->code_range().is_empty(),
+      heap->memory_allocator()->code_range().contains(code->address()));
 
   bool has_unwinding_info = desc.unwinding_info != nullptr;
 
@@ -1243,7 +1244,7 @@ MaybeHandle<String> Factory::NewExternalStringFromOneByte(
   if (length == 0) return empty_string();
 
   Handle<Map> map;
-  if (resource->IsCompressible()) {
+  if (!resource->IsCacheable()) {
     map = uncached_external_one_byte_string_map();
   } else {
     map = external_one_byte_string_map();
@@ -1273,7 +1274,7 @@ MaybeHandle<String> Factory::NewExternalStringFromTwoByte(
       length <= kOneByteCheckLengthLimit &&
       String::IsOneByte(resource->data(), static_cast<int>(length));
   Handle<Map> map;
-  if (resource->IsCompressible()) {
+  if (!resource->IsCacheable()) {
     map = is_one_byte ? uncached_external_string_with_one_byte_data_map()
                       : uncached_external_string_map();
   } else {
@@ -1621,6 +1622,16 @@ Handle<PromiseResolveThenableJobTask> Factory::NewPromiseResolveThenableJobTask(
   return microtask;
 }
 
+Handle<MicrotaskQueue> Factory::NewMicrotaskQueue() {
+  // MicrotaskQueue should be TENURED, as it outlives Context, and is mostly
+  // as long-living as Context is.
+  Handle<MicrotaskQueue> microtask_queue =
+      Handle<MicrotaskQueue>::cast(NewStruct(MICROTASK_QUEUE_TYPE, TENURED));
+  microtask_queue->set_queue(*empty_fixed_array());
+  microtask_queue->set_pending_microtask_count(0);
+  return microtask_queue;
+}
+
 Handle<Foreign> Factory::NewForeign(Address addr, PretenureFlag pretenure) {
   // Statically ensure that it is safe to allocate foreigns in paged spaces.
   STATIC_ASSERT(Foreign::kSize <= kMaxRegularHeapObjectSize);
@@ -1810,7 +1821,7 @@ Handle<Map> Factory::NewMap(InstanceType type, int instance_size,
                             ElementsKind elements_kind,
                             int inobject_properties) {
   STATIC_ASSERT(LAST_JS_OBJECT_TYPE == LAST_TYPE);
-  DCHECK_IMPLIES(Map::IsJSObject(type) &&
+  DCHECK_IMPLIES(InstanceTypeChecker::IsJSObject(type) &&
                      !Map::CanHaveFastTransitionableElementsKind(type),
                  IsDictionaryElementsKind(elements_kind) ||
                      IsTerminalElementsKind(elements_kind));
@@ -2663,9 +2674,9 @@ Handle<Code> Factory::NewCodeForDeserialization(uint32_t size) {
   heap->ZapCodeObject(result->address(), size);
   result->set_map_after_allocation(*code_map(), SKIP_WRITE_BARRIER);
   DCHECK(IsAligned(result->address(), kCodeAlignment));
-  DCHECK(!heap->memory_allocator()->code_range()->valid() ||
-         heap->memory_allocator()->code_range()->contains(result->address()) ||
-         static_cast<int>(size) <= heap->code_space()->AreaSize());
+  DCHECK_IMPLIES(
+      !heap->memory_allocator()->code_range().is_empty(),
+      heap->memory_allocator()->code_range().contains(result->address()));
   return handle(Code::cast(result), isolate());
 }
 
@@ -2727,10 +2738,9 @@ Handle<Code> Factory::CopyCode(Handle<Code> code) {
   if (FLAG_verify_heap) new_code->ObjectVerify(isolate());
 #endif
   DCHECK(IsAligned(new_code->address(), kCodeAlignment));
-  DCHECK(
-      !heap->memory_allocator()->code_range()->valid() ||
-      heap->memory_allocator()->code_range()->contains(new_code->address()) ||
-      obj_size <= heap->code_space()->AreaSize());
+  DCHECK_IMPLIES(
+      !heap->memory_allocator()->code_range().is_empty(),
+      heap->memory_allocator()->code_range().contains(new_code->address()));
   return new_code;
 }
 
@@ -3181,8 +3191,7 @@ void SetupArrayBufferView(i::Isolate* isolate,
                           i::Handle<i::JSArrayBuffer> buffer,
                           size_t byte_offset, size_t byte_length,
                           PretenureFlag pretenure = NOT_TENURED) {
-  DCHECK(byte_offset + byte_length <=
-         static_cast<size_t>(buffer->byte_length()->Number()));
+  DCHECK_LE(byte_offset + byte_length, buffer->byte_length());
 
   DCHECK_EQ(obj->GetEmbedderFieldCount(),
             v8::ArrayBufferView::kEmbedderFieldCount);
@@ -3755,7 +3764,7 @@ Handle<Map> Factory::ObjectLiteralMapFromCache(Handle<NativeContext> context,
     Handle<WeakFixedArray> cache = Handle<WeakFixedArray>::cast(maybe_cache);
     MaybeObject* result = cache->Get(cache_index);
     HeapObject* heap_object;
-    if (result->ToWeakHeapObject(&heap_object)) {
+    if (result->GetHeapObjectIfWeak(&heap_object)) {
       Map* map = Map::cast(heap_object);
       DCHECK(!map->is_dictionary_map());
       return handle(map, isolate());

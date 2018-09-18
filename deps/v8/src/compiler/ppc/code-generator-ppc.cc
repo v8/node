@@ -513,11 +513,11 @@ void EmitWordLoadPoisoningIfNeeded(CodeGenerator* codegen, Instruction* instr,
     /* Min: The algorithm is: -((-L) + (-R)), which in case of L and R */ \
     /* being different registers is most efficiently expressed */         \
     /* as -((-L) - R). */                                                 \
-    __ fneg(left_reg, left_reg);                                          \
-    if (left_reg == right_reg) {                                          \
-      __ fadd(result_reg, left_reg, right_reg);                           \
+    __ fneg(kScratchDoubleReg, left_reg);                                 \
+    if (kScratchDoubleReg == right_reg) {                                 \
+      __ fadd(result_reg, kScratchDoubleReg, right_reg);                  \
     } else {                                                              \
-      __ fsub(result_reg, left_reg, right_reg);                           \
+      __ fsub(result_reg, kScratchDoubleReg, right_reg);                  \
     }                                                                     \
     __ fneg(result_reg, result_reg);                                      \
     __ b(&done);                                                          \
@@ -691,7 +691,7 @@ void EmitWordLoadPoisoningIfNeeded(CodeGenerator* codegen, Instruction* instr,
     Label exit;                                                                \
     __ bind(&loop);                                                            \
     __ load_inst(i.OutputRegister(), operand);                                 \
-    __ cmp_inst(i.OutputRegister(), i.InputRegister(2));                       \
+    __ cmp_inst(i.OutputRegister(), i.InputRegister(2), cr0);                  \
     __ bne(&exit, cr0);                                                        \
     __ store_inst(i.InputRegister(3), operand);                                \
     __ bne(&loop, cr0);                                                        \
@@ -882,11 +882,7 @@ void CodeGenerator::BailoutIfDeoptimized() {
 void CodeGenerator::GenerateSpeculationPoisonFromCodeStartRegister() {
   Register scratch = kScratchReg;
 
-  Label current_pc;
-  __ mov_label_addr(scratch, &current_pc);
-
-  __ bind(&current_pc);
-  __ subi(scratch, scratch, Operand(__ pc_offset()));
+  __ ComputeCodeStartAddress(scratch);
 
   // Calculate a mask which has all bits set in the normal case, but has all
   // bits cleared if we are speculatively executing the wrong PC.
@@ -2074,7 +2070,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       Register output = i.OutputRegister();
       Register temp1 = r0;
       Register temp2 = kScratchReg;
-      Register temp3 = i.InputRegister(1);
+      Register temp3 = i.TempRegister(0);
       __ rldicl(temp1, input, 32, 32);
       __ rotlwi(temp2, input, 8);
       __ rlwimi(temp2, input, 24, 0, 7);

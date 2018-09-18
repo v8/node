@@ -23,6 +23,7 @@
 #include "src/objects/dictionary.h"
 #include "src/objects/literal-objects-inl.h"
 #include "src/objects/map.h"
+#include "src/objects/microtask-queue.h"
 #include "src/objects/microtask.h"
 #include "src/objects/module.h"
 #include "src/objects/promise.h"
@@ -91,7 +92,7 @@ AllocationResult Heap::AllocateMap(InstanceType instance_type,
                                    ElementsKind elements_kind,
                                    int inobject_properties) {
   STATIC_ASSERT(LAST_JS_OBJECT_TYPE == LAST_TYPE);
-  bool is_js_object = Map::IsJSObject(instance_type);
+  bool is_js_object = InstanceTypeChecker::IsJSObject(instance_type);
   DCHECK_IMPLIES(is_js_object &&
                      !Map::CanHaveFastTransitionableElementsKind(instance_type),
                  IsDictionaryElementsKind(elements_kind) ||
@@ -815,6 +816,9 @@ void Heap::CreateInitialObjects() {
   // Allocate the empty script.
   Handle<Script> script = factory->NewScript(factory->empty_string());
   script->set_type(Script::TYPE_NATIVE);
+  // This is used for exceptions thrown with no stack frames. Such exceptions
+  // can be shared everywhere.
+  script->set_origin_options(ScriptOriginOptions(true, false));
   set_empty_script(*script);
 
   Handle<Cell> array_constructor_cell = factory->NewCell(
@@ -901,16 +905,19 @@ void Heap::CreateInternalAccessorInfoObjects() {
   HandleScope scope(isolate);
   Handle<AccessorInfo> acessor_info;
 
-#define INIT_ACCESSOR_INFO(accessor_name, AccessorName)        \
+#define INIT_ACCESSOR_INFO(accessor_name, AccessorName, ...)   \
   acessor_info = Accessors::Make##AccessorName##Info(isolate); \
   roots_[k##AccessorName##AccessorRootIndex] = *acessor_info;
   ACCESSOR_INFO_LIST(INIT_ACCESSOR_INFO)
 #undef INIT_ACCESSOR_INFO
 
-#define INIT_SIDE_EFFECT_FLAG(AccessorName)                      \
-  AccessorInfo::cast(roots_[k##AccessorName##AccessorRootIndex]) \
-      ->set_has_no_side_effect(true);
-  SIDE_EFFECT_FREE_ACCESSOR_INFO_LIST(INIT_SIDE_EFFECT_FLAG)
+#define INIT_SIDE_EFFECT_FLAG(accessor_name, AccessorName, GetterType, \
+                              SetterType)                              \
+  AccessorInfo::cast(roots_[k##AccessorName##AccessorRootIndex])       \
+      ->set_getter_side_effect_type(SideEffectType::GetterType);       \
+  AccessorInfo::cast(roots_[k##AccessorName##AccessorRootIndex])       \
+      ->set_setter_side_effect_type(SideEffectType::SetterType);
+  ACCESSOR_INFO_LIST(INIT_SIDE_EFFECT_FLAG)
 #undef INIT_SIDE_EFFECT_FLAG
 }
 

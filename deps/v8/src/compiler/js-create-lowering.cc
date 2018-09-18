@@ -129,10 +129,10 @@ Reduction JSCreateLowering::ReduceJSCreate(Node* node) {
 
   JSFunctionRef constructor =
       target_type.AsHeapConstant()->Ref().AsJSFunction();
-  if (!constructor.IsConstructor()) return NoChange();
+  if (!constructor.map().is_constructor()) return NoChange();
   JSFunctionRef original_constructor =
       new_target_type.AsHeapConstant()->Ref().AsJSFunction();
-  if (!original_constructor.IsConstructor()) return NoChange();
+  if (!original_constructor.map().is_constructor()) return NoChange();
 
   // Check if we can inline the allocation.
   if (!IsAllocationInlineable(constructor, original_constructor)) {
@@ -711,8 +711,8 @@ Reduction JSCreateLowering::ReduceJSCreateArray(Node* node) {
       new_target_type.AsHeapConstant()->Ref().IsJSFunction()) {
     JSFunctionRef original_constructor =
         new_target_type.AsHeapConstant()->Ref().AsJSFunction();
-    DCHECK(constructor.IsConstructor());
-    DCHECK(original_constructor.IsConstructor());
+    DCHECK(constructor.map().is_constructor());
+    DCHECK(original_constructor.map().is_constructor());
 
     // Check if we can inline the allocation.
     if (IsAllocationInlineable(constructor, original_constructor)) {
@@ -1344,6 +1344,24 @@ Reduction JSCreateLowering::ReduceJSCreateBlockContext(Node* node) {
   return NoChange();
 }
 
+namespace {
+base::Optional<MapRef> GetObjectCreateMap(JSHeapBroker* broker,
+                                          HeapObjectRef prototype) {
+  MapRef standard_map =
+      broker->native_context().object_function().initial_map();
+  if (prototype.equals(standard_map.prototype())) {
+    return standard_map;
+  }
+  if (prototype.oddball_type() == OddballType::kNull) {
+    return broker->native_context().slow_object_with_null_prototype_map();
+  }
+  if (prototype.IsJSObject()) {
+    return prototype.AsJSObject().GetObjectCreateMap();
+  }
+  return base::Optional<MapRef>();
+}
+}  // namespace
+
 Reduction JSCreateLowering::ReduceJSCreateObject(Node* node) {
   DCHECK_EQ(IrOpcode::kJSCreateObject, node->opcode());
   Node* effect = NodeProperties::GetEffectInput(node);
@@ -1353,7 +1371,8 @@ Reduction JSCreateLowering::ReduceJSCreateObject(Node* node) {
   if (!prototype_type.IsHeapConstant()) return NoChange();
 
   HeapObjectRef prototype_const = prototype_type.AsHeapConstant()->Ref();
-  auto maybe_instance_map = prototype_const.TryGetObjectCreateMap();
+  auto maybe_instance_map =
+      GetObjectCreateMap(js_heap_broker(), prototype_const);
   if (!maybe_instance_map) return NoChange();
   MapRef instance_map = maybe_instance_map.value();
 
@@ -1702,7 +1721,7 @@ Node* JSCreateLowering::AllocateFastLiteral(Node* effect, Node* control,
   builder.Store(AccessBuilder::ForMap(), boilerplate_map);
   builder.Store(AccessBuilder::ForJSObjectPropertiesOrHash(), properties);
   builder.Store(AccessBuilder::ForJSObjectElements(), elements);
-  if (boilerplate_map.IsJSArrayMap()) {
+  if (boilerplate.IsJSArray()) {
     JSArrayRef boilerplate_array = boilerplate.AsJSArray();
     builder.Store(
         AccessBuilder::ForJSArrayLength(boilerplate_array.GetElementsKind()),

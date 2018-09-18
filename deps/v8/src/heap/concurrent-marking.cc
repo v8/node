@@ -138,13 +138,13 @@ class ConcurrentMarkingVisitor final
     for (MaybeObject** slot = start; slot < end; slot++) {
       MaybeObject* object = base::AsAtomicPointer::Relaxed_Load(slot);
       HeapObject* heap_object;
-      if (object->ToStrongHeapObject(&heap_object)) {
+      if (object->GetHeapObjectIfStrong(&heap_object)) {
         // If the reference changes concurrently from strong to weak, the write
         // barrier will treat the weak reference as strong, so we won't miss the
         // weak reference.
         ProcessStrongHeapObject(host, reinterpret_cast<Object**>(slot),
                                 heap_object);
-      } else if (object->ToWeakHeapObject(&heap_object)) {
+      } else if (object->GetHeapObjectIfWeak(&heap_object)) {
         ProcessWeakHeapObject(
             host, reinterpret_cast<HeapObjectReference**>(slot), heap_object);
       }
@@ -189,17 +189,6 @@ class ConcurrentMarkingVisitor final
       bailout_.Push(object);
     }
     return 0;
-  }
-
-  int VisitJSFunction(Map* map, JSFunction* object) {
-    int size = JSFunction::BodyDescriptorWeak::SizeOf(map, object);
-    int used_size = map->UsedInstanceSize();
-    DCHECK_LE(used_size, size);
-    DCHECK_GE(used_size, JSObject::kHeaderSize);
-    const SlotSnapshot& snapshot = MakeSlotSnapshotWeak(map, object, used_size);
-    if (!ShouldVisit(object)) return 0;
-    VisitPointersInSnapshot(object, snapshot);
-    return size;
   }
 
   // ===========================================================================
@@ -275,9 +264,9 @@ class ConcurrentMarkingVisitor final
 
   int VisitBytecodeArray(Map* map, BytecodeArray* object) {
     if (!ShouldVisit(object)) return 0;
-    int size = BytecodeArray::BodyDescriptorWeak::SizeOf(map, object);
+    int size = BytecodeArray::BodyDescriptor::SizeOf(map, object);
     VisitMapPointer(object, object->map_slot());
-    BytecodeArray::BodyDescriptorWeak::IterateBody(map, object, size, this);
+    BytecodeArray::BodyDescriptor::IterateBody(map, object, size, this);
     object->MakeOlder();
     return size;
   }
@@ -466,14 +455,6 @@ class ConcurrentMarkingVisitor final
     return slot_snapshot_;
   }
 
-  template <typename T>
-  const SlotSnapshot& MakeSlotSnapshotWeak(Map* map, T* object, int size) {
-    SlotSnapshottingVisitor visitor(&slot_snapshot_);
-    visitor.VisitPointer(object,
-                         reinterpret_cast<Object**>(object->map_slot()));
-    T::BodyDescriptorWeak::IterateBody(map, object, size, &visitor);
-    return slot_snapshot_;
-  }
   ConcurrentMarking::MarkingWorklist::View shared_;
   ConcurrentMarking::MarkingWorklist::View bailout_;
   WeakObjects* weak_objects_;
@@ -524,7 +505,7 @@ class ConcurrentMarking::Task : public CancelableTask {
         task_state_(task_state),
         task_id_(task_id) {}
 
-  virtual ~Task() {}
+  ~Task() override = default;
 
  private:
   // v8::internal::CancelableTask overrides.

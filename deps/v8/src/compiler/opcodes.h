@@ -225,13 +225,17 @@
 // Opcodes for VirtuaMachine-level operators.
 #define SIMPLIFIED_CHANGE_OP_LIST(V) \
   V(ChangeTaggedSignedToInt32)       \
+  V(ChangeTaggedSignedToInt64)       \
   V(ChangeTaggedToInt32)             \
+  V(ChangeTaggedToInt64)             \
   V(ChangeTaggedToUint32)            \
   V(ChangeTaggedToFloat64)           \
   V(ChangeTaggedToTaggedSigned)      \
   V(ChangeInt31ToTaggedSigned)       \
   V(ChangeInt32ToTagged)             \
+  V(ChangeInt64ToTagged)             \
   V(ChangeUint32ToTagged)            \
+  V(ChangeUint64ToTagged)            \
   V(ChangeFloat64ToTagged)           \
   V(ChangeFloat64ToTaggedPointer)    \
   V(ChangeTaggedToBit)               \
@@ -250,8 +254,12 @@
   V(CheckedUint32Mod)                 \
   V(CheckedInt32Mul)                  \
   V(CheckedInt32ToTaggedSigned)       \
+  V(CheckedInt64ToInt32)              \
+  V(CheckedInt64ToTaggedSigned)       \
   V(CheckedUint32ToInt32)             \
   V(CheckedUint32ToTaggedSigned)      \
+  V(CheckedUint64ToInt32)             \
+  V(CheckedUint64ToTaggedSigned)      \
   V(CheckedFloat64ToInt32)            \
   V(CheckedTaggedSignedToInt32)       \
   V(CheckedTaggedToInt32)             \
@@ -349,6 +357,7 @@
   V(PlainPrimitiveToWord32)             \
   V(PlainPrimitiveToFloat64)            \
   V(BooleanNot)                         \
+  V(StringConcat)                       \
   V(StringToNumber)                     \
   V(StringCharCodeAt)                   \
   V(StringCodePointAt)                  \
@@ -373,7 +382,6 @@
   V(CheckNotTaggedHole)                 \
   V(CheckEqualsInternalizedString)      \
   V(CheckEqualsSymbol)                  \
-  V(CheckStringAdd)                     \
   V(CompareMaps)                        \
   V(ConvertReceiver)                    \
   V(ConvertTaggedHoleToUndefined)       \
@@ -422,7 +430,6 @@
   V(NewSmiOrObjectElements)             \
   V(NewArgumentsElements)               \
   V(NewConsString)                      \
-  V(ArrayBufferWasNeutered)             \
   V(EnsureWritableFastElements)         \
   V(MaybeGrowFastElements)              \
   V(TransitionElementsKind)             \
@@ -605,6 +612,7 @@
   V(TruncateFloat64ToWord32)         \
   V(ChangeFloat32ToFloat64)          \
   V(ChangeFloat64ToInt32)            \
+  V(ChangeFloat64ToInt64)            \
   V(ChangeFloat64ToUint32)           \
   V(ChangeFloat64ToUint64)           \
   V(Float64SilenceNaN)               \
@@ -617,6 +625,7 @@
   V(TryTruncateFloat64ToUint64)      \
   V(ChangeInt32ToFloat64)            \
   V(ChangeInt32ToInt64)              \
+  V(ChangeInt64ToFloat64)            \
   V(ChangeUint32ToFloat64)           \
   V(ChangeUint32ToUint64)            \
   V(TruncateFloat64ToFloat32)        \

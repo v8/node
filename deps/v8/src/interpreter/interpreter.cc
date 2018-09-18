@@ -61,6 +61,9 @@ Interpreter::Interpreter(Isolate* isolate) : isolate_(isolate) {
 
 Code* Interpreter::GetAndMaybeDeserializeBytecodeHandler(
     Bytecode bytecode, OperandScale operand_scale) {
+#ifdef V8_EMBEDDED_BYTECODE_HANDLERS
+  return GetBytecodeHandler(bytecode, operand_scale);
+#else
   Code* code = GetBytecodeHandler(bytecode, operand_scale);
 
   // Already deserialized? Then just return the handler.
@@ -77,15 +80,24 @@ Code* Interpreter::GetAndMaybeDeserializeBytecodeHandler(
   SetBytecodeHandler(bytecode, operand_scale, code);
 
   return code;
+#endif  // V8_EMBEDDED_BYTECODE_HANDLERS
 }
 
 Code* Interpreter::GetBytecodeHandler(Bytecode bytecode,
                                       OperandScale operand_scale) {
+#ifdef V8_EMBEDDED_BYTECODE_HANDLERS
+  size_t index = GetDispatchTableIndex(bytecode, operand_scale);
+  Address pc = dispatch_table_[index];
+  Code* builtin = InstructionStream::TryLookupCode(isolate_, pc);
+  DCHECK(builtin->IsCode());
+  return builtin;
+#else
   DCHECK(IsDispatchTableInitialized());
   DCHECK(Bytecodes::BytecodeHasHandler(bytecode, operand_scale));
   size_t index = GetDispatchTableIndex(bytecode, operand_scale);
   Address code_entry = dispatch_table_[index];
   return Code::GetCodeFromTargetAddress(code_entry);
+#endif
 }
 
 void Interpreter::SetBytecodeHandler(Bytecode bytecode,
@@ -93,7 +105,7 @@ void Interpreter::SetBytecodeHandler(Bytecode bytecode,
                                      Code* handler) {
   DCHECK(handler->kind() == Code::BYTECODE_HANDLER);
   size_t index = GetDispatchTableIndex(bytecode, operand_scale);
-  dispatch_table_[index] = handler->entry();
+  dispatch_table_[index] = handler->InstructionStart();
 }
 
 // static
@@ -101,17 +113,11 @@ size_t Interpreter::GetDispatchTableIndex(Bytecode bytecode,
                                           OperandScale operand_scale) {
   static const size_t kEntriesPerOperandScale = 1u << kBitsPerByte;
   size_t index = static_cast<size_t>(bytecode);
-  switch (operand_scale) {
-    case OperandScale::kSingle:
-      return index;
-    case OperandScale::kDouble:
-      return index + kEntriesPerOperandScale;
-    case OperandScale::kQuadruple:
-      return index + 2 * kEntriesPerOperandScale;
-  }
-  UNREACHABLE();
+  return index + BytecodeOperands::OperandScaleAsIndex(operand_scale) *
+                     kEntriesPerOperandScale;
 }
 
+#ifndef V8_EMBEDDED_BYTECODE_HANDLERS
 void Interpreter::IterateDispatchTable(RootVisitor* v) {
   for (int i = 0; i < kDispatchTableSize; i++) {
     Address code_entry = dispatch_table_[i];
@@ -125,6 +131,7 @@ void Interpreter::IterateDispatchTable(RootVisitor* v) {
     }
   }
 }
+#endif  // V8_EMBEDDED_BYTECODE_HANDLERS
 
 int Interpreter::InterruptBudget() {
   return FLAG_interrupt_budget;
@@ -227,6 +234,43 @@ UnoptimizedCompilationJob* Interpreter::NewCompilationJob(
     ZoneVector<FunctionLiteral*>* eager_inner_literals) {
   return new InterpreterCompilationJob(parse_info, literal, allocator,
                                        eager_inner_literals);
+}
+
+void Interpreter::ForEachBytecode(
+    const std::function<void(Bytecode, OperandScale)>& f) {
+  constexpr OperandScale kOperandScales[] = {
+#define VALUE(Name, _) OperandScale::k##Name,
+      OPERAND_SCALE_LIST(VALUE)
+#undef VALUE
+  };
+
+  for (OperandScale operand_scale : kOperandScales) {
+    for (int i = 0; i < Bytecodes::kBytecodeCount; i++) {
+      f(Bytecodes::FromByte(i), operand_scale);
+    }
+  }
+}
+
+void Interpreter::InitializeDispatchTable() {
+#ifdef V8_EMBEDDED_BYTECODE_HANDLERS
+  Builtins* builtins = isolate_->builtins();
+  Code* illegal = builtins->builtin(Builtins::kIllegalHandler);
+  int builtin_id = Builtins::kFirstBytecodeHandler;
+  ForEachBytecode([&](Bytecode bytecode, OperandScale operand_scale) {
+    Code* handler = illegal;
+    if (Bytecodes::BytecodeHasHandler(bytecode, operand_scale)) {
+#ifdef DEBUG
+      std::string builtin_name(Builtins::name(builtin_id));
+      std::string expected_name =
+          Bytecodes::ToString(bytecode, operand_scale, "") + "Handler";
+      DCHECK_EQ(expected_name, builtin_name);
+#endif
+      handler = builtins->builtin(builtin_id++);
+    }
+    SetBytecodeHandler(bytecode, operand_scale, handler);
+  });
+  DCHECK(builtin_id == Builtins::builtin_count);
+#endif  // V8_EMBEDDED_BYTECODE_HANDLERS
 }
 
 bool Interpreter::IsDispatchTableInitialized() const {

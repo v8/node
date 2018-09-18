@@ -939,8 +939,9 @@ void InstructionSelector::VisitWord64ReverseBits(Node* node) { UNREACHABLE(); }
 
 void InstructionSelector::VisitWord64ReverseBytes(Node* node) {
   PPCOperandGenerator g(this);
+  InstructionOperand temp[] = {g.TempRegister()};
   Emit(kPPC_ByteRev64, g.DefineAsRegister(node),
-       g.UseRegister(node->InputAt(0)), g.TempRegister());
+       g.UseRegister(node->InputAt(0)), 1, temp);
 }
 
 void InstructionSelector::VisitWord32ReverseBytes(Node* node) {
@@ -1187,6 +1188,10 @@ void InstructionSelector::VisitChangeUint32ToUint64(Node* node) {
 void InstructionSelector::VisitChangeFloat64ToUint64(Node* node) {
   VisitRR(this, kPPC_DoubleToUint64, node);
 }
+
+void InstructionSelector::VisitChangeFloat64ToInt64(Node* node) {
+  VisitRR(this, kPPC_DoubleToInt64, node);
+}
 #endif
 
 
@@ -1229,6 +1234,9 @@ void InstructionSelector::VisitRoundInt64ToFloat64(Node* node) {
   VisitRR(this, kPPC_Int64ToDouble, node);
 }
 
+void InstructionSelector::VisitChangeInt64ToFloat64(Node* node) {
+  VisitRR(this, kPPC_Int64ToDouble, node);
+}
 
 void InstructionSelector::VisitRoundUint64ToFloat32(Node* node) {
   VisitRR(this, kPPC_Uint64ToFloat32, node);

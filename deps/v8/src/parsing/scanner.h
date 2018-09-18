@@ -38,7 +38,7 @@ class Utf16CharacterStream {
  public:
   static const uc32 kEndOfInput = -1;
 
-  virtual ~Utf16CharacterStream() {}
+  virtual ~Utf16CharacterStream() = default;
 
   inline uc32 Peek() {
     if (V8_LIKELY(buffer_cursor_ < buffer_end_)) {
@@ -194,12 +194,12 @@ class Scanner {
         : scanner_(scanner), bookmark_(kNoBookmark) {
       DCHECK_NOT_NULL(scanner_);
     }
-    ~BookmarkScope() {}
+    ~BookmarkScope() = default;
 
     void Set();
     void Apply();
-    bool HasBeenSet();
-    bool HasBeenApplied();
+    bool HasBeenSet() const;
+    bool HasBeenApplied() const;
 
    private:
     static const size_t kNoBookmark;
@@ -241,10 +241,12 @@ class Scanner {
   // Returns the token following peek()
   Token::Value PeekAhead();
   // Returns the current token again.
-  Token::Value current_token() { return current().token; }
+  Token::Value current_token() const { return current().token; }
 
-  Token::Value current_contextual_token() { return current().contextual_token; }
-  Token::Value next_contextual_token() { return next().contextual_token; }
+  Token::Value current_contextual_token() const {
+    return current().contextual_token;
+  }
+  Token::Value next_contextual_token() const { return next().contextual_token; }
 
   // Returns the location information for the current token
   // (the token last returned by Next()).
@@ -295,7 +297,7 @@ class Scanner {
 
   inline bool CurrentMatchesContextual(Token::Value token) const {
     DCHECK(Token::IsContextualKeyword(token));
-    return current().contextual_token == token;
+    return current_contextual_token() == token;
   }
 
   // Match the token against the contextual keyword or literal buffer.
@@ -306,7 +308,7 @@ class Scanner {
     // (which was escape-processed already).
     // Conveniently, !current().literal_chars.is_used() for all proper
     // keywords, so this second condition should exit early in common cases.
-    return (current().contextual_token == token) ||
+    return (current_contextual_token() == token) ||
            (current().literal_chars.is_used() &&
             current().literal_chars.Equals(Vector<const char>(
                 Token::String(token), Token::StringLength(token))));
@@ -317,11 +319,11 @@ class Scanner {
            current().literal_chars.Equals(
                Vector<const char>("use strict", strlen("use strict")));
   }
-  bool IsGetOrSet(bool* is_get, bool* is_set) const {
-    *is_get = CurrentMatchesContextual(Token::GET);
-    *is_set = CurrentMatchesContextual(Token::SET);
-    return *is_get || *is_set;
-  }
+
+  bool IsGet() { return CurrentMatchesContextual(Token::GET); }
+
+  bool IsSet() { return CurrentMatchesContextual(Token::SET); }
+
   bool IsLet() const {
     return CurrentMatches(Token::LET) ||
            CurrentMatchesContextualEscaped(Token::LET);
@@ -333,7 +335,7 @@ class Scanner {
   bool IsDuplicateSymbol(DuplicateFinder* duplicate_finder,
                          AstValueFactory* ast_value_factory) const;
 
-  UnicodeCache* unicode_cache() { return unicode_cache_; }
+  UnicodeCache* unicode_cache() const { return unicode_cache_; }
 
   // Returns the location of the last seen octal literal.
   Location octal_position() const { return octal_pos_; }
@@ -409,7 +411,7 @@ class Scanner {
   class LiteralBuffer {
    public:
     LiteralBuffer()
-        : position_(0), is_one_byte_(true), is_used_(false), backing_store_() {}
+        : backing_store_(), position_(0), is_one_byte_(true), is_used_(false) {}
 
     ~LiteralBuffer() { backing_store_.Dispose(); }
 
@@ -499,10 +501,10 @@ class Scanner {
     void ExpandBuffer();
     void ConvertToTwoByte();
 
+    Vector<byte> backing_store_;
     int position_;
     bool is_one_byte_;
     bool is_used_;
-    Vector<byte> backing_store_;
 
     DISALLOW_COPY_AND_ASSIGN(LiteralBuffer);
   };
@@ -549,7 +551,7 @@ class Scanner {
   };
 
   static const int kCharacterLookaheadBufferSize = 1;
-  const int kMaxAscii = 127;
+  static const int kMaxAscii = 127;
 
   // Scans octal escape sequence. Also accepts "\0" decimal escape sequence.
   template <bool capture_raw>
@@ -781,13 +783,7 @@ class Scanner {
   void SanityCheckTokenDesc(const TokenDesc&) const;
 #endif
 
-  UnicodeCache* unicode_cache_;
-
-  // Values parsed from magic comments.
-  LiteralBuffer source_url_;
-  LiteralBuffer source_mapping_url_;
-
-  TokenDesc token_storage_[3];
+  UnicodeCache* const unicode_cache_;
 
   TokenDesc& next() { return *next_; }
 
@@ -802,12 +798,10 @@ class Scanner {
   // Input stream. Must be initialized to an Utf16CharacterStream.
   Utf16CharacterStream* const source_;
 
-  // Last-seen positions of potentially problematic tokens.
-  Location octal_pos_;
-  MessageTemplate::Template octal_message_;
-
   // One Unicode character look-ahead; c0_ < 0 at the end of the input.
   uc32 c0_;
+
+  TokenDesc token_storage_[3];
 
   // Whether this scanner encountered an HTML comment.
   bool found_html_comment_;
@@ -818,6 +812,14 @@ class Scanner {
   bool allow_harmony_numeric_separator_;
 
   const bool is_module_;
+
+  // Values parsed from magic comments.
+  LiteralBuffer source_url_;
+  LiteralBuffer source_mapping_url_;
+
+  // Last-seen positions of potentially problematic tokens.
+  Location octal_pos_;
+  MessageTemplate::Template octal_message_;
 
   MessageTemplate::Template scanner_error_;
   Location scanner_error_location_;

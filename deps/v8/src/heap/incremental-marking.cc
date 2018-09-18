@@ -458,13 +458,6 @@ void IncrementalMarking::FinishBlackAllocation() {
   }
 }
 
-void IncrementalMarking::AbortBlackAllocation() {
-  if (FLAG_trace_incremental_marking) {
-    heap()->isolate()->PrintWithTimestamp(
-        "[IncrementalMarking] Black allocation aborted\n");
-  }
-}
-
 void IncrementalMarking::MarkRoots() {
   DCHECK(!finalize_marking_completed_);
   DCHECK(IsMarking());
@@ -494,7 +487,6 @@ void IncrementalMarking::RetainMaps() {
   // - memory pressure (reduce_memory_footprint_),
   // - GC is requested by tests or dev-tools (abort_incremental_marking_).
   bool map_retaining_is_disabled = heap()->ShouldReduceMemory() ||
-                                   heap()->ShouldAbortIncrementalMarking() ||
                                    FLAG_retain_maps_for_n_gc == 0;
   WeakArrayList* retained_maps = heap()->retained_maps();
   int length = retained_maps->length();
@@ -505,10 +497,10 @@ void IncrementalMarking::RetainMaps() {
   for (int i = 0; i < length; i += 2) {
     MaybeObject* value = retained_maps->Get(i);
     HeapObject* map_heap_object;
-    if (!value->ToWeakHeapObject(&map_heap_object)) {
+    if (!value->GetHeapObjectIfWeak(&map_heap_object)) {
       continue;
     }
-    int age = Smi::ToInt(retained_maps->Get(i + 1)->ToSmi());
+    int age = Smi::ToInt(retained_maps->Get(i + 1)->cast<Smi>());
     int new_age;
     Map* map = Map::cast(map_heap_object);
     if (i >= number_of_disposed_maps && !map_retaining_is_disabled &&

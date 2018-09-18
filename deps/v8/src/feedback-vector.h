@@ -147,11 +147,6 @@ class FeedbackMetadata;
 // metadata.
 class FeedbackVector : public HeapObject, public NeverReadOnlySpaceObject {
  public:
-  // Use the mixin methods over the HeapObject methods.
-  // TODO(v8:7786) Remove once the HeapObject methods are gone.
-  using NeverReadOnlySpaceObject::GetHeap;
-  using NeverReadOnlySpaceObject::GetIsolate;
-
   // Casting.
   static inline FeedbackVector* cast(Object* obj);
 
@@ -298,8 +293,6 @@ class FeedbackVector : public HeapObject, public NeverReadOnlySpaceObject {
   static const int kFeedbackSlotsOffset = kHeaderSize;
 
   class BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
   // Garbage collection support.
   static constexpr int SizeFor(int length) {
@@ -497,8 +490,6 @@ class FeedbackMetadata : public HeapObject {
   static const int kHeaderSize = kSlotCountOffset + kInt32Size;
 
   class BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
  private:
   friend class AccessorAssembler;

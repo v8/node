@@ -169,7 +169,8 @@ namespace compiler {
                                   kNumber | kNullOrUndefined | kBoolean) \
   V(PlainPrimitive,               kNumber | kString | kBoolean | \
                                   kNullOrUndefined) \
-  V(Primitive,                    kSymbol | kBigInt | kPlainPrimitive) \
+  V(NonBigIntPrimitive,           kSymbol | kPlainPrimitive) \
+  V(Primitive,                    kBigInt | kNonBigIntPrimitive) \
   V(OtherUndetectableOrUndefined, kOtherUndetectable | kUndefined) \
   V(Proxy,                        kCallableProxy | kOtherProxy) \
   V(ArrayOrOtherObject,           kArray | kOtherObject) \
@@ -193,7 +194,8 @@ namespace compiler {
                                   kUndefined | kReceiver) \
   V(Internal,                     kHole | kExternalPointer | kOtherInternal) \
   V(NonInternal,                  kPrimitive | kReceiver) \
-  V(NonNumber,                    kUnique | kString | kInternal) \
+  V(NonBigInt,                    kNonBigIntPrimitive | kReceiver) \
+  V(NonNumber,                    kBigInt | kUnique | kString | kInternal) \
   V(Any,                          0xfffffffeu)
 
 // clang-format on

@@ -2213,9 +2213,16 @@ Handle<Context> Isolate::GetIncumbentContext() {
 
   // 1st candidate: most-recently-entered author function's context
   // if it's newer than the last Context::BackupIncumbentScope entry.
-  if (!it.done() &&
-      static_cast<const void*>(it.frame()) >
-          static_cast<const void*>(top_backup_incumbent_scope())) {
+  //
+  // NOTE: This code assumes that the stack grows downward.
+  // This code doesn't work with ASAN because ASAN seems allocating stack
+  // separated for native C++ code and compiled JS code, and the following
+  // comparison doesn't make sense in ASAN.
+  // TODO(yukishiino): Make the implementation of BackupIncumbentScope more
+  // robust.
+  if (!it.done() && (!top_backup_incumbent_scope() ||
+                     it.frame()->sp() < reinterpret_cast<Address>(
+                                            top_backup_incumbent_scope()))) {
     Context* context = Context::cast(it.frame()->context());
     return Handle<Context>(context->native_context(), this);
   }
@@ -2529,7 +2536,7 @@ Isolate::Isolate()
 
   tracing_cpu_profiler_.reset(new TracingCpuProfilerImpl(this));
 
-  init_memcopy_functions(this);
+  init_memcopy_functions();
 
   if (FLAG_embedded_builtins) {
 #ifdef V8_MULTI_SNAPSHOTS
@@ -3026,6 +3033,7 @@ bool Isolate::Init(StartupDeserializer* des) {
     if (!create_heap_objects) des->DeserializeInto(this);
     load_stub_cache_->Initialize();
     store_stub_cache_->Initialize();
+    interpreter_->InitializeDispatchTable();
     setup_delegate_->SetupInterpreter(interpreter_);
 
     heap_.NotifyDeserializationComplete();
@@ -3814,6 +3822,29 @@ void Isolate::SetHostInitializeImportMetaObjectCallback(
   host_initialize_import_meta_object_callback_ = callback;
 }
 
+MaybeHandle<Object> Isolate::RunPrepareStackTraceCallback(
+    Handle<Context> context, Handle<JSObject> error) {
+  v8::Local<v8::Context> api_context = Utils::ToLocal(context);
+
+  v8::Local<StackTrace> trace =
+      Utils::StackTraceToLocal(GetDetailedStackTrace(error));
+
+  v8::Local<v8::Value> stack;
+  ASSIGN_RETURN_ON_SCHEDULED_EXCEPTION_VALUE(
+      this, stack,
+      prepare_stack_trace_callback_(api_context, Utils::ToLocal(error), trace),
+      MaybeHandle<Object>());
+  return Utils::OpenHandle(*stack);
+}
+
+void Isolate::SetPrepareStackTraceCallback(PrepareStackTraceCallback callback) {
+  prepare_stack_trace_callback_ = callback;
+}
+
+bool Isolate::HasPrepareStackTraceCallback() const {
+  return prepare_stack_trace_callback_ != nullptr;
+}
+
 void Isolate::SetAtomicsWaitCallback(v8::Isolate::AtomicsWaitCallback callback,
                                      void* data) {
   atomics_wait_callback_ = callback;
@@ -4022,10 +4053,10 @@ void Isolate::CheckDetachedContextsAfterGC() {
   if (length == 0) return;
   int new_length = 0;
   for (int i = 0; i < length; i += 2) {
-    int mark_sweeps = Smi::ToInt(detached_contexts->Get(i)->ToSmi());
+    int mark_sweeps = Smi::ToInt(detached_contexts->Get(i)->cast<Smi>());
     MaybeObject* context = detached_contexts->Get(i + 1);
-    DCHECK(context->IsWeakHeapObject() || context->IsClearedWeakHeapObject());
-    if (!context->IsClearedWeakHeapObject()) {
+    DCHECK(context->IsWeakOrCleared());
+    if (!context->IsCleared()) {
       detached_contexts->Set(
           new_length, MaybeObject::FromSmi(Smi::FromInt(mark_sweeps + 1)));
       detached_contexts->Set(new_length + 1, context);
@@ -4042,9 +4073,9 @@ void Isolate::CheckDetachedContextsAfterGC() {
     PrintF("%d detached contexts are collected out of %d\n",
            length - new_length, length);
     for (int i = 0; i < new_length; i += 2) {
-      int mark_sweeps = Smi::ToInt(detached_contexts->Get(i)->ToSmi());
+      int mark_sweeps = Smi::ToInt(detached_contexts->Get(i)->cast<Smi>());
       MaybeObject* context = detached_contexts->Get(i + 1);
-      DCHECK(context->IsWeakHeapObject() || context->IsClearedWeakHeapObject());
+      DCHECK(context->IsWeakOrCleared());
       if (mark_sweeps > 3) {
         PrintF("detached context %p\n survived %d GCs (leak?)\n",
                static_cast<void*>(context), mark_sweeps);

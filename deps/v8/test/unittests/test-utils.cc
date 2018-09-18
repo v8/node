@@ -24,32 +24,30 @@ Isolate* TestWithIsolate::isolate_ = nullptr;
 TestWithIsolate::TestWithIsolate()
     : isolate_scope_(isolate()), handle_scope_(isolate()) {}
 
-
-TestWithIsolate::~TestWithIsolate() {}
-
+TestWithIsolate::~TestWithIsolate() = default;
 
 // static
 void TestWithIsolate::SetUpTestCase() {
   Test::SetUpTestCase();
-  EXPECT_EQ(NULL, isolate_);
+  EXPECT_EQ(nullptr, isolate_);
   // Make BigInt64Array / BigUint64Array available for testing.
   i::FLAG_harmony_bigint = true;
   v8::Isolate::CreateParams create_params;
   array_buffer_allocator_ = v8::ArrayBuffer::Allocator::NewDefaultAllocator();
   create_params.array_buffer_allocator = array_buffer_allocator_;
   isolate_ = v8::Isolate::New(create_params);
-  EXPECT_TRUE(isolate_ != NULL);
+  EXPECT_TRUE(isolate_ != nullptr);
 }
 
 
 // static
 void TestWithIsolate::TearDownTestCase() {
-  ASSERT_TRUE(isolate_ != NULL);
+  ASSERT_TRUE(isolate_ != nullptr);
   v8::Platform* platform = internal::V8::GetCurrentPlatform();
-  ASSERT_TRUE(platform != NULL);
+  ASSERT_TRUE(platform != nullptr);
   while (platform::PumpMessageLoop(platform, isolate_)) continue;
   isolate_->Dispose();
-  isolate_ = NULL;
+  isolate_ = nullptr;
   delete array_buffer_allocator_;
   Test::TearDownTestCase();
 }
@@ -67,7 +65,7 @@ Local<Value> TestWithIsolate::RunJS(const char* source) {
 TestWithContext::TestWithContext()
     : context_(Context::New(isolate())), context_scope_(context_) {}
 
-TestWithContext::~TestWithContext() {}
+TestWithContext::~TestWithContext() = default;
 
 v8::Local<v8::String> TestWithContext::NewString(const char* string) {
   return v8::String::NewFromUtf8(v8_isolate(), string,
@@ -85,9 +83,9 @@ void TestWithContext::SetGlobalProperty(const char* name,
 
 namespace internal {
 
-TestWithIsolate::~TestWithIsolate() {}
+TestWithIsolate::~TestWithIsolate() = default;
 
-TestWithIsolateAndZone::~TestWithIsolateAndZone() {}
+TestWithIsolateAndZone::~TestWithIsolateAndZone() = default;
 
 Factory* TestWithIsolate::factory() const { return isolate()->factory(); }
 
@@ -99,9 +97,9 @@ base::RandomNumberGenerator* TestWithIsolate::random_number_generator() const {
   return isolate()->random_number_generator();
 }
 
-TestWithZone::~TestWithZone() {}
+TestWithZone::~TestWithZone() = default;
 
-TestWithNativeContext::~TestWithNativeContext() {}
+TestWithNativeContext::~TestWithNativeContext() = default;
 
 Handle<Context> TestWithNativeContext::native_context() const {
   return isolate()->native_context();

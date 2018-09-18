@@ -183,6 +183,14 @@ T* MakeNode(Args... args) {
       new T(CurrentSourcePosition::Get(), std::move(args)...)));
 }
 
+void LintGenericParameters(const GenericParameters& parameters) {
+  for (const std::string& parameter : parameters) {
+    if (!IsUpperCamelCase(parameter)) {
+      NamingConventionError("Generic parameter", parameter, "UpperCamelCase");
+    }
+  }
+}
+
 base::Optional<ParseResult> MakeCall(ParseResultIterator* child_results) {
   auto callee = child_results->NextAs<std::string>();
   auto generic_args = child_results->NextAs<TypeList>();
@@ -233,6 +241,10 @@ base::Optional<ParseResult> MakeParameterListFromNameAndTypeList(
   }
   ParameterList result;
   for (NameAndTypeExpression& pair : params) {
+    if (!IsLowerCamelCase(pair.name)) {
+      NamingConventionError("Parameter", pair.name, "lowerCamelCase");
+    }
+
     result.names.push_back(std::move(pair.name));
     result.types.push_back(pair.type);
   }
@@ -269,6 +281,8 @@ base::Optional<ParseResult> MakeExternalMacro(
   auto operator_name = child_results->NextAs<base::Optional<std::string>>();
   auto name = child_results->NextAs<std::string>();
   auto generic_parameters = child_results->NextAs<GenericParameters>();
+  LintGenericParameters(generic_parameters);
+
   auto args = child_results->NextAs<ParameterList>();
   auto return_type = child_results->NextAs<TypeExpression*>();
   auto labels = child_results->NextAs<LabelAndTypesVector>();
@@ -287,7 +301,13 @@ base::Optional<ParseResult> MakeTorqueMacroDeclaration(
     ParseResultIterator* child_results) {
   auto operator_name = child_results->NextAs<base::Optional<std::string>>();
   auto name = child_results->NextAs<std::string>();
+  if (!IsUpperCamelCase(name)) {
+    NamingConventionError("Macro", name, "UpperCamelCase");
+  }
+
   auto generic_parameters = child_results->NextAs<GenericParameters>();
+  LintGenericParameters(generic_parameters);
+
   auto args = child_results->NextAs<ParameterList>();
   auto return_type = child_results->NextAs<TypeExpression*>();
   auto labels = child_results->NextAs<LabelAndTypesVector>();
@@ -308,7 +328,13 @@ base::Optional<ParseResult> MakeTorqueBuiltinDeclaration(
     ParseResultIterator* child_results) {
   auto javascript_linkage = child_results->NextAs<bool>();
   auto name = child_results->NextAs<std::string>();
+  if (!IsUpperCamelCase(name)) {
+    NamingConventionError("Builtin", name, "UpperCamelCase");
+  }
+
   auto generic_parameters = child_results->NextAs<GenericParameters>();
+  LintGenericParameters(generic_parameters);
+
   auto args = child_results->NextAs<ParameterList>();
   auto return_type = child_results->NextAs<TypeExpression*>();
   auto body = child_results->NextAs<base::Optional<Statement*>>();
@@ -327,6 +353,10 @@ base::Optional<ParseResult> MakeTorqueBuiltinDeclaration(
 base::Optional<ParseResult> MakeConstDeclaration(
     ParseResultIterator* child_results) {
   auto name = child_results->NextAs<std::string>();
+  if (!IsValidModuleConstName(name)) {
+    NamingConventionError("Constant", name, "kUpperCamelCase");
+  }
+
   auto type = child_results->NextAs<TypeExpression*>();
   auto expression = child_results->NextAs<Expression*>();
   Declaration* result =
@@ -355,6 +385,9 @@ base::Optional<ParseResult> MakeTypeAliasDeclaration(
 base::Optional<ParseResult> MakeTypeDeclaration(
     ParseResultIterator* child_results) {
   auto name = child_results->NextAs<std::string>();
+  if (!IsValidTypeName(name)) {
+    NamingConventionError("Type", name, "UpperCamelCase");
+  }
   auto extends = child_results->NextAs<base::Optional<std::string>>();
   auto generates = child_results->NextAs<base::Optional<std::string>>();
   auto constexpr_generates =
@@ -368,6 +401,9 @@ base::Optional<ParseResult> MakeTypeDeclaration(
 base::Optional<ParseResult> MakeExplicitModuleDeclaration(
     ParseResultIterator* child_results) {
   auto name = child_results->NextAs<std::string>();
+  if (!IsSnakeCase(name)) {
+    NamingConventionError("Module", name, "snake_case");
+  }
   auto declarations = child_results->NextAs<std::vector<Declaration*>>();
   Declaration* result = MakeNode<ExplicitModuleDeclaration>(
       std::move(name), std::move(declarations));
@@ -403,6 +439,8 @@ base::Optional<ParseResult> MakeExternalBuiltin(
   auto js_linkage = child_results->NextAs<bool>();
   auto name = child_results->NextAs<std::string>();
   auto generic_parameters = child_results->NextAs<GenericParameters>();
+  LintGenericParameters(generic_parameters);
+
   auto args = child_results->NextAs<ParameterList>();
   auto return_type = child_results->NextAs<TypeExpression*>();
   BuiltinDeclaration* builtin =
@@ -536,7 +574,7 @@ base::Optional<ParseResult> MakeTypeswitchStatement(
     BlockStatement* case_block;
     if (i < cases.size() - 1) {
       value = MakeNode<CallExpression>(
-          "cast", false, std::vector<TypeExpression*>{cases[i].type},
+          "Cast", false, std::vector<TypeExpression*>{cases[i].type},
           std::vector<Expression*>{value},
           std::vector<std::string>{"_NextCase"});
       case_block = MakeNode<BlockStatement>();
@@ -599,6 +637,10 @@ base::Optional<ParseResult> MakeVarDeclarationStatement(
   bool const_qualified = kind == "const";
   if (!const_qualified) DCHECK_EQ("let", kind);
   auto name = child_results->NextAs<std::string>();
+  if (!IsLowerCamelCase(name)) {
+    NamingConventionError("Variable", name, "lowerCamelCase");
+  }
+
   auto type = child_results->NextAs<TypeExpression*>();
   base::Optional<Expression*> initializer;
   if (child_results->HasNext())
@@ -987,7 +1029,7 @@ struct TorqueGrammar : Grammar {
            MakeParameterListFromNameAndTypeList<true>)};
 
   // Result: std::string
-  Symbol* OneOf(std::vector<std::string> alternatives) {
+  Symbol* OneOf(const std::vector<std::string>& alternatives) {
     Symbol* result = NewSymbol();
     for (const std::string& s : alternatives) {
       result->AddRule(Rule({Token(s)}, YieldMatchedInput));

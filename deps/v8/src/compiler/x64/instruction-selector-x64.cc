@@ -1273,6 +1273,7 @@ void VisitFloatUnop(InstructionSelector* selector, Node* node, Node* input,
   V(Float64Sqrt, kSSEFloat64Sqrt)                                        \
   V(Float32Sqrt, kSSEFloat32Sqrt)                                        \
   V(ChangeFloat64ToInt32, kSSEFloat64ToInt32)                            \
+  V(ChangeFloat64ToInt64, kSSEFloat64ToInt64)                            \
   V(ChangeFloat64ToUint32, kSSEFloat64ToUint32 | MiscField::encode(1))   \
   V(TruncateFloat64ToUint32, kSSEFloat64ToUint32 | MiscField::encode(0)) \
   V(ChangeFloat64ToUint64, kSSEFloat64ToUint64)                          \
@@ -1281,6 +1282,7 @@ void VisitFloatUnop(InstructionSelector* selector, Node* node, Node* input,
   V(TruncateFloat32ToInt32, kSSEFloat32ToInt32)                          \
   V(TruncateFloat32ToUint32, kSSEFloat32ToUint32)                        \
   V(ChangeInt32ToFloat64, kSSEInt32ToFloat64)                            \
+  V(ChangeInt64ToFloat64, kSSEInt64ToFloat64)                            \
   V(ChangeUint32ToFloat64, kSSEUint32ToFloat64)                          \
   V(RoundFloat64ToInt32, kSSEFloat64ToInt32)                             \
   V(RoundInt32ToFloat32, kSSEInt32ToFloat32)                             \
@@ -1664,6 +1666,17 @@ void VisitWordCompare(InstructionSelector* selector, Node* node,
   X64OperandGenerator g(selector);
   Node* left = node->InputAt(0);
   Node* right = node->InputAt(1);
+
+  // The 32-bit comparisons automatically truncate Word64
+  // values to Word32 range, no need to do that explicitly.
+  if (opcode == kX64Cmp32 || opcode == kX64Test32) {
+    while (left->opcode() == IrOpcode::kTruncateInt64ToInt32) {
+      left = left->InputAt(0);
+    }
+    while (right->opcode() == IrOpcode::kTruncateInt64ToInt32) {
+      right = right->InputAt(0);
+    }
+  }
 
   opcode = TryNarrowOpcodeSize(opcode, left, right, cont);
 

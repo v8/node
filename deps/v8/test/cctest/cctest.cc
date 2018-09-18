@@ -135,6 +135,11 @@ void CcTest::CollectAllAvailableGarbage() {
   heap()->CollectAllAvailableGarbage(i::GarbageCollectionReason::kTesting);
 }
 
+void CcTest::PreciseCollectAllGarbage() {
+  heap()->PreciseCollectAllGarbage(i::Heap::kNoGCFlags,
+                                   i::GarbageCollectionReason::kTesting);
+}
+
 v8::base::RandomNumberGenerator* CcTest::random_number_generator() {
   return InitIsolateOnce()->random_number_generator();
 }
@@ -210,12 +215,12 @@ InitializedHandleScope::InitializedHandleScope()
       initialized_handle_scope_impl_(
           new InitializedHandleScopeImpl(main_isolate_)) {}
 
-InitializedHandleScope::~InitializedHandleScope() {}
+InitializedHandleScope::~InitializedHandleScope() = default;
 
 HandleAndZoneScope::HandleAndZoneScope()
     : main_zone_(new i::Zone(&allocator_, ZONE_NAME)) {}
 
-HandleAndZoneScope::~HandleAndZoneScope() {}
+HandleAndZoneScope::~HandleAndZoneScope() = default;
 
 static void PrintTestList(CcTest* current) {
   if (current == nullptr) return;

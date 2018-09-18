@@ -856,8 +856,10 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   // Bit operations.
   void bswapl(Register dst);
   void bswapq(Register dst);
-  void bt(Operand dst, Register src);
-  void bts(Operand dst, Register src);
+  void btq(Operand dst, Register src);
+  void btsq(Operand dst, Register src);
+  void btsq(Register dst, Immediate imm8);
+  void btrq(Register dst, Immediate imm8);
   void bsrq(Register dst, Register src);
   void bsrq(Register dst, Operand src);
   void bsrl(Register dst, Register src);
@@ -2433,7 +2435,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
 // instructions and relocation information.  The constructor makes
 // sure that there is enough space and (in debug mode) the destructor
 // checks that we did not generate too much.
-class EnsureSpace BASE_EMBEDDED {
+class EnsureSpace {
  public:
   explicit EnsureSpace(Assembler* assembler) : assembler_(assembler) {
     if (assembler_->buffer_overflow()) assembler_->GrowBuffer();

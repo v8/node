@@ -124,6 +124,14 @@ void LogFunctionCompilation(CodeEventListener::LogEventsAndTags tag,
                              shared->DebugName()));
 }
 
+ScriptOriginOptions OriginOptionsForEval(Object* script) {
+  if (!script->IsScript()) return ScriptOriginOptions();
+
+  const auto outer_origin_options = Script::cast(script)->origin_options();
+  return ScriptOriginOptions(outer_origin_options.IsSharedCrossOrigin(),
+                             outer_origin_options.IsOpaque());
+}
+
 }  // namespace
 
 // ----------------------------------------------------------------------------
@@ -925,7 +933,7 @@ std::unique_ptr<UnoptimizedCompilationJob> CompileTopLevelOnBackgroundThread(
       stricter_language_mode(parse_info->language_mode(), language_mode));
 
   // Can't access scope info data off-main-thread.
-  DCHECK(!parse_info->consumed_preparsed_scope_data()->HasData());
+  DCHECK(!parse_info->consumed_preparsed_scope_data());
 
   // Generate the unoptimized bytecode or asm-js data.
   std::unique_ptr<UnoptimizedCompilationJob> outer_function_job(
@@ -1078,10 +1086,12 @@ bool Compiler::Compile(Handle<SharedFunctionInfo> shared_info,
 
   if (FLAG_preparser_scope_analysis) {
     if (shared_info->HasUncompiledDataWithPreParsedScope()) {
-      parse_info.consumed_preparsed_scope_data()->SetData(
-          isolate, handle(shared_info->uncompiled_data_with_pre_parsed_scope()
-                              ->pre_parsed_scope_data(),
-                          isolate));
+      parse_info.set_consumed_preparsed_scope_data(
+          ConsumedPreParsedScopeData::For(
+              isolate,
+              handle(shared_info->uncompiled_data_with_pre_parsed_scope()
+                         ->pre_parsed_scope_data(),
+                     isolate)));
     }
   }
 
@@ -1196,9 +1206,7 @@ MaybeHandle<JSFunction> Compiler::GetFunctionFromEval(
     Handle<String> source, Handle<SharedFunctionInfo> outer_info,
     Handle<Context> context, LanguageMode language_mode,
     ParseRestriction restriction, int parameters_end_pos,
-    int eval_scope_position, int eval_position, int line_offset,
-    int column_offset, Handle<Object> script_name,
-    ScriptOriginOptions options) {
+    int eval_scope_position, int eval_position) {
   Isolate* isolate = context->GetIsolate();
   int source_length = source->length();
   isolate->counters()->total_eval_size()->Increment(source_length);
@@ -1237,14 +1245,8 @@ MaybeHandle<JSFunction> Compiler::GetFunctionFromEval(
     allow_eval_cache = true;
   } else {
     ParseInfo parse_info(isolate);
-    script = parse_info.CreateScript(isolate, source, options);
-    if (!script_name.is_null()) {
-      // TODO(cbruni): check whether we can store this data in options
-      script->set_name(*script_name);
-      script->set_line_offset(line_offset);
-      script->set_column_offset(column_offset);
-      LOG(isolate, ScriptDetails(*script));
-    }
+    script = parse_info.CreateScript(
+        isolate, source, OriginOptionsForEval(outer_info->script()));
     script->set_compilation_type(Script::COMPILATION_TYPE_EVAL);
     script->set_eval_from_shared(*outer_info);
     if (eval_position == kNoSourcePosition) {
@@ -1256,6 +1258,7 @@ MaybeHandle<JSFunction> Compiler::GetFunctionFromEval(
         FrameSummary summary = FrameSummary::GetTop(it.javascript_frame());
         script->set_eval_from_shared(
             summary.AsJavaScript().function()->shared());
+        script->set_origin_options(OriginOptionsForEval(*summary.script()));
         eval_position = -summary.code_offset();
       } else {
         eval_position = 0;
@@ -1922,7 +1925,7 @@ ScriptStreamingData::ScriptStreamingData(
     ScriptCompiler::StreamedSource::Encoding encoding)
     : source_stream(source_stream), encoding(encoding) {}
 
-ScriptStreamingData::~ScriptStreamingData() {}
+ScriptStreamingData::~ScriptStreamingData() = default;
 
 void ScriptStreamingData::Release() {
   parser.reset();

@@ -116,6 +116,11 @@ V8_INLINE bool IsJSObject(InstanceType instance_type) {
   return instance_type >= FIRST_JS_OBJECT_TYPE;
 }
 
+V8_INLINE bool IsJSReceiver(InstanceType instance_type) {
+  STATIC_ASSERT(LAST_TYPE == LAST_JS_RECEIVER_TYPE);
+  return instance_type >= FIRST_JS_RECEIVER_TYPE;
+}
+
 }  // namespace InstanceTypeChecker
 
 // TODO(v8:7786): For instance types that have a single map instance on the
@@ -285,13 +290,6 @@ bool HeapObject::IsFiller() const {
   InstanceType instance_type = map()->instance_type();
   return instance_type == FREE_SPACE_TYPE || instance_type == FILLER_TYPE;
 }
-
-bool HeapObject::IsJSReceiver() const {
-  STATIC_ASSERT(LAST_JS_RECEIVER_TYPE == LAST_TYPE);
-  return map()->instance_type() >= FIRST_JS_RECEIVER_TYPE;
-}
-
-bool HeapObject::IsJSProxy() const { return map()->IsJSProxyMap(); }
 
 bool HeapObject::IsJSWeakCollection() const {
   return IsJSWeakMap() || IsJSWeakSet();
@@ -472,8 +470,6 @@ bool Object::IsMinusZero() const {
 // Cast operations
 
 CAST_ACCESSOR(AccessorPair)
-CAST_ACCESSOR(AllocationMemento)
-CAST_ACCESSOR(AllocationSite)
 CAST_ACCESSOR(AsyncGeneratorRequest)
 CAST_ACCESSOR(BigInt)
 CAST_ACCESSOR(ObjectBoilerplateDescription)
@@ -763,7 +759,7 @@ MaybeHandle<Object> Object::SetElement(Isolate* isolate, Handle<Object> object,
                                        LanguageMode language_mode) {
   LookupIterator it(isolate, object, index);
   MAYBE_RETURN_NULL(
-      SetProperty(&it, value, language_mode, MAY_BE_STORE_FROM_KEYED));
+      SetProperty(&it, value, language_mode, StoreOrigin::kMaybeKeyed));
   return value;
 }
 
@@ -1000,151 +996,6 @@ ACCESSORS(JSReceiver, raw_properties_or_hash, Object, kPropertiesOrHashOffset)
 FixedArrayBase* JSObject::elements() const {
   Object* array = READ_FIELD(this, kElementsOffset);
   return static_cast<FixedArrayBase*>(array);
-}
-
-bool AllocationSite::HasWeakNext() const {
-  return map() == GetReadOnlyRoots().allocation_site_map();
-}
-
-void AllocationSite::Initialize() {
-  set_transition_info_or_boilerplate(Smi::kZero);
-  SetElementsKind(GetInitialFastElementsKind());
-  set_nested_site(Smi::kZero);
-  set_pretenure_data(0);
-  set_pretenure_create_count(0);
-  set_dependent_code(
-      DependentCode::cast(GetReadOnlyRoots().empty_weak_fixed_array()),
-      SKIP_WRITE_BARRIER);
-}
-
-bool AllocationSite::IsZombie() const {
-  return pretenure_decision() == kZombie;
-}
-
-bool AllocationSite::IsMaybeTenure() const {
-  return pretenure_decision() == kMaybeTenure;
-}
-
-bool AllocationSite::PretenuringDecisionMade() const {
-  return pretenure_decision() != kUndecided;
-}
-
-
-void AllocationSite::MarkZombie() {
-  DCHECK(!IsZombie());
-  Initialize();
-  set_pretenure_decision(kZombie);
-}
-
-ElementsKind AllocationSite::GetElementsKind() const {
-  return ElementsKindBits::decode(transition_info());
-}
-
-
-void AllocationSite::SetElementsKind(ElementsKind kind) {
-  set_transition_info(ElementsKindBits::update(transition_info(), kind));
-}
-
-bool AllocationSite::CanInlineCall() const {
-  return DoNotInlineBit::decode(transition_info()) == 0;
-}
-
-
-void AllocationSite::SetDoNotInlineCall() {
-  set_transition_info(DoNotInlineBit::update(transition_info(), true));
-}
-
-bool AllocationSite::PointsToLiteral() const {
-  Object* raw_value = transition_info_or_boilerplate();
-  DCHECK_EQ(!raw_value->IsSmi(),
-            raw_value->IsJSArray() || raw_value->IsJSObject());
-  return !raw_value->IsSmi();
-}
-
-
-// Heuristic: We only need to create allocation site info if the boilerplate
-// elements kind is the initial elements kind.
-bool AllocationSite::ShouldTrack(ElementsKind boilerplate_elements_kind) {
-  return IsSmiElementsKind(boilerplate_elements_kind);
-}
-
-inline bool AllocationSite::CanTrack(InstanceType type) {
-  if (FLAG_allocation_site_pretenuring) {
-    // TurboFan doesn't care at all about String pretenuring feedback,
-    // so don't bother even trying to track that.
-    return type == JS_ARRAY_TYPE || type == JS_OBJECT_TYPE;
-  }
-  return type == JS_ARRAY_TYPE;
-}
-
-AllocationSite::PretenureDecision AllocationSite::pretenure_decision() const {
-  return PretenureDecisionBits::decode(pretenure_data());
-}
-
-void AllocationSite::set_pretenure_decision(PretenureDecision decision) {
-  int32_t value = pretenure_data();
-  set_pretenure_data(PretenureDecisionBits::update(value, decision));
-}
-
-bool AllocationSite::deopt_dependent_code() const {
-  return DeoptDependentCodeBit::decode(pretenure_data());
-}
-
-void AllocationSite::set_deopt_dependent_code(bool deopt) {
-  int32_t value = pretenure_data();
-  set_pretenure_data(DeoptDependentCodeBit::update(value, deopt));
-}
-
-int AllocationSite::memento_found_count() const {
-  return MementoFoundCountBits::decode(pretenure_data());
-}
-
-inline void AllocationSite::set_memento_found_count(int count) {
-  int32_t value = pretenure_data();
-  // Verify that we can count more mementos than we can possibly find in one
-  // new space collection.
-  DCHECK((GetHeap()->MaxSemiSpaceSize() /
-          (Heap::kMinObjectSizeInWords * kPointerSize +
-           AllocationMemento::kSize)) < MementoFoundCountBits::kMax);
-  DCHECK_LT(count, MementoFoundCountBits::kMax);
-  set_pretenure_data(MementoFoundCountBits::update(value, count));
-}
-
-int AllocationSite::memento_create_count() const {
-  return pretenure_create_count();
-}
-
-void AllocationSite::set_memento_create_count(int count) {
-  set_pretenure_create_count(count);
-}
-
-bool AllocationSite::IncrementMementoFoundCount(int increment) {
-  if (IsZombie()) return false;
-
-  int value = memento_found_count();
-  set_memento_found_count(value + increment);
-  return memento_found_count() >= kPretenureMinimumCreated;
-}
-
-
-inline void AllocationSite::IncrementMementoCreateCount() {
-  DCHECK(FLAG_allocation_site_pretenuring);
-  int value = memento_create_count();
-  set_memento_create_count(value + 1);
-}
-
-bool AllocationMemento::IsValid() const {
-  return allocation_site()->IsAllocationSite() &&
-         !AllocationSite::cast(allocation_site())->IsZombie();
-}
-
-AllocationSite* AllocationMemento::GetAllocationSite() const {
-  DCHECK(IsValid());
-  return AllocationSite::cast(allocation_site());
-}
-
-Address AllocationMemento::GetAllocationSiteUnchecked() const {
-  return reinterpret_cast<Address>(allocation_site());
 }
 
 void JSObject::EnsureCanContainHeapObjectElements(Handle<JSObject> object) {
@@ -1681,7 +1532,7 @@ ACCESSORS(EnumCache, keys, FixedArray, kKeysOffset)
 ACCESSORS(EnumCache, indices, FixedArray, kIndicesOffset)
 
 int DescriptorArray::number_of_descriptors() const {
-  return Smi::ToInt(get(kDescriptorLengthIndex)->ToSmi());
+  return Smi::ToInt(get(kDescriptorLengthIndex)->cast<Smi>());
 }
 
 int DescriptorArray::number_of_descriptors_storage() const {
@@ -1707,7 +1558,7 @@ void DescriptorArray::CopyEnumCacheFrom(DescriptorArray* array) {
 }
 
 EnumCache* DescriptorArray::GetEnumCache() {
-  return EnumCache::cast(get(kEnumCacheIndex)->ToStrongHeapObject());
+  return EnumCache::cast(get(kEnumCacheIndex)->GetHeapObjectAssumeStrong());
 }
 
 // Perform a binary search in a fixed array.
@@ -1861,7 +1712,8 @@ MaybeObject** DescriptorArray::GetDescriptorEndSlot(int descriptor_number) {
 
 Name* DescriptorArray::GetKey(int descriptor_number) {
   DCHECK(descriptor_number < number_of_descriptors());
-  return Name::cast(get(ToKeyIndex(descriptor_number))->ToStrongHeapObject());
+  return Name::cast(
+      get(ToKeyIndex(descriptor_number))->GetHeapObjectAssumeStrong());
 }
 
 
@@ -1893,7 +1745,7 @@ int DescriptorArray::GetValueOffset(int descriptor_number) {
 
 Object* DescriptorArray::GetStrongValue(int descriptor_number) {
   DCHECK(descriptor_number < number_of_descriptors());
-  return get(ToValueIndex(descriptor_number))->ToObject();
+  return get(ToValueIndex(descriptor_number))->cast<Object>();
 }
 
 
@@ -1909,7 +1761,7 @@ MaybeObject* DescriptorArray::GetValue(int descriptor_number) {
 PropertyDetails DescriptorArray::GetDetails(int descriptor_number) {
   DCHECK(descriptor_number < number_of_descriptors());
   MaybeObject* details = get(ToDetailsIndex(descriptor_number));
-  return PropertyDetails(details->ToSmi());
+  return PropertyDetails(details->cast<Smi>());
 }
 
 int DescriptorArray::GetFieldIndex(int descriptor_number) {
@@ -2221,38 +2073,6 @@ ACCESSORS(TemplateObjectDescription, cooked_strings, FixedArray,
 
 ACCESSORS(AccessorPair, getter, Object, kGetterOffset)
 ACCESSORS(AccessorPair, setter, Object, kSetterOffset)
-
-ACCESSORS(AllocationSite, transition_info_or_boilerplate, Object,
-          kTransitionInfoOrBoilerplateOffset)
-
-JSObject* AllocationSite::boilerplate() const {
-  DCHECK(PointsToLiteral());
-  return JSObject::cast(transition_info_or_boilerplate());
-}
-
-void AllocationSite::set_boilerplate(JSObject* object, WriteBarrierMode mode) {
-  set_transition_info_or_boilerplate(object, mode);
-}
-
-int AllocationSite::transition_info() const {
-  DCHECK(!PointsToLiteral());
-  return Smi::cast(transition_info_or_boilerplate())->value();
-}
-
-void AllocationSite::set_transition_info(int value) {
-  DCHECK(!PointsToLiteral());
-  set_transition_info_or_boilerplate(Smi::FromInt(value), SKIP_WRITE_BARRIER);
-}
-
-ACCESSORS(AllocationSite, nested_site, Object, kNestedSiteOffset)
-INT32_ACCESSORS(AllocationSite, pretenure_data, kPretenureDataOffset)
-INT32_ACCESSORS(AllocationSite, pretenure_create_count,
-                kPretenureCreateCountOffset)
-ACCESSORS(AllocationSite, dependent_code, DependentCode,
-          kDependentCodeOffset)
-ACCESSORS_CHECKED(AllocationSite, weak_next, Object, kWeakNextOffset,
-                  HasWeakNext())
-ACCESSORS(AllocationMemento, allocation_site, Object, kAllocationSiteOffset)
 
 SMI_ACCESSORS(StackFrameInfo, line_number, kLineNumberIndex)
 SMI_ACCESSORS(StackFrameInfo, column_number, kColumnNumberIndex)
@@ -2729,9 +2549,9 @@ MaybeHandle<Object> Object::SetPropertyOrElement(Isolate* isolate,
                                                  Handle<Name> name,
                                                  Handle<Object> value,
                                                  LanguageMode language_mode,
-                                                 StoreFromKeyed store_mode) {
+                                                 StoreOrigin store_origin) {
   LookupIterator it = LookupIterator::PropertyOrElement(isolate, object, name);
-  MAYBE_RETURN_NULL(SetProperty(&it, value, language_mode, store_mode));
+  MAYBE_RETURN_NULL(SetProperty(&it, value, language_mode, store_origin));
   return value;
 }
 

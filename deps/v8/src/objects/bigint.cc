@@ -36,9 +36,6 @@ namespace internal {
 class MutableBigInt : public FreshlyAllocatedBigInt,
                       public NeverReadOnlySpaceObject {
  public:
-  using NeverReadOnlySpaceObject::GetHeap;
-  using NeverReadOnlySpaceObject::GetIsolate;
-
   // Bottleneck for converting MutableBigInts to BigInts.
   static MaybeHandle<BigInt> MakeImmutable(MaybeHandle<MutableBigInt> maybe);
   static Handle<BigInt> MakeImmutable(Handle<MutableBigInt> result);
@@ -96,7 +93,8 @@ class MutableBigInt : public FreshlyAllocatedBigInt,
   static inline Handle<MutableBigInt> AbsoluteBitwiseOp(
       Isolate* isolate, Handle<BigIntBase> x, Handle<BigIntBase> y,
       MutableBigInt* result_storage, ExtraDigitsHandling extra_digits,
-      SymmetricOp symmetric, std::function<digit_t(digit_t, digit_t)> op);
+      SymmetricOp symmetric,
+      const std::function<digit_t(digit_t, digit_t)>& op);
   static Handle<MutableBigInt> AbsoluteAnd(
       Isolate* isolate, Handle<BigIntBase> x, Handle<BigIntBase> y,
       MutableBigInt* result_storage = nullptr);
@@ -1258,7 +1256,7 @@ MaybeHandle<MutableBigInt> MutableBigInt::AbsoluteSubOne(Isolate* isolate,
 inline Handle<MutableBigInt> MutableBigInt::AbsoluteBitwiseOp(
     Isolate* isolate, Handle<BigIntBase> x, Handle<BigIntBase> y,
     MutableBigInt* result_storage, ExtraDigitsHandling extra_digits,
-    SymmetricOp symmetric, std::function<digit_t(digit_t, digit_t)> op) {
+    SymmetricOp symmetric, const std::function<digit_t(digit_t, digit_t)>& op) {
   int x_length = x->length();
   int y_length = y->length();
   int num_pairs = y_length;

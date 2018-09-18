@@ -397,6 +397,7 @@ class Declaration : public AstNode {
   Declaration** next() { return &next_; }
   Declaration* next_;
   friend List;
+  friend ThreadedListTraits<Declaration>;
 };
 
 class VariableDeclaration : public Declaration {
@@ -1576,8 +1577,15 @@ class VariableProxy final : public Expression {
   // Bind this proxy to the variable var.
   void BindTo(Variable* var);
 
-  void set_next_unresolved(VariableProxy* next) { next_unresolved_ = next; }
-  VariableProxy* next_unresolved() { return next_unresolved_; }
+  V8_INLINE VariableProxy* next_unresolved() { return next_unresolved_; }
+
+  // Provides an access type for the ThreadedList used by the PreParsers
+  // expressions, lists, and formal parameters.
+  struct PreParserNext {
+    static VariableProxy** next(VariableProxy* t) {
+      return t->pre_parser_expr_next();
+    }
+  };
 
  private:
   friend class AstNodeFactory;
@@ -1588,7 +1596,8 @@ class VariableProxy final : public Expression {
                 int start_position)
       : Expression(start_position, kVariableProxy),
         raw_name_(name),
-        next_unresolved_(nullptr) {
+        next_unresolved_(nullptr),
+        pre_parser_expr_next_(nullptr) {
     bit_field_ |= IsThisField::encode(variable_kind == THIS_VARIABLE) |
                   IsAssignedField::encode(false) |
                   IsResolvedField::encode(false) |
@@ -1611,9 +1620,15 @@ class VariableProxy final : public Expression {
     const AstRawString* raw_name_;  // if !is_resolved_
     Variable* var_;                 // if is_resolved_
   };
-  VariableProxy* next_unresolved_;
-};
 
+  V8_INLINE VariableProxy** next() { return &next_unresolved_; }
+  VariableProxy* next_unresolved_;
+
+  VariableProxy** pre_parser_expr_next() { return &pre_parser_expr_next_; }
+  VariableProxy* pre_parser_expr_next_;
+
+  friend ThreadedListTraits<VariableProxy>;
+};
 
 // Left-hand side can only be a property, a global or a (parameter or local)
 // slot.
@@ -2306,7 +2321,7 @@ class FunctionLiteral final : public Expression {
   // - (function() { ... })();
   // - var x = function() { ... }();
   bool ShouldEagerCompile() const;
-  void SetShouldEagerCompile();
+  V8_EXPORT_PRIVATE void SetShouldEagerCompile();
 
   FunctionType function_type() const {
     return FunctionTypeBits::decode(bit_field_);
@@ -2734,7 +2749,7 @@ class TemplateLiteral final : public Expression {
 //   class SpecificVisitor : public AstVisitor<SpecificVisitor> { ... }
 
 template <class Subclass>
-class AstVisitor BASE_EMBEDDED {
+class AstVisitor {
  public:
   void Visit(AstNode* node) { impl()->Visit(node); }
 
@@ -2821,7 +2836,7 @@ class AstVisitor BASE_EMBEDDED {
 // ----------------------------------------------------------------------------
 // AstNode factory
 
-class AstNodeFactory final BASE_EMBEDDED {
+class AstNodeFactory final {
  public:
   AstNodeFactory(AstValueFactory* ast_value_factory, Zone* zone)
       : zone_(zone), ast_value_factory_(ast_value_factory) {}

@@ -250,7 +250,7 @@ enum class RememberedSetUpdatingMode { ALL, OLD_TO_NEW_ONLY };
 // Base class for minor and full MC collectors.
 class MarkCompactCollectorBase {
  public:
-  virtual ~MarkCompactCollectorBase() {}
+  virtual ~MarkCompactCollectorBase() = default;
 
   virtual void SetUp() = 0;
   virtual void TearDown() = 0;
@@ -500,8 +500,8 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
     }
 
     HeapObject* PopBailout() {
-      HeapObject* result;
 #ifdef V8_CONCURRENT_MARKING
+      HeapObject* result;
       if (bailout_.Pop(kMainThread, &result)) return result;
 #endif
       return nullptr;
@@ -626,8 +626,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   void UpdateSlots(SlotsBuffer* buffer);
   void UpdateSlotsRecordedIn(SlotsBuffer* buffer);
 
-  void ClearMarkbits();
-
   bool is_compacting() const { return compacting_; }
 
   // Ensures that sweeping is finished.
@@ -703,7 +701,7 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
  private:
   explicit MarkCompactCollector(Heap* heap);
-  ~MarkCompactCollector();
+  ~MarkCompactCollector() override;
 
   bool WillBeDeoptimized(Code* code);
 
@@ -835,9 +833,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   void PostProcessEvacuationCandidates();
   void ReportAbortedEvacuationCandidate(HeapObject* failed_object, Page* page);
 
-  void ClearMarkbitsInPagedSpace(PagedSpace* space);
-  void ClearMarkbitsInNewSpace(NewSpace* space);
-
   static const int kEphemeronChunkSize = 8 * KB;
 
   int NumberOfParallelEphemeronVisitingTasks(size_t elements);
@@ -916,7 +911,6 @@ class MarkingVisitor final
   V8_INLINE int VisitEphemeronHashTable(Map* map, EphemeronHashTable* object);
   V8_INLINE int VisitFixedArray(Map* map, FixedArray* object);
   V8_INLINE int VisitJSApiObject(Map* map, JSObject* object);
-  V8_INLINE int VisitJSFunction(Map* map, JSFunction* object);
   V8_INLINE int VisitMap(Map* map, Map* object);
   V8_INLINE int VisitNativeContext(Map* map, Context* object);
   V8_INLINE int VisitTransitionArray(Map* map, TransitionArray* object);
@@ -980,7 +974,7 @@ class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
   using NonAtomicMarkingState = MinorNonAtomicMarkingState;
 
   explicit MinorMarkCompactCollector(Heap* heap);
-  ~MinorMarkCompactCollector();
+  ~MinorMarkCompactCollector() override;
 
   MarkingState* marking_state() { return &marking_state_; }
 

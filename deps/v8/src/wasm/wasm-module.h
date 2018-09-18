@@ -74,19 +74,12 @@ struct WasmGlobal {
 // function signature.
 typedef FunctionSig WasmExceptionSig;
 
+// Static representation of a wasm exception type.
 struct WasmException {
-  explicit WasmException(const WasmExceptionSig* sig = &empty_sig_)
-      : sig(sig) {}
+  explicit WasmException(const WasmExceptionSig* sig) : sig(sig) {}
   FunctionSig* ToFunctionSig() const { return const_cast<FunctionSig*>(sig); }
 
   const WasmExceptionSig* sig;  // type signature of the exception.
-
-  // Used to hold data on runtime exceptions.
-  static constexpr const char* kRuntimeIdStr = "WasmExceptionRuntimeId";
-  static constexpr const char* kRuntimeValuesStr = "WasmExceptionValues";
-
- private:
-  static const WasmExceptionSig empty_sig_;
 };
 
 // Static representation of a wasm data segment.
@@ -179,6 +172,7 @@ struct V8_EXPORT_PRIVATE WasmModule {
   ModuleOrigin origin = kWasmOrigin;  // origin of the module
   mutable std::unique_ptr<std::unordered_map<uint32_t, WireBytesRef>>
       function_names;
+  std::string source_map_url;
 
   explicit WasmModule(std::unique_ptr<Zone> owned = nullptr);
 
@@ -200,13 +194,6 @@ struct V8_EXPORT_PRIVATE ModuleWireBytes {
       : module_bytes_(start, static_cast<int>(end - start)) {
     DCHECK_GE(kMaxInt, end - start);
   }
-
-  // Get a string stored in the module bytes representing a name.
-  WasmName GetName(WireBytesRef ref) const;
-
-  // Get a string stored in the module bytes representing a function name.
-  WasmName GetName(const WasmFunction* function,
-                   const WasmModule* module) const;
 
   // Get a string stored in the module bytes representing a name.
   WasmName GetNameOrNull(WireBytesRef ref) const;

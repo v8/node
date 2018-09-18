@@ -57,6 +57,7 @@ class StatsCounter;
   V(async_event_delegate_address, "Isolate::async_event_delegate_address()")   \
   V(promise_hook_or_async_event_delegate_address,                              \
     "Isolate::promise_hook_or_async_event_delegate_address()")                 \
+  V(debug_execution_mode_address, "Isolate::debug_execution_mode_address()")   \
   V(debug_is_active_address, "Debug::is_active_address()")                     \
   V(debug_hook_on_function_call_address,                                       \
     "Debug::hook_on_function_call_address()")                                  \
@@ -139,6 +140,7 @@ class StatsCounter;
   V(search_string_raw_two_one, "search_string_raw_two_one")                   \
   V(search_string_raw_two_two, "search_string_raw_two_two")                   \
   V(try_internalize_string_function, "try_internalize_string_function")       \
+  V(smi_lexicographic_compare_function, "smi_lexicographic_compare_function") \
   V(wasm_call_trap_callback_for_testing,                                      \
     "wasm::call_trap_callback_for_testing")                                   \
   V(wasm_f32_ceil, "wasm::f32_ceil_wrapper")                                  \
@@ -199,7 +201,7 @@ class StatsCounter;
 // in an ExternalReference instance. This is done in order to track the
 // origin of all external references in the code so that they can be bound
 // to the correct addresses when deserializing a heap.
-class ExternalReference BASE_EMBEDDED {
+class ExternalReference {
  public:
   // Used in the simulator to support different native api calls.
   enum Type {

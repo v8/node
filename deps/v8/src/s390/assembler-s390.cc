@@ -180,13 +180,14 @@ void CpuFeatures::ProbeImpl(bool cross_compile) {
     //   Bit 45 - Distinct Operands for instructions like ARK, SRK, etc.
     // As such, we require only 1 double word
     int64_t facilities[3] = {0L};
+    int16_t reg0;
     // LHI sets up GPR0
     // STFLE is specified as .insn, as opcode is not recognized.
     // We register the instructions kill r0 (LHI) and the CC (STFLE).
     asm volatile(
-        "lhi   0,2\n"
+        "lhi   %%r0,2\n"
         ".insn s,0xb2b00000,%0\n"
-        : "=Q"(facilities)
+        : "=Q"(facilities), "=r"(reg0)
         :
         : "cc", "r0");
 
@@ -322,6 +323,7 @@ MemOperand::MemOperand(Register rx, Register rb, int32_t offset)
     : baseRegister(rb), indexRegister(rx), offset_(offset) {}
 
 void Assembler::AllocateAndInstallRequestedHeapObjects(Isolate* isolate) {
+  DCHECK_IMPLIES(isolate == nullptr, heap_object_requests_.empty());
   for (auto& request : heap_object_requests_) {
     Handle<HeapObject> object;
     Address pc = reinterpret_cast<Address>(buffer_ + request.offset());

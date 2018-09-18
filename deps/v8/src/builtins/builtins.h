@@ -25,6 +25,11 @@ namespace compiler {
 class CodeAssemblerState;
 }
 
+template <typename T>
+static constexpr T FirstFromVarArgs(T x, ...) noexcept {
+  return x;
+}
+
 // Convenience macro to avoid generating named accessors for all builtins.
 #define BUILTIN_CODE(isolate, name) \
   (isolate)->builtins()->builtin_handle(Builtins::k##name)
@@ -40,13 +45,18 @@ class Builtins {
 
   enum Name : int32_t {
 #define DEF_ENUM(Name, ...) k##Name,
-#define DEF_ENUM_BYTECODE_HANDLER(Name, ...) \
-  k##Name##Handler, k##Name##WideHandler, k##Name##ExtraWideHandler,
     BUILTIN_LIST(DEF_ENUM, DEF_ENUM, DEF_ENUM, DEF_ENUM, DEF_ENUM, DEF_ENUM,
-                 DEF_ENUM_BYTECODE_HANDLER, DEF_ENUM)
+                 DEF_ENUM, DEF_ENUM)
 #undef DEF_ENUM
-#undef DEF_ENUM_BYTECODE_HANDLER
-        builtin_count
+        builtin_count,
+
+#ifdef V8_EMBEDDED_BYTECODE_HANDLERS
+#define EXTRACT_NAME(Name, ...) k##Name,
+    // Define kFirstBytecodeHandler,
+    kFirstBytecodeHandler =
+        FirstFromVarArgs(BUILTIN_LIST_BYTECODE_HANDLERS(EXTRACT_NAME) 0)
+#undef EXTRACT_NAME
+#endif  // V8_EMBEDDED_BYTECODE_HANDLERS
   };
 
   static const int32_t kNoBuiltinId = -1;

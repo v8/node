@@ -439,6 +439,8 @@ class V8_EXPORT_PRIVATE Factory {
       Handle<JSPromise> promise_to_resolve, Handle<JSReceiver> then,
       Handle<JSReceiver> thenable, Handle<Context> context);
 
+  Handle<MicrotaskQueue> NewMicrotaskQueue();
+
   // Foreign objects are pretenured when allocated by the bootstrapper.
   Handle<Foreign> NewForeign(Address addr,
                              PretenureFlag pretenure = NOT_TENURED);
@@ -828,8 +830,7 @@ class V8_EXPORT_PRIVATE Factory {
   Handle<String> NumberToString(Handle<Object> number, bool check_cache = true);
   Handle<String> NumberToString(Smi* number, bool check_cache = true);
 
-  inline Handle<String> Uint32ToString(uint32_t value,
-                                       bool check_cache = false);
+  inline Handle<String> Uint32ToString(uint32_t value, bool check_cache = true);
 
 #define ROOT_ACCESSOR(type, name, camel_name) inline Handle<type> name();
   ROOT_LIST(ROOT_ACCESSOR)
@@ -862,7 +863,7 @@ class V8_EXPORT_PRIVATE Factory {
   WELL_KNOWN_SYMBOL_LIST(SYMBOL_ACCESSOR)
 #undef SYMBOL_ACCESSOR
 
-#define ACCESSOR_INFO_ACCESSOR(accessor_name, AccessorName) \
+#define ACCESSOR_INFO_ACCESSOR(accessor_name, ...) \
   inline Handle<AccessorInfo> accessor_name##_accessor();
   ACCESSOR_INFO_LIST(ACCESSOR_INFO_ACCESSOR)
 #undef ACCESSOR_INFO_ACCESSOR
@@ -1054,7 +1055,7 @@ class NewFunctionArgs final {
   Handle<Map> GetMap(Isolate* isolate) const;
 
  private:
-  NewFunctionArgs() {}  // Use the static factory constructors.
+  NewFunctionArgs() = default;  // Use the static factory constructors.
 
   void SetShouldCreateAndSetInitialMap();
   void SetShouldSetPrototype();

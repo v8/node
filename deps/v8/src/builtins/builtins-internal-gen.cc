@@ -350,18 +350,11 @@ class RecordWriteCodeStubAssembler : public CodeStubAssembler {
 };
 
 TF_BUILTIN(RecordWrite, RecordWriteCodeStubAssembler) {
-  Node* object = BitcastTaggedToWord(Parameter(Descriptor::kObject));
-  Node* slot = Parameter(Descriptor::kSlot);
-  Node* isolate = Parameter(Descriptor::kIsolate);
-  Node* remembered_set = Parameter(Descriptor::kRememberedSet);
-  Node* fp_mode = Parameter(Descriptor::kFPMode);
-
-  Node* value = Load(MachineType::Pointer(), slot);
-
   Label generational_wb(this);
   Label incremental_wb(this);
   Label exit(this);
 
+  Node* remembered_set = Parameter(Descriptor::kRememberedSet);
   Branch(ShouldEmitRememberSet(remembered_set), &generational_wb,
          &incremental_wb);
 
@@ -369,39 +362,57 @@ TF_BUILTIN(RecordWrite, RecordWriteCodeStubAssembler) {
   {
     Label test_old_to_new_flags(this);
     Label store_buffer_exit(this), store_buffer_incremental_wb(this);
+
     // When incremental marking is not on, we skip cross generation pointer
     // checking here, because there are checks for
     // `kPointersFromHereAreInterestingMask` and
     // `kPointersToHereAreInterestingMask` in
     // `src/compiler/<arch>/code-generator-<arch>.cc` before calling this stub,
     // which serves as the cross generation checking.
+    Node* slot = Parameter(Descriptor::kSlot);
     Branch(IsMarking(), &test_old_to_new_flags, &store_buffer_exit);
 
     BIND(&test_old_to_new_flags);
     {
+      Node* value = Load(MachineType::Pointer(), slot);
+
       // TODO(albertnetymk): Try to cache the page flag for value and object,
       // instead of calling IsPageFlagSet each time.
       Node* value_in_new_space =
           IsPageFlagSet(value, MemoryChunk::kIsInNewSpaceMask);
       GotoIfNot(value_in_new_space, &incremental_wb);
 
+      Node* object = BitcastTaggedToWord(Parameter(Descriptor::kObject));
       Node* object_in_new_space =
           IsPageFlagSet(object, MemoryChunk::kIsInNewSpaceMask);
-      GotoIf(object_in_new_space, &incremental_wb);
-
-      Goto(&store_buffer_incremental_wb);
+      Branch(object_in_new_space, &incremental_wb,
+             &store_buffer_incremental_wb);
     }
 
     BIND(&store_buffer_exit);
-    { InsertToStoreBufferAndGoto(isolate, slot, fp_mode, &exit); }
+    {
+      Node* isolate_constant =
+          ExternalConstant(ExternalReference::isolate_address(isolate()));
+      Node* fp_mode = Parameter(Descriptor::kFPMode);
+      InsertToStoreBufferAndGoto(isolate_constant, slot, fp_mode, &exit);
+    }
 
     BIND(&store_buffer_incremental_wb);
-    { InsertToStoreBufferAndGoto(isolate, slot, fp_mode, &incremental_wb); }
+    {
+      Node* isolate_constant =
+          ExternalConstant(ExternalReference::isolate_address(isolate()));
+      Node* fp_mode = Parameter(Descriptor::kFPMode);
+      InsertToStoreBufferAndGoto(isolate_constant, slot, fp_mode,
+                                 &incremental_wb);
+    }
   }
 
   BIND(&incremental_wb);
   {
     Label call_incremental_wb(this);
+
+    Node* slot = Parameter(Descriptor::kSlot);
+    Node* value = Load(MachineType::Pointer(), slot);
 
     // There are two cases we need to call incremental write barrier.
     // 1) value_is_white
@@ -411,20 +422,23 @@ TF_BUILTIN(RecordWrite, RecordWriteCodeStubAssembler) {
     // is_compacting = true when is_marking = true
     GotoIfNot(IsPageFlagSet(value, MemoryChunk::kEvacuationCandidateMask),
               &exit);
-    GotoIf(
-        IsPageFlagSet(object, MemoryChunk::kSkipEvacuationSlotsRecordingMask),
-        &exit);
 
-    Goto(&call_incremental_wb);
+    Node* object = BitcastTaggedToWord(Parameter(Descriptor::kObject));
+    Branch(
+        IsPageFlagSet(object, MemoryChunk::kSkipEvacuationSlotsRecordingMask),
+        &exit, &call_incremental_wb);
 
     BIND(&call_incremental_wb);
     {
       Node* function = ExternalConstant(
           ExternalReference::incremental_marking_record_write_function());
+      Node* isolate_constant =
+          ExternalConstant(ExternalReference::isolate_address(isolate()));
+      Node* fp_mode = Parameter(Descriptor::kFPMode);
       CallCFunction3WithCallerSavedRegistersMode(
           MachineType::Int32(), MachineType::Pointer(), MachineType::Pointer(),
-          MachineType::Pointer(), function, object, slot, isolate, fp_mode,
-          &exit);
+          MachineType::Pointer(), function, object, slot, isolate_constant,
+          fp_mode, &exit);
     }
   }
 
@@ -1099,20 +1113,20 @@ TF_BUILTIN(RunMicrotasks, InternalBuiltinsAssembler) {
 }
 
 TF_BUILTIN(AllocateInNewSpace, CodeStubAssembler) {
-  TNode<Int32T> requested_size =
-      UncheckedCast<Int32T>(Parameter(Descriptor::kRequestedSize));
+  TNode<IntPtrT> requested_size =
+      UncheckedCast<IntPtrT>(Parameter(Descriptor::kRequestedSize));
 
   TailCallRuntime(Runtime::kAllocateInNewSpace, NoContextConstant(),
-                  SmiFromInt32(requested_size));
+                  SmiFromIntPtr(requested_size));
 }
 
 TF_BUILTIN(AllocateInOldSpace, CodeStubAssembler) {
-  TNode<Int32T> requested_size =
-      UncheckedCast<Int32T>(Parameter(Descriptor::kRequestedSize));
+  TNode<IntPtrT> requested_size =
+      UncheckedCast<IntPtrT>(Parameter(Descriptor::kRequestedSize));
 
   int flags = AllocateTargetSpace::encode(OLD_SPACE);
   TailCallRuntime(Runtime::kAllocateInTargetSpace, NoContextConstant(),
-                  SmiFromInt32(requested_size), SmiConstant(flags));
+                  SmiFromIntPtr(requested_size), SmiConstant(flags));
 }
 
 TF_BUILTIN(Abort, CodeStubAssembler) {
@@ -1207,27 +1221,23 @@ void Builtins::Generate_CallApiCallback_Argc1(MacroAssembler* masm) {
 
 // ES6 [[Get]] operation.
 TF_BUILTIN(GetProperty, CodeStubAssembler) {
-  Label call_runtime(this, Label::kDeferred), return_undefined(this), end(this);
-
   Node* object = Parameter(Descriptor::kObject);
   Node* key = Parameter(Descriptor::kKey);
   Node* context = Parameter(Descriptor::kContext);
-  VARIABLE(var_result, MachineRepresentation::kTagged);
+  Label if_notfound(this), if_proxy(this, Label::kDeferred),
+      if_slow(this, Label::kDeferred);
 
   CodeStubAssembler::LookupInHolder lookup_property_in_holder =
-      [=, &var_result, &end](Node* receiver, Node* holder, Node* holder_map,
-                             Node* holder_instance_type, Node* unique_name,
-                             Label* next_holder, Label* if_bailout) {
+      [=](Node* receiver, Node* holder, Node* holder_map,
+          Node* holder_instance_type, Node* unique_name, Label* next_holder,
+          Label* if_bailout) {
         VARIABLE(var_value, MachineRepresentation::kTagged);
         Label if_found(this);
         TryGetOwnProperty(context, receiver, holder, holder_map,
                           holder_instance_type, unique_name, &if_found,
                           &var_value, next_holder, if_bailout);
         BIND(&if_found);
-        {
-          var_result.Bind(var_value.value());
-          Goto(&end);
-        }
+        Return(var_value.value());
       };
 
   CodeStubAssembler::LookupInHolder lookup_element_in_holder =
@@ -1240,23 +1250,26 @@ TF_BUILTIN(GetProperty, CodeStubAssembler) {
       };
 
   TryPrototypeChainLookup(object, key, lookup_property_in_holder,
-                          lookup_element_in_holder, &return_undefined,
-                          &call_runtime);
+                          lookup_element_in_holder, &if_notfound, &if_slow,
+                          &if_proxy);
 
-  BIND(&return_undefined);
+  BIND(&if_notfound);
+  Return(UndefinedConstant());
+
+  BIND(&if_slow);
+  TailCallRuntime(Runtime::kGetProperty, context, object, key);
+
+  BIND(&if_proxy);
   {
-    var_result.Bind(UndefinedConstant());
-    Goto(&end);
-  }
+    // Convert the {key} to a Name first.
+    Node* name = CallBuiltin(Builtins::kToName, context, key);
 
-  BIND(&call_runtime);
-  {
-    var_result.Bind(CallRuntime(Runtime::kGetProperty, context, object, key));
-    Goto(&end);
+    // The {object} is a JSProxy instance, look up the {name} on it, passing
+    // {object} both as receiver and holder. If {name} is absent we can safely
+    // return undefined from here.
+    TailCallBuiltin(Builtins::kProxyGetProperty, context, object, name, object,
+                    SmiConstant(OnNonExistent::kReturnUndefined));
   }
-
-  BIND(&end);
-  Return(var_result.value());
 }
 
 // ES6 [[Set]] operation.

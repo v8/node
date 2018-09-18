@@ -595,11 +595,6 @@
   'intl402/Locale/invalid-tag-throws': [FAIL],
   'intl402/Locale/likely-subtags': [FAIL],
   'intl402/Locale/likely-subtags-grandfathered': [FAIL],
-  'intl402/Locale/prototype/toStringTag/toStringTag': [FAIL],
-  'intl402/Locale/prototype/toStringTag/toString': [FAIL],
-
-  # https://bugs.chromium.org/p/v8/issues/detail?id=7814
-  'built-ins/Array/prototype/splice/property-traps-order-with-species': [FAIL],
 
   # https://bugs.chromium.org/p/v8/issues/detail?id=6705
   'built-ins/Object/assign/strings-and-symbol-order': [FAIL],
@@ -613,56 +608,11 @@
   'language/expressions/async-generator/generator-created-after-decl-inst': [FAIL],
   'language/statements/async-generator/generator-created-after-decl-inst': [FAIL],
 
-  # https://bugs.chromium.org/p/chromium/issues/detail?id=865351
-  'intl402/DateTimeFormat/prototype/formatToParts/main': [FAIL],
-
   # https://bugs.chromium.org/p/v8/issues/detail?id=8099
   'intl402/NumberFormat/prototype/format/format-negative-numbers': [FAIL],
 
-  # https://bugs.chromium.org/p/v8/issues/detail?id=7869
-  'intl402/RelativeTimeFormat/prototype/format/en-us-numeric-always': [FAIL],
-  'intl402/RelativeTimeFormat/prototype/format/en-us-numeric-auto': [FAIL],
-  'intl402/RelativeTimeFormat/prototype/format/en-us-style-short': [FAIL],
-  'intl402/RelativeTimeFormat/prototype/format/pl-pl-style-long': [FAIL],
-  'intl402/RelativeTimeFormat/prototype/format/pl-pl-style-narrow': [FAIL],
-  'intl402/RelativeTimeFormat/prototype/format/pl-pl-style-short': [FAIL],
-  'intl402/RelativeTimeFormat/prototype/formatToParts/en-us-numeric-always': [FAIL],
-  'intl402/RelativeTimeFormat/prototype/formatToParts/en-us-numeric-auto': [FAIL],
-  'intl402/RelativeTimeFormat/prototype/formatToParts/en-us-style-short': [FAIL],
-  'intl402/RelativeTimeFormat/prototype/formatToParts/pl-pl-style-long': [FAIL],
-  'intl402/RelativeTimeFormat/prototype/formatToParts/pl-pl-style-narrow': [FAIL],
-  'intl402/RelativeTimeFormat/prototype/formatToParts/pl-pl-style-short': [FAIL],
-  'intl402/RelativeTimeFormat/prototype/formatToParts/unit-plural': [FAIL],
-
-  # https://github.com/tc39/test262/issues/1697
-  'language/expressions/class/fields-computed-name-toprimitive': [FAIL],
-  'language/expressions/class/fields-computed-name-toprimitive-symbol': [FAIL],
-  'language/expressions/class/fields-ctor-called-after-fields-init': [FAIL],
-  'language/expressions/class/fields-evaluation-error-computed-name-referenceerror': [FAIL],
-  'language/expressions/class/fields-evaluation-error-computed-name-toprimitive-err': [FAIL],
-  'language/expressions/class/fields-evaluation-error-computed-name-toprimitive-returns-noncallable': [FAIL],
-  'language/expressions/class/fields-evaluation-error-computed-name-toprimitive-returns-nonobject': [FAIL],
-  'language/expressions/class/fields-evaluation-error-computed-name-tostring-err': [FAIL],
-  'language/expressions/class/fields-evaluation-error-computed-name-valueof-err': [FAIL],
-  'language/expressions/class/fields-init-err-evaluation': [FAIL],
-  'language/expressions/class/fields-init-value-defined-after-class': [FAIL],
-  'language/expressions/class/fields-init-value-incremental': [FAIL],
-  'language/expressions/class/fields-redeclaration': [FAIL],
-  'language/expressions/class/fields-redeclaration-symbol': [FAIL],
-  'language/statements/class/fields-computed-name-toprimitive': [FAIL],
-  'language/statements/class/fields-computed-name-toprimitive-symbol': [FAIL],
-  'language/statements/class/fields-ctor-called-after-fields-init': [FAIL],
-  'language/statements/class/fields-evaluation-error-computed-name-referenceerror': [FAIL],
-  'language/statements/class/fields-evaluation-error-computed-name-toprimitive-err': [FAIL],
-  'language/statements/class/fields-evaluation-error-computed-name-toprimitive-returns-noncallable': [FAIL],
-  'language/statements/class/fields-evaluation-error-computed-name-toprimitive-returns-nonobject': [FAIL],
-  'language/statements/class/fields-evaluation-error-computed-name-tostring-err': [FAIL],
-  'language/statements/class/fields-evaluation-error-computed-name-valueof-err': [FAIL],
-  'language/statements/class/fields-init-err-evaluation': [FAIL],
-  'language/statements/class/fields-init-value-defined-after-class': [FAIL],
-  'language/statements/class/fields-init-value-incremental': [FAIL],
-  'language/statements/class/fields-redeclaration': [FAIL],
-  'language/statements/class/fields-redeclaration-symbol': [FAIL],
+  # https://bugs.chromium.org/p/v8/issues/detail?id=7871
+  'intl402/ListFormat/prototype/formatToParts/en-us-disjunction': [FAIL],
 
   ######################## NEEDS INVESTIGATION ###########################
 
@@ -682,9 +632,6 @@
   'annexB/language/function-code/block-decl-func-skip-arguments': [FAIL],
 
   # https://bugs.chromium.org/p/v8/issues/detail?id=6538
-  'built-ins/Array/prototype/unshift/throws-if-integer-limit-exceeded': [SKIP],
-  'built-ins/Array/prototype/splice/create-species-length-exceeding-integer-limit': [FAIL],
-  'built-ins/Array/prototype/splice/throws-if-integer-limit-exceeded': [SKIP],
 
   # https://bugs.chromium.org/p/v8/issues/detail?id=6541
   'language/export/escaped-as-export-specifier': [FAIL],

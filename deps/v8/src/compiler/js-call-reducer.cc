@@ -865,7 +865,8 @@ Reduction JSCallReducer::ReduceReflectGet(Node* node) {
     Callable callable =
         Builtins::CallableFor(isolate(), Builtins::kGetProperty);
     auto call_descriptor = Linkage::GetStubCallDescriptor(
-        graph()->zone(), callable.descriptor(), 0,
+        graph()->zone(), callable.descriptor(),
+        callable.descriptor().GetStackParameterCount(),
         CallDescriptor::kNeedsFrameState, Operator::kNoProperties);
     Node* stub_code = jsgraph()->HeapConstant(callable.code());
     vtrue = etrue = if_true =
@@ -2585,7 +2586,8 @@ Reduction JSCallReducer::ReduceArrayIndexOfIncludes(
           : GetCallableForArrayIncludes(receiver_map->elements_kind(),
                                         isolate());
   CallDescriptor const* const desc = Linkage::GetStubCallDescriptor(
-      graph()->zone(), callable.descriptor(), 0, CallDescriptor::kNoFlags,
+      graph()->zone(), callable.descriptor(),
+      callable.descriptor().GetStackParameterCount(), CallDescriptor::kNoFlags,
       Operator::kEliminatable);
   // The stub expects the following arguments: the receiver array, its elements,
   // the search_element, the array length, and the index to start searching
@@ -3332,7 +3334,7 @@ Reduction JSCallReducer::ReduceJSCall(Node* node) {
   }
 
   HeapObject* heap_object;
-  if (nexus.GetFeedback()->ToWeakHeapObject(&heap_object)) {
+  if (nexus.GetFeedback()->GetHeapObjectIfWeak(&heap_object)) {
     Handle<HeapObject> feedback(heap_object, isolate());
     // Check if we want to use CallIC feedback here.
     if (!ShouldUseCallICFeedback(target)) return NoChange();
@@ -3758,7 +3760,7 @@ Reduction JSCallReducer::ReduceJSConstruct(Node* node) {
     }
 
     HeapObject* feedback_object;
-    if (nexus.GetFeedback()->ToStrongHeapObject(&feedback_object) &&
+    if (nexus.GetFeedback()->GetHeapObjectIfStrong(&feedback_object) &&
         feedback_object->IsAllocationSite()) {
       // The feedback is an AllocationSite, which means we have called the
       // Array function and collected transition (and pretenuring) feedback
@@ -3787,7 +3789,7 @@ Reduction JSCallReducer::ReduceJSConstruct(Node* node) {
       NodeProperties::ReplaceValueInput(node, array_function, 1);
       NodeProperties::ChangeOp(node, javascript()->CreateArray(arity, site));
       return Changed(node);
-    } else if (nexus.GetFeedback()->ToWeakHeapObject(&feedback_object) &&
+    } else if (nexus.GetFeedback()->GetHeapObjectIfWeak(&feedback_object) &&
                !HeapObjectMatcher(new_target).HasValue()) {
       Handle<HeapObject> object(feedback_object, isolate());
       if (object->IsConstructor()) {
@@ -4835,7 +4837,8 @@ Reduction JSCallReducer::ReduceArrayPrototypeSlice(Node* node) {
   Callable callable =
       Builtins::CallableFor(isolate(), Builtins::kCloneFastJSArray);
   auto call_descriptor = Linkage::GetStubCallDescriptor(
-      graph()->zone(), callable.descriptor(), 0, CallDescriptor::kNoFlags,
+      graph()->zone(), callable.descriptor(),
+      callable.descriptor().GetStackParameterCount(), CallDescriptor::kNoFlags,
       Operator::kNoThrow | Operator::kNoDeopt);
 
   // Calls to Builtins::kCloneFastJSArray produce COW arrays
@@ -4993,18 +4996,22 @@ Reduction JSCallReducer::ReduceArrayIteratorPrototypeNext(Node* node) {
       dependencies()->DependOnProtector(PropertyCellRef(
           js_heap_broker(), factory()->array_buffer_neutering_protector()));
     } else {
-      // Deoptimize if the array buffer was neutered.
+      // Bail out if the {iterated_object}s JSArrayBuffer was neutered.
       Node* buffer = effect = graph()->NewNode(
           simplified()->LoadField(AccessBuilder::ForJSArrayBufferViewBuffer()),
           iterated_object, effect, control);
-
-      Node* check = effect = graph()->NewNode(
-          simplified()->ArrayBufferWasNeutered(), buffer, effect, control);
-      check = graph()->NewNode(simplified()->BooleanNot(), check);
-      // TODO(bmeurer): Pass p.feedback(), or better introduce
-      // CheckArrayBufferNotNeutered?
+      Node* buffer_bit_field = effect = graph()->NewNode(
+          simplified()->LoadField(AccessBuilder::ForJSArrayBufferBitField()),
+          buffer, effect, control);
+      Node* check = graph()->NewNode(
+          simplified()->NumberEqual(),
+          graph()->NewNode(
+              simplified()->NumberBitwiseAnd(), buffer_bit_field,
+              jsgraph()->Constant(JSArrayBuffer::WasNeuteredBit::kMask)),
+          jsgraph()->ZeroConstant());
       effect = graph()->NewNode(
-          simplified()->CheckIf(DeoptimizeReason::kArrayBufferWasNeutered),
+          simplified()->CheckIf(DeoptimizeReason::kArrayBufferWasNeutered,
+                                p.feedback()),
           check, effect, control);
     }
   }
@@ -5452,6 +5459,7 @@ Reduction JSCallReducer::ReduceStringPrototypeConcat(
   if (p.speculation_mode() == SpeculationMode::kDisallowSpeculation) {
     return NoChange();
   }
+
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
   Node* receiver = effect =
@@ -5463,16 +5471,21 @@ Reduction JSCallReducer::ReduceStringPrototypeConcat(
     return Replace(receiver);
   }
 
-  if (!isolate()->IsStringLengthOverflowIntact()) {
-    return NoChange();
-  }
-
   Node* argument = effect =
       graph()->NewNode(simplified()->CheckString(p.feedback()),
                        NodeProperties::GetValueInput(node, 2), effect, control);
+  Node* receiver_length =
+      graph()->NewNode(simplified()->StringLength(), receiver);
+  Node* argument_length =
+      graph()->NewNode(simplified()->StringLength(), argument);
+  Node* length = graph()->NewNode(simplified()->NumberAdd(), receiver_length,
+                                  argument_length);
+  length = effect = graph()->NewNode(
+      simplified()->CheckBounds(p.feedback()), length,
+      jsgraph()->Constant(String::kMaxLength + 1), effect, control);
 
-  Node* value = effect = graph()->NewNode(simplified()->CheckStringAdd(),
-                                          receiver, argument, effect, control);
+  Node* value = graph()->NewNode(simplified()->StringConcat(), length, receiver,
+                                 argument);
 
   ReplaceWithValue(node, value, effect, control);
   return Replace(value);
@@ -5524,6 +5537,7 @@ Node* JSCallReducer::CreateArtificialFrameState(
   const Operator* op0 = common()->StateValues(0, SparseInputMask::Dense());
   Node* node0 = graph()->NewNode(op0);
   std::vector<Node*> params;
+  params.reserve(parameter_count + 1);
   for (int parameter = 0; parameter < parameter_count + 1; ++parameter) {
     params.push_back(node->InputAt(1 + parameter));
   }
@@ -6487,8 +6501,9 @@ Reduction JSCallReducer::ReduceCollectionIteratorPrototypeNext(
     Callable const callable =
         Builtins::CallableFor(isolate(), Builtins::kOrderedHashTableHealIndex);
     auto call_descriptor = Linkage::GetStubCallDescriptor(
-        graph()->zone(), callable.descriptor(), 0, CallDescriptor::kNoFlags,
-        Operator::kEliminatable);
+        graph()->zone(), callable.descriptor(),
+        callable.descriptor().GetStackParameterCount(),
+        CallDescriptor::kNoFlags, Operator::kEliminatable);
     index = effect =
         graph()->NewNode(common()->Call(call_descriptor),
                          jsgraph()->HeapConstant(callable.code()), table, index,
@@ -6710,6 +6725,7 @@ Reduction JSCallReducer::ReduceArrayBufferViewAccessor(
   Node* receiver = NodeProperties::GetValueInput(node, 1);
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
+
   if (NodeProperties::HasInstanceTypeWitness(isolate(), receiver, effect,
                                              instance_type)) {
     // Load the {receiver}s field.
@@ -6723,17 +6739,28 @@ Reduction JSCallReducer::ReduceArrayBufferViewAccessor(
       dependencies()->DependOnProtector(PropertyCellRef(
           js_heap_broker(), factory()->array_buffer_neutering_protector()));
     } else {
-      // Check if the {receiver}s buffer was neutered.
+      // Check whether {receiver}s JSArrayBuffer was neutered.
       Node* buffer = effect = graph()->NewNode(
           simplified()->LoadField(AccessBuilder::ForJSArrayBufferViewBuffer()),
           receiver, effect, control);
-      Node* check = effect = graph()->NewNode(
-          simplified()->ArrayBufferWasNeutered(), buffer, effect, control);
+      Node* buffer_bit_field = effect = graph()->NewNode(
+          simplified()->LoadField(AccessBuilder::ForJSArrayBufferBitField()),
+          buffer, effect, control);
+      Node* check = graph()->NewNode(
+          simplified()->NumberEqual(),
+          graph()->NewNode(
+              simplified()->NumberBitwiseAnd(), buffer_bit_field,
+              jsgraph()->Constant(JSArrayBuffer::WasNeuteredBit::kMask)),
+          jsgraph()->ZeroConstant());
 
-      // Default to zero if the {receiver}s buffer was neutered.
+      // TODO(turbofan): Ideally we would bail out here if the {receiver}s
+      // JSArrayBuffer was neutered, but there's no way to guard against
+      // deoptimization loops right now, since the JSCall {node} is usually
+      // created from a LOAD_IC inlining, and so there's no CALL_IC slot
+      // from which we could use the speculation bit.
       value = graph()->NewNode(
-          common()->Select(MachineRepresentation::kTagged, BranchHint::kFalse),
-          check, jsgraph()->ZeroConstant(), value);
+          common()->Select(MachineRepresentation::kTagged, BranchHint::kTrue),
+          check, value, jsgraph()->ZeroConstant());
     }
 
     ReplaceWithValue(node, value, effect, control);
@@ -6858,15 +6885,20 @@ Reduction JSCallReducer::ReduceDataViewPrototypeGet(
       dependencies()->DependOnProtector(PropertyCellRef(
           js_heap_broker(), factory()->array_buffer_neutering_protector()));
     } else {
-      // If the buffer was neutered, deopt and let the unoptimized code throw.
-      Node* check_neutered = effect = graph()->NewNode(
-          simplified()->ArrayBufferWasNeutered(), buffer, effect, control);
-      check_neutered =
-          graph()->NewNode(simplified()->BooleanNot(), check_neutered);
+      // Bail out if the {buffer} was neutered.
+      Node* buffer_bit_field = effect = graph()->NewNode(
+          simplified()->LoadField(AccessBuilder::ForJSArrayBufferBitField()),
+          buffer, effect, control);
+      Node* check = graph()->NewNode(
+          simplified()->NumberEqual(),
+          graph()->NewNode(
+              simplified()->NumberBitwiseAnd(), buffer_bit_field,
+              jsgraph()->Constant(JSArrayBuffer::WasNeuteredBit::kMask)),
+          jsgraph()->ZeroConstant());
       effect = graph()->NewNode(
           simplified()->CheckIf(DeoptimizeReason::kArrayBufferWasNeutered,
                                 p.feedback()),
-          check_neutered, effect, control);
+          check, effect, control);
     }
 
     // Get the buffer's backing store.
@@ -6998,15 +7030,20 @@ Reduction JSCallReducer::ReduceDataViewPrototypeSet(
       dependencies()->DependOnProtector(PropertyCellRef(
           js_heap_broker(), factory()->array_buffer_neutering_protector()));
     } else {
-      // If the buffer was neutered, deopt and let the unoptimized code throw.
-      Node* check_neutered = effect = graph()->NewNode(
-          simplified()->ArrayBufferWasNeutered(), buffer, effect, control);
-      check_neutered =
-          graph()->NewNode(simplified()->BooleanNot(), check_neutered);
+      // Bail out if the {buffer} was neutered.
+      Node* buffer_bit_field = effect = graph()->NewNode(
+          simplified()->LoadField(AccessBuilder::ForJSArrayBufferBitField()),
+          buffer, effect, control);
+      Node* check = graph()->NewNode(
+          simplified()->NumberEqual(),
+          graph()->NewNode(
+              simplified()->NumberBitwiseAnd(), buffer_bit_field,
+              jsgraph()->Constant(JSArrayBuffer::WasNeuteredBit::kMask)),
+          jsgraph()->ZeroConstant());
       effect = graph()->NewNode(
           simplified()->CheckIf(DeoptimizeReason::kArrayBufferWasNeutered,
                                 p.feedback()),
-          check_neutered, effect, control);
+          check, effect, control);
     }
 
     // Get the buffer's backing store.

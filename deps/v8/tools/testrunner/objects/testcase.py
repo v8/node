@@ -281,6 +281,10 @@ class TestCase(object):
     """
     return []
 
+  def skip_predictable(self):
+    """Returns True if the test case is not suitable for predictable testing."""
+    return True
+
   @property
   def output_proc(self):
     if self.expected_outcomes is outproc.OUTCOMES_PASS:
@@ -323,17 +327,17 @@ class D8TestCase(TestCase):
       # Files in load statements are relative to base dir.
       add_path(match.group(1))
     for match in MODULE_RESOURCES_PATTERN_1.finditer(source):
-      # Imported files are side by side with the test case.
-      add_path(os.path.join(
-          self.suite.root, os.path.dirname(self.path), match.group(1)))
+      # Imported files are relative to the file importing them.
+      add_path(os.path.join(os.path.dirname(file), match.group(1)))
     for match in MODULE_RESOURCES_PATTERN_2.finditer(source):
-      # Imported files are side by side with the test case.
-      add_path(os.path.join(
-          self.suite.root, os.path.dirname(self.path), match.group(1)))
+      # Imported files are relative to the file importing them.
+      add_path(os.path.join(os.path.dirname(file), match.group(1)))
     return result
 
   def _get_resources(self):
     """Returns the list of files needed by a test case."""
+    if not self._get_source_path():
+      return []
     result = set()
     to_check = [self._get_source_path()]
     # Recurse over all files until reaching a fixpoint.
@@ -346,3 +350,8 @@ class D8TestCase(TestCase):
         if resource not in result and os.path.exists(resource):
           to_check.append(resource)
     return sorted(list(result))
+
+  def skip_predictable(self):
+    """Returns True if the test case is not suitable for predictable testing."""
+    return (statusfile.FAIL in self.expected_outcomes or
+            self.output_proc.negative)

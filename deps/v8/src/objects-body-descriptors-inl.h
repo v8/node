@@ -207,10 +207,8 @@ class JSArrayBuffer::BodyDescriptor final : public BodyDescriptorBase {
   template <typename ObjectVisitor>
   static inline void IterateBody(Map* map, HeapObject* obj, int object_size,
                                  ObjectVisitor* v) {
-    // Array buffers contain raw pointers that the GC does not know about. These
-    // are stored at kBackStoreOffset and later, so we do not iterate over
-    // those.
-    IteratePointers(obj, kPropertiesOrHashOffset, kBackingStoreOffset, v);
+    // JSArrayBuffer instances contain raw data that the GC does not know about.
+    IteratePointers(obj, kPropertiesOrHashOffset, kByteLengthOffset, v);
     IterateBodyImpl(map, obj, kSize, object_size, v);
   }
 
@@ -726,13 +724,16 @@ ReturnType BodyDescriptorApply(InstanceType type, T1 p1, T2 p2, T3 p3, T4 p4) {
     case JS_MESSAGE_OBJECT_TYPE:
     case JS_BOUND_FUNCTION_TYPE:
 #ifdef V8_INTL_SUPPORT
+    case JS_INTL_V8_BREAK_ITERATOR_TYPE:
     case JS_INTL_COLLATOR_TYPE:
     case JS_INTL_DATE_TIME_FORMAT_TYPE:
     case JS_INTL_LIST_FORMAT_TYPE:
     case JS_INTL_LOCALE_TYPE:
+    case JS_INTL_NUMBER_FORMAT_TYPE:
     case JS_INTL_PLURAL_RULES_TYPE:
     case JS_INTL_RELATIVE_TIME_FORMAT_TYPE:
 #endif  // V8_INTL_SUPPORT
+    case WASM_EXCEPTION_TYPE:
     case WASM_GLOBAL_TYPE:
     case WASM_MEMORY_TYPE:
     case WASM_MODULE_TYPE:

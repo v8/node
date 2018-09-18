@@ -116,13 +116,13 @@ ConversionResult convertUTF16ToUTF8(const UChar** sourceStart,
       }
     }
     // Figure out how many bytes the result will require
-    if (ch < (UChar32)0x80) {
+    if (ch < static_cast<UChar32>(0x80)) {
       bytesToWrite = 1;
-    } else if (ch < (UChar32)0x800) {
+    } else if (ch < static_cast<UChar32>(0x800)) {
       bytesToWrite = 2;
-    } else if (ch < (UChar32)0x10000) {
+    } else if (ch < static_cast<UChar32>(0x10000)) {
       bytesToWrite = 3;
-    } else if (ch < (UChar32)0x110000) {
+    } else if (ch < static_cast<UChar32>(0x110000)) {
       bytesToWrite = 4;
     } else {
       bytesToWrite = 3;
@@ -547,7 +547,7 @@ String16 String16::fromUTF8(const char* stringStart, size_t length) {
   UChar* bufferCurrent = bufferStart;
   const char* stringCurrent = stringStart;
   if (convertUTF8ToUTF16(&stringCurrent, stringStart + length, &bufferCurrent,
-                         bufferCurrent + buffer.size(), 0,
+                         bufferCurrent + buffer.size(), nullptr,
                          true) != conversionOK)
     return String16();
 

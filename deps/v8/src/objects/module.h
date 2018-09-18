@@ -27,9 +27,6 @@ class Zone;
 // The runtime representation of an ECMAScript module.
 class Module : public Struct, public NeverReadOnlySpaceObject {
  public:
-  using NeverReadOnlySpaceObject::GetHeap;
-  using NeverReadOnlySpaceObject::GetIsolate;
-
   DECL_CAST(Module)
   DECL_VERIFIER(Module)
   DECL_PRINTER(Module)
@@ -110,6 +107,9 @@ class Module : public Struct, public NeverReadOnlySpaceObject {
                                      int cell_index);
   static void StoreVariable(Handle<Module> module, int cell_index,
                             Handle<Object> value);
+
+  static int ImportIndex(int cell_index);
+  static int ExportIndex(int cell_index);
 
   // Get the namespace object for [module_request] of [module].  If it doesn't
   // exist yet, it is created.

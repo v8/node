@@ -54,6 +54,7 @@
       'x64.debug': 'default_debug_x64',
       'x64.optdebug': 'default_optdebug_x64',
       'x64.release': 'default_release_x64',
+      'x64.release.sample': 'release_x64_sample',
     },
     'client.dynamorio': {
       'linux-v8-dr': 'release_x64',
@@ -208,6 +209,7 @@
       'v8_android_arm64_n5x_rel_ng': 'release_android_arm64',
       'v8_fuchsia_rel_ng': 'release_x64_fuchsia_trybot',
       'v8_linux_rel_ng': 'release_x86_gcmole_trybot',
+      'v8_linux_optional_rel_ng': 'release_x86_trybot',
       'v8_linux_verify_csa_rel_ng': 'release_x86_verify_csa',
       'v8_linux_nodcheck_rel_ng': 'release_x86_minimal_symbols',
       'v8_linux_dbg_ng': 'debug_x86_trybot',
@@ -353,6 +355,8 @@
       'debug', 'x64', 'v8_enable_slow_dchecks'],
     'default_release_x64': [
       'release', 'x64'],
+    'release_x64_sample': [
+      'release', 'x64', 'sample'],
     'default_debug_x86': [
       'debug', 'x86', 'v8_enable_slow_dchecks', 'v8_full_debug'],
     'default_optdebug_x86': [
@@ -625,14 +629,10 @@
       'gn_args': 'is_debug=true v8_enable_backtrace=true',
     },
 
-    'v8_use_multi_snapshots': {
-      'gn_args': 'v8_use_multi_snapshots=true',
-    },
-
     'debug_bot': {
       'mixins': [
         'debug', 'shared', 'goma', 'v8_enable_slow_dchecks',
-        'v8_use_multi_snapshots', 'v8_optimized_debug'],
+        'v8_optimized_debug'],
     },
 
     'debug_trybot': {
@@ -719,7 +719,7 @@
     },
 
     'release_bot': {
-      'mixins': ['release', 'static', 'goma', 'v8_use_multi_snapshots'],
+      'mixins': ['release', 'static', 'goma'],
     },
 
     'release_trybot': {
@@ -885,5 +885,9 @@
       'gn_args': 'target_cpu="x86"',
     },
 
+    'sample': {
+      'gn_args': 'v8_monolithic=true is_component_build=false '
+                 'v8_use_external_startup_data=false use_custom_libcxx=false',
+    },
   },
 }

@@ -1524,14 +1524,19 @@ TF_BUILTIN(ArrayPrototypeShift, CodeStubAssembler) {
   {
     TNode<JSArray> array_receiver = CAST(receiver);
     CSA_ASSERT(this, TaggedIsPositiveSmi(LoadJSArrayLength(array_receiver)));
+
+    // 2) Ensure that the length is writable.
+    //    This check needs to happen before the check for length zero.
+    //    The spec requires a "SetProperty(array, 'length', 0)" call when
+    //    the length is zero. This must throw an exception in the case of a
+    //    read-only length.
+    EnsureArrayLengthWritable(LoadMap(array_receiver), &runtime);
+
     Node* length =
         LoadAndUntagObjectField(array_receiver, JSArray::kLengthOffset);
     Label return_undefined(this), fast_elements_tagged(this),
         fast_elements_smi(this);
     GotoIf(IntPtrEqual(length, IntPtrConstant(0)), &return_undefined);
-
-    // 2) Ensure that the length is writable.
-    EnsureArrayLengthWritable(LoadMap(array_receiver), &runtime);
 
     // 3) Check that the elements backing store isn't copy-on-write.
     Node* elements = LoadElements(array_receiver);
@@ -1679,10 +1684,12 @@ TF_BUILTIN(ExtractFastJSArray, ArrayBuiltinsAssembler) {
 
 TF_BUILTIN(CloneFastJSArray, ArrayBuiltinsAssembler) {
   TNode<Context> context = CAST(Parameter(Descriptor::kContext));
-  Node* array = Parameter(Descriptor::kSource);
+  TNode<JSArray> array = CAST(Parameter(Descriptor::kSource));
 
-  CSA_ASSERT(this, IsJSArray(array));
-  CSA_ASSERT(this, Word32BinaryNot(IsNoElementsProtectorCellInvalid()));
+  CSA_ASSERT(this,
+             Word32Or(Word32BinaryNot(IsHoleyFastElementsKind(
+                          LoadMapElementsKind(LoadMap(array)))),
+                      Word32BinaryNot(IsNoElementsProtectorCellInvalid())));
 
   ParameterMode mode = OptimalParameterMode();
   Return(CloneFastJSArray(context, array, mode));

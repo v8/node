@@ -146,21 +146,23 @@ namespace internal {
   K(FALSE_LITERAL, "false", 0)                                     \
   T(NUMBER, nullptr, 0)                                            \
   T(SMI, nullptr, 0)                                               \
-  T(STRING, nullptr, 0)                                            \
   T(BIGINT, nullptr, 0)                                            \
+  T(STRING, nullptr, 0)                                            \
                                                                    \
+  /* BEGIN AnyIdentifier */                                        \
   /* Identifiers (not keywords or future reserved words). */       \
   T(IDENTIFIER, nullptr, 0)                                        \
   K(ASYNC, "async", 0)                                             \
   /* `await` is a reserved word in module code only */             \
   K(AWAIT, "await", 0)                                             \
-  K(ENUM, "enum", 0)                                               \
+  K(YIELD, "yield", 0)                                             \
   K(LET, "let", 0)                                                 \
   K(STATIC, "static", 0)                                           \
-  K(YIELD, "yield", 0)                                             \
   /* Future reserved words (ECMA-262, section 7.6.1.2). */         \
   T(FUTURE_STRICT_RESERVED_WORD, nullptr, 0)                       \
   T(ESCAPED_STRICT_RESERVED_WORD, nullptr, 0)                      \
+  K(ENUM, "enum", 0)                                               \
+  /* END AnyIdentifier */                                          \
   K(CLASS, "class", 0)                                             \
   K(CONST, "const", 0)                                             \
   K(EXPORT, "export", 0)                                           \
@@ -209,41 +211,46 @@ class Token {
 
   // Returns a string corresponding to the C++ token name
   // (e.g. "LT" for the token LT).
-  static const char* Name(Value tok) {
-    DCHECK_GT(NUM_TOKENS, tok);  // tok is unsigned
-    return name_[tok];
+  static const char* Name(Value token) {
+    DCHECK_GT(NUM_TOKENS, token);  // token is unsigned
+    return name_[token];
   }
+
+  static char TypeForTesting(Value token) { return token_type[token]; }
 
   // Predicates
-  static bool IsKeyword(Value tok) {
-    return token_type[tok] == 'K';
+  static bool IsKeyword(Value token) { return token_type[token] == 'K'; }
+  static bool IsContextualKeyword(Value token) {
+    return IsInRange(token, GET, ANONYMOUS);
   }
-  static bool IsContextualKeyword(Value tok) { return token_type[tok] == 'C'; }
 
-  static bool IsIdentifier(Value tok, LanguageMode language_mode,
+  static bool IsIdentifier(Value token, LanguageMode language_mode,
                            bool is_generator, bool disallow_await) {
-    switch (tok) {
-      case IDENTIFIER:
-      case ASYNC:
-        return true;
-      case ESCAPED_STRICT_RESERVED_WORD:
-      case FUTURE_STRICT_RESERVED_WORD:
-      case LET:
-      case STATIC:
-        return is_sloppy(language_mode);
-      case YIELD:
-        return !is_generator && is_sloppy(language_mode);
-      case AWAIT:
-        return !disallow_await;
-      default:
-        return false;
+    if (IsInRange(token, IDENTIFIER, ASYNC)) return true;
+    if (IsInRange(token, LET, ESCAPED_STRICT_RESERVED_WORD)) {
+      return is_sloppy(language_mode);
     }
-    UNREACHABLE();
+    if (token == AWAIT) return !disallow_await;
+    if (token == YIELD) return !is_generator && is_sloppy(language_mode);
+    return false;
   }
 
-  static bool IsAssignmentOp(Value tok) {
-    return IsInRange(tok, INIT, ASSIGN_EXP);
+  static bool IsAnyIdentifier(Value token) {
+    return IsInRange(token, IDENTIFIER, ENUM);
   }
+
+  static bool IsStrictReservedWord(Value token) {
+    return IsInRange(token, LET, ESCAPED_STRICT_RESERVED_WORD);
+  }
+
+  static bool IsLiteral(Value token) {
+    return IsInRange(token, NULL_LITERAL, STRING);
+  }
+
+  static bool IsAssignmentOp(Value token) {
+    return IsInRange(token, INIT, ASSIGN_EXP);
+  }
+  static bool IsGetOrSet(Value op) { return IsInRange(op, GET, SET); }
 
   static bool IsBinaryOp(Value op) { return IsInRange(op, COMMA, EXP); }
 
@@ -254,10 +261,6 @@ class Token {
   }
 
   static bool IsEqualityOp(Value op) { return IsInRange(op, EQ, EQ_STRICT); }
-
-  static bool IsAnyIdentifier(Value tok) {
-    return IsInRange(tok, IDENTIFIER, ESCAPED_STRICT_RESERVED_WORD);
-  }
 
   static Value BinaryOpForAssignment(Value op) {
     DCHECK(IsInRange(op, ASSIGN_BIT_OR, ASSIGN_EXP));
@@ -285,21 +288,21 @@ class Token {
   // Returns a string corresponding to the JS token string
   // (.e., "<" for the token LT) or nullptr if the token doesn't
   // have a (unique) string (e.g. an IDENTIFIER).
-  static const char* String(Value tok) {
-    DCHECK_GT(NUM_TOKENS, tok);  // tok is unsigned
-    return string_[tok];
+  static const char* String(Value token) {
+    DCHECK_GT(NUM_TOKENS, token);  // token is unsigned
+    return string_[token];
   }
 
-  static uint8_t StringLength(Value tok) {
-    DCHECK_GT(NUM_TOKENS, tok);  // tok is unsigned
-    return string_length_[tok];
+  static uint8_t StringLength(Value token) {
+    DCHECK_GT(NUM_TOKENS, token);  // token is unsigned
+    return string_length_[token];
   }
 
   // Returns the precedence > 0 for binary and compare
   // operators; returns 0 otherwise.
-  static int Precedence(Value tok) {
-    DCHECK_GT(NUM_TOKENS, tok);  // tok is unsigned
-    return precedence_[tok];
+  static int Precedence(Value token) {
+    DCHECK_GT(NUM_TOKENS, token);  // token is unsigned
+    return precedence_[token];
   }
 
  private:

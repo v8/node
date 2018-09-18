@@ -23,7 +23,7 @@ class RegisterTransferWriter final
       public NON_EXPORTED_BASE(ZoneObject) {
  public:
   RegisterTransferWriter(BytecodeArrayBuilder* builder) : builder_(builder) {}
-  ~RegisterTransferWriter() override {}
+  ~RegisterTransferWriter() override = default;
 
   void EmitLdar(Register input) override { builder_->OutputLdarRaw(input); }
 
@@ -1377,6 +1377,12 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::CallAnyReceiver(Register callable,
                                                             RegisterList args,
                                                             int feedback_slot) {
   OutputCallAnyReceiver(callable, args, args.register_count(), feedback_slot);
+  return *this;
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::CallNoFeedback(Register callable,
+                                                           RegisterList args) {
+  OutputCallNoFeedback(callable, args, args.register_count());
   return *this;
 }
 

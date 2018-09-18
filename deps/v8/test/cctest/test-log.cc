@@ -263,9 +263,9 @@ class SimpleExternalString : public v8::String::ExternalStringResource {
     for (int i = 0; i < utf_source_.length(); ++i)
       utf_source_[i] = source[i];
   }
-  virtual ~SimpleExternalString() {}
-  virtual size_t length() const { return utf_source_.length(); }
-  virtual const uint16_t* data() const { return utf_source_.start(); }
+  ~SimpleExternalString() override = default;
+  size_t length() const override { return utf_source_.length(); }
+  const uint16_t* data() const override { return utf_source_.start(); }
  private:
   i::ScopedVector<uint16_t> utf_source_;
 };
@@ -432,8 +432,7 @@ TEST(EquivalenceOfLoggingAndTraversal) {
         "    (function a(j) { return function b() { return j; } })(100);\n"
         "})(this);");
     logger.logger()->StopProfiler();
-    reinterpret_cast<i::Isolate*>(isolate)->heap()->CollectAllGarbage(
-        i::Heap::kMakeHeapIterableMask, i::GarbageCollectionReason::kTesting);
+    CcTest::PreciseCollectAllGarbage();
     logger.StringEvent("test-logging-done", "");
 
     // Iterate heap to find compiled functions, will write to log.
@@ -559,6 +558,7 @@ TEST(Issue539892) {
 TEST(LogAll) {
   SETUP_FLAGS();
   i::FLAG_log_all = true;
+  i::FLAG_turbo_inlining = false;
   v8::Isolate::CreateParams create_params;
   create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
   v8::Isolate* isolate = v8::Isolate::New(create_params);
@@ -584,7 +584,9 @@ TEST(LogAll) {
     CHECK(logger.ContainsLine({"api,v8::Script::Run"}));
     CHECK(logger.ContainsLine({"code-creation,LazyCompile,", "testAddFn"}));
     if (i::FLAG_opt && !i::FLAG_always_opt) {
-      CHECK(logger.ContainsLine({"code-deopt,", "soft"}));
+      CHECK(logger.ContainsLine({"code-deopt,", "eager"}));
+      if (i::FLAG_enable_one_shot_optimization)
+        CHECK(logger.ContainsLine({"code-deopt,", "soft"}));
       CHECK(logger.ContainsLine({"timer-event-start", "V8.DeoptimizeCode"}));
       CHECK(logger.ContainsLine({"timer-event-end", "V8.DeoptimizeCode"}));
     }

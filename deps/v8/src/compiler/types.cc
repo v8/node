@@ -207,10 +207,12 @@ Type::bitset BitsetType::Lub(HeapObjectType const& type) {
     case JS_MESSAGE_OBJECT_TYPE:
     case JS_DATE_TYPE:
 #ifdef V8_INTL_SUPPORT
+    case JS_INTL_V8_BREAK_ITERATOR_TYPE:
     case JS_INTL_COLLATOR_TYPE:
     case JS_INTL_DATE_TIME_FORMAT_TYPE:
     case JS_INTL_LIST_FORMAT_TYPE:
     case JS_INTL_LOCALE_TYPE:
+    case JS_INTL_NUMBER_FORMAT_TYPE:
     case JS_INTL_PLURAL_RULES_TYPE:
     case JS_INTL_RELATIVE_TIME_FORMAT_TYPE:
 #endif  // V8_INTL_SUPPORT
@@ -236,10 +238,11 @@ Type::bitset BitsetType::Lub(HeapObjectType const& type) {
     case JS_WEAK_MAP_TYPE:
     case JS_WEAK_SET_TYPE:
     case JS_PROMISE_TYPE:
-    case WASM_MODULE_TYPE:
+    case WASM_EXCEPTION_TYPE:
     case WASM_GLOBAL_TYPE:
     case WASM_INSTANCE_TYPE:
     case WASM_MEMORY_TYPE:
+    case WASM_MODULE_TYPE:
     case WASM_TABLE_TYPE:
       DCHECK(!type.is_callable());
       DCHECK(!type.is_undetectable());
@@ -300,6 +303,7 @@ Type::bitset BitsetType::Lub(HeapObjectType const& type) {
     case PROPERTY_CELL_TYPE:
     case MODULE_TYPE:
     case MODULE_INFO_ENTRY_TYPE:
+    case MICROTASK_QUEUE_TYPE:
     case CELL_TYPE:
     case PRE_PARSED_SCOPE_DATA_TYPE:
     case UNCOMPILED_DATA_WITHOUT_PRE_PARSED_SCOPE_TYPE:
@@ -1010,14 +1014,16 @@ void Type::PrintTo(std::ostream& os) const {
     os << "(";
     for (int i = 0, n = this->AsUnion()->Length(); i < n; ++i) {
       Type type_i = this->AsUnion()->Get(i);
-      if (i > 0) os << " | " << type_i;
+      if (i > 0) os << " | ";
+      os << type_i;
     }
     os << ")";
   } else if (this->IsTuple()) {
     os << "<";
     for (int i = 0, n = this->AsTuple()->Arity(); i < n; ++i) {
       Type type_i = this->AsTuple()->Element(i);
-      if (i > 0) os << ", " << type_i;
+      if (i > 0) os << ", ";
+      os << type_i;
     }
     os << ">";
   } else {

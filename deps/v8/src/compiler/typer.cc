@@ -1423,6 +1423,7 @@ Type Typer::Visitor::JSCallTyper(Type fun, Typer* t) {
     return Type::NonInternal();
   }
   JSFunctionRef function = fun.AsHeapConstant()->Ref().AsJSFunction();
+  function.Serialize();
   if (!function.shared().HasBuiltinFunctionId()) {
     return Type::NonInternal();
   }
@@ -1493,6 +1494,10 @@ Type Typer::Visitor::JSCallTyper(Type fun, Typer* t) {
 
     // Symbol functions.
     case BuiltinFunctionId::kSymbolConstructor:
+      return Type::Symbol();
+    case BuiltinFunctionId::kSymbolPrototypeToString:
+      return Type::String();
+    case BuiltinFunctionId::kSymbolPrototypeValueOf:
       return Type::Symbol();
 
     // BigInt functions.
@@ -1859,6 +1864,8 @@ Type Typer::Visitor::TypeSpeculativeNumberLessThanOrEqual(Node* node) {
   return TypeBinaryOp(node, NumberLessThanOrEqualTyper);
 }
 
+Type Typer::Visitor::TypeStringConcat(Node* node) { return Type::String(); }
+
 Type Typer::Visitor::TypeStringToNumber(Node* node) {
   return TypeUnaryOp(node, ToNumber);
 }
@@ -1951,18 +1958,8 @@ Type Typer::Visitor::TypePoisonIndex(Node* node) {
 }
 
 Type Typer::Visitor::TypeCheckBounds(Node* node) {
-  Type index = Operand(node, 0);
-  Type length = Operand(node, 1);
-  DCHECK(length.Is(Type::Unsigned31()));
-  if (index.Maybe(Type::MinusZero())) {
-    index = Type::Union(index, typer_->cache_.kSingletonZero, zone());
-  }
-  index = Type::Intersect(index, Type::Integral32(), zone());
-  if (index.IsNone() || length.IsNone()) return Type::None();
-  double min = std::max(index.Min(), 0.0);
-  double max = std::min(index.Max(), length.Max() - 1);
-  if (max < min) return Type::None();
-  return Type::Range(min, max, zone());
+  return typer_->operation_typer_.CheckBounds(Operand(node, 0),
+                                              Operand(node, 1));
 }
 
 Type Typer::Visitor::TypeCheckHeapObject(Node* node) {
@@ -2004,8 +2001,6 @@ Type Typer::Visitor::TypeCheckSymbol(Node* node) {
   Type arg = Operand(node, 0);
   return Type::Intersect(arg, Type::Symbol(), zone());
 }
-
-Type Typer::Visitor::TypeCheckStringAdd(Node* node) { return Type::String(); }
 
 Type Typer::Visitor::TypeCheckFloat64Hole(Node* node) {
   return typer_->operation_typer_.CheckFloat64Hole(Operand(node, 0));
@@ -2196,10 +2191,6 @@ Type Typer::Visitor::TypeNewArgumentsElements(Node* node) {
 }
 
 Type Typer::Visitor::TypeNewConsString(Node* node) { return Type::String(); }
-
-Type Typer::Visitor::TypeArrayBufferWasNeutered(Node* node) {
-  return Type::Boolean();
-}
 
 Type Typer::Visitor::TypeFindOrderedHashMapEntry(Node* node) {
   return Type::Range(-1.0, FixedArray::kMaxLength, zone());

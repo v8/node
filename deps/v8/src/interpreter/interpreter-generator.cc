@@ -1123,7 +1123,7 @@ class UnaryNumericOpAssembler : public InterpreterAssembler {
                           OperandScale operand_scale)
       : InterpreterAssembler(state, bytecode, operand_scale) {}
 
-  virtual ~UnaryNumericOpAssembler() {}
+  virtual ~UnaryNumericOpAssembler() = default;
 
   // Must return a tagged value.
   virtual TNode<Number> SmiOp(TNode<Smi> smi_value, Variable* var_feedback,
@@ -1274,7 +1274,7 @@ IGNITION_HANDLER(Negate, NegateAssemblerImpl) { UnaryOpWithFeedback(); }
 IGNITION_HANDLER(ToName, InterpreterAssembler) {
   Node* object = GetAccumulator();
   Node* context = GetContext();
-  Node* result = ToName(context, object);
+  Node* result = CallBuiltin(Builtins::kToName, context, object);
   StoreRegisterAtOperandIndex(result, 0);
   Dispatch();
 }
@@ -1502,6 +1502,16 @@ class InterpreterJSCallAssembler : public InterpreterAssembler {
     CallJSAndDispatch(function, context, args, receiver_mode);
   }
 
+  // Generates code to perform a JS call without collecting feedback.
+  void JSCallNoFeedback(ConvertReceiverMode receiver_mode) {
+    Node* function = LoadRegisterAtOperandIndex(0);
+    RegListNodePair args = GetRegisterListAtOperandIndex(1);
+    Node* context = GetContext();
+
+    // Call the function and dispatch to the next handler.
+    CallJSAndDispatch(function, context, args, receiver_mode);
+  }
+
   // Generates code to perform a JS call with a known number of arguments that
   // collects type feedback.
   void JSCallN(int arg_count, ConvertReceiverMode receiver_mode) {
@@ -1589,6 +1599,10 @@ IGNITION_HANDLER(CallUndefinedReceiver1, InterpreterJSCallAssembler) {
 
 IGNITION_HANDLER(CallUndefinedReceiver2, InterpreterJSCallAssembler) {
   JSCallN(2, ConvertReceiverMode::kNullOrUndefined);
+}
+
+IGNITION_HANDLER(CallNoFeedback, InterpreterJSCallAssembler) {
+  JSCallNoFeedback(ConvertReceiverMode::kAny);
 }
 
 // CallRuntime <function_id> <first_arg> <arg_count>
@@ -2388,11 +2402,8 @@ IGNITION_HANDLER(CreateEmptyArrayLiteral, InterpreterAssembler) {
 IGNITION_HANDLER(CreateArrayFromIterable, InterpreterAssembler) {
   Node* iterable = GetAccumulator();
   Node* context = GetContext();
-  IteratorBuiltinsAssembler iterator_assembler(state());
-
-  Node* method = iterator_assembler.GetIteratorMethod(context, iterable);
   Node* result =
-      CallBuiltin(Builtins::kIterableToList, context, iterable, method);
+      CallBuiltin(Builtins::kIterableToListWithSymbolLookup, context, iterable);
   SetAccumulator(result);
   Dispatch();
 }

@@ -55,7 +55,7 @@ static void SetGlobalProperty(const char* name, Object* value) {
       isolate->factory()->InternalizeUtf8String(name);
   Handle<JSObject> global(isolate->context()->global_object(), isolate);
   Runtime::SetObjectProperty(isolate, global, internalized_name, object,
-                             LanguageMode::kSloppy)
+                             LanguageMode::kSloppy, StoreOrigin::kMaybeKeyed)
       .Check();
 }
 
@@ -318,7 +318,7 @@ TEST(FeedbackVectorPreservedAcrossRecompiles) {
   MaybeObject* object = feedback_vector->Get(slot_for_a);
   {
     HeapObject* heap_object;
-    CHECK(object->ToWeakHeapObject(&heap_object));
+    CHECK(object->GetHeapObjectIfWeak(&heap_object));
     CHECK(heap_object->IsJSFunction());
   }
 
@@ -330,7 +330,7 @@ TEST(FeedbackVectorPreservedAcrossRecompiles) {
   object = f->feedback_vector()->Get(slot_for_a);
   {
     HeapObject* heap_object;
-    CHECK(object->ToWeakHeapObject(&heap_object));
+    CHECK(object->GetHeapObjectIfWeak(&heap_object));
     CHECK(heap_object->IsJSFunction());
   }
 }

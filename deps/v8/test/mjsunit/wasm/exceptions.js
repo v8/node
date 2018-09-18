@@ -2,10 +2,30 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --expose-wasm --experimental-wasm-eh
+// Flags: --expose-wasm --experimental-wasm-eh --allow-natives-syntax
 
 load("test/mjsunit/wasm/wasm-constants.js");
 load("test/mjsunit/wasm/wasm-module-builder.js");
+
+function assertWasmThrows(instance, runtime_id, values, code) {
+  try {
+    if (typeof code === 'function') {
+      code();
+    } else {
+      eval(code);
+    }
+  } catch (e) {
+    assertInstanceof(e, WebAssembly.RuntimeError);
+    var e_runtime_id = %GetWasmExceptionId(e, instance);
+    assertTrue(Number.isInteger(e_runtime_id));
+    assertEquals(e_runtime_id, runtime_id);
+    var e_values = %GetWasmExceptionValues(e);
+    assertArrayEquals(values, e_values);
+    return;  // Success.
+  }
+  throw new MjsUnitAssertionError('Did not throw expected <' + runtime_id +
+                                  '> with values: ' + values);
+}
 
 // First we just test that "except_ref" local variables are allowed.
 (function TestLocalExceptRef() {
@@ -37,8 +57,23 @@ load("test/mjsunit/wasm/wasm-module-builder.js");
   let instance = builder.instantiate();
 
   assertEquals(1, instance.exports.throw_if_param_not_zero(0));
-  assertWasmThrows(except, [], () => instance.exports.throw_if_param_not_zero(10));
-  assertWasmThrows(except, [], () => instance.exports.throw_if_param_not_zero(-1));
+  assertWasmThrows(instance, except, [], () => instance.exports.throw_if_param_not_zero(10));
+  assertWasmThrows(instance, except, [], () => instance.exports.throw_if_param_not_zero(-1));
+})();
+
+// Test that empty try/catch blocks work.
+(function TestCatchEmptyBlocks() {
+  let builder = new WasmModuleBuilder();
+  let except = builder.addException(kSig_v_v);
+  builder.addFunction("catch_empty_try", kSig_v_v)
+      .addBody([
+        kExprTry, kWasmStmt,
+        kExprCatch, except,
+        kExprEnd,
+      ]).exportFunc();
+  let instance = builder.instantiate();
+
+  assertDoesNotThrow(instance.exports.catch_empty_try);
 })();
 
 // Now that we know throwing works, we test catching the exceptions we raise.
@@ -100,7 +135,7 @@ load("test/mjsunit/wasm/wasm-module-builder.js");
 
   assertEquals(3, instance.exports.catch_different_exceptions(0));
   assertEquals(4, instance.exports.catch_different_exceptions(1));
-  assertWasmThrows(except3, [], () => instance.exports.catch_different_exceptions(2));
+  assertWasmThrows(instance, except3, [], () => instance.exports.catch_different_exceptions(2));
 })();
 
 // Test throwing an exception with multiple values.
@@ -115,7 +150,7 @@ load("test/mjsunit/wasm/wasm-module-builder.js");
       ]).exportFunc();
   let instance = builder.instantiate();
 
-  assertWasmThrows(except, [0, 1, 0, 2], () => instance.exports.throw_1_2());
+  assertWasmThrows(instance, except, [0, 1, 0, 2], () => instance.exports.throw_1_2());
 })();
 
 // Test throwing/catching the i32 parameter value.
@@ -150,8 +185,8 @@ load("test/mjsunit/wasm/wasm-module-builder.js");
       ]).exportFunc();
   let instance = builder.instantiate();
 
-  assertWasmThrows(except, [0, 5], () => instance.exports.throw_param(5));
-  assertWasmThrows(except, [6, 31026], () => instance.exports.throw_param(424242));
+  assertWasmThrows(instance, except, [0, 5], () => instance.exports.throw_param(5));
+  assertWasmThrows(instance, except, [6, 31026], () => instance.exports.throw_param(424242));
 })();
 
 // Test throwing/catching the f32 parameter value.
@@ -185,8 +220,8 @@ load("test/mjsunit/wasm/wasm-module-builder.js");
       ]).exportFunc();
   let instance = builder.instantiate();
 
-  assertWasmThrows(except, [16544, 0], () => instance.exports.throw_param(5.0));
-  assertWasmThrows(except, [16680, 0], () => instance.exports.throw_param(10.5));
+  assertWasmThrows(instance, except, [16544, 0], () => instance.exports.throw_param(5.0));
+  assertWasmThrows(instance, except, [16680, 0], () => instance.exports.throw_param(10.5));
 })();
 
 // Test throwing/catching an I64 value
@@ -238,8 +273,8 @@ load("test/mjsunit/wasm/wasm-module-builder.js");
       ]).exportFunc();
   let instance = builder.instantiate();
 
-  assertWasmThrows(except, [0, 10, 0, 5], () => instance.exports.throw_param(10, 5));
-  assertWasmThrows(except, [65535, 65535, 0, 13], () => instance.exports.throw_param(-1, 13));
+  assertWasmThrows(instance, except, [0, 10, 0, 5], () => instance.exports.throw_param(10, 5));
+  assertWasmThrows(instance, except, [65535, 65535, 0, 13], () => instance.exports.throw_param(-1, 13));
 })();
 
 // Test throwing/catching the F64 parameter value
@@ -274,8 +309,8 @@ load("test/mjsunit/wasm/wasm-module-builder.js");
       ]).exportFunc();
   let instance = builder.instantiate();
 
-  assertWasmThrows(except, [16404, 0, 0, 0], () => instance.exports.throw_param(5.0));
-  assertWasmThrows(except, [16739, 4816, 0, 0], () => instance.exports.throw_param(10000000.5));
+  assertWasmThrows(instance, except, [16404, 0, 0, 0], () => instance.exports.throw_param(5.0));
+  assertWasmThrows(instance, except, [16739, 4816, 0, 0], () => instance.exports.throw_param(10000000.5));
 })();
 
 // Test the encoding of a computed parameter value.
@@ -299,8 +334,8 @@ load("test/mjsunit/wasm/wasm-module-builder.js");
       ]).exportFunc()
   let instance = builder.instantiate();
 
-  assertWasmThrows(except, [65535, 65536-8], () => instance.exports.throw_expr_with_params(1.5, 2.5, 4));
-  assertWasmThrows(except, [0, 12], () => instance.exports.throw_expr_with_params(5.7, 2.5, 4));
+  assertWasmThrows(instance, except, [65535, 65536-8], () => instance.exports.throw_expr_with_params(1.5, 2.5, 4));
+  assertWasmThrows(instance, except, [0, 12], () => instance.exports.throw_expr_with_params(5.7, 2.5, 4));
 })();
 
 // Now that we know catching works locally, we test catching exceptions that
@@ -474,88 +509,83 @@ load("test/mjsunit/wasm/wasm-module-builder.js");
     .exportFunc();
 
   // Scenario 2: Catches an exception raised from the direct callee.
-  let kFromDirectCallee =
-    builder.addFunction("from_direct_callee", kSig_i_i)
-      .addBody([
-        kExprTry, kWasmI32,
-          kExprGetLocal, 0,
-          kExprCallFunction, kWasmThrowFunction,
-          kExprUnreachable,
-        kExprCatch, except,
-        kExprEnd,
-      ])
-      .exportFunc()
-      .index;
-
-  // Scenario 3: Catches an exception raised from an indirect callee.
-  // TODO(mstarzinger): Test case for indirect calls using direct calls not
-  // fooling anyone, switch to actually use indirect calls.
-  let kFromIndirectCalleeHelper = kFromDirectCallee + 1;
-  builder.addFunction("from_indirect_callee_helper", kSig_v_ii)
-    .addBody([
-      kExprGetLocal, 0,
-      kExprI32Const, 0,
-      kExprI32GtS,
-      kExprIf, kWasmStmt,
-        kExprGetLocal, 0,
-        kExprI32Const, 1,
-        kExprI32Sub,
-        kExprGetLocal, 1,
-        kExprI32Const, 1,
-        kExprI32Sub,
-        kExprCallFunction, kFromIndirectCalleeHelper,
-      kExprEnd,
-      kExprGetLocal, 1,
-      kExprCallFunction, kWasmThrowFunction,
-    ]);
-
-  builder.addFunction("from_indirect_callee", kSig_i_i)
+  builder.addFunction("from_direct_callee", kSig_i_i)
     .addBody([
       kExprTry, kWasmI32,
         kExprGetLocal, 0,
-        kExprI32Const, 0,
-        kExprCallFunction, kFromIndirectCalleeHelper,
+        kExprCallFunction, kWasmThrowFunction,
+        kExprUnreachable,
+      kExprCatch, except,
+      kExprEnd,
+    ])
+    .exportFunc();
+
+  // Scenario 3: Catches an exception raised from an indirect callee.
+  let sig_v_i = builder.addType(kSig_v_i);
+  builder.appendToTable([kWasmThrowFunction, kWasmThrowFunction]);
+  builder.addFunction("from_indirect_callee", kSig_i_ii)
+    .addBody([
+      kExprTry, kWasmI32,
+        kExprGetLocal, 0,
+        kExprGetLocal, 1,
+        kExprCallIndirect, sig_v_i, kTableZero,
         kExprUnreachable,
       kExprCatch, except,
       kExprEnd
     ])
     .exportFunc();
 
-  // Scenario 4: Catches an exception raised in JS.
-  builder.addFunction("from_js", kSig_i_i)
+  // Scenario 4: Does not catch an exception raised in JS, even if primitive
+  // values are being used as exceptions.
+  builder.addFunction("i_from_js", kSig_i_i)
     .addBody([
       kExprTry, kWasmI32,
         kExprGetLocal, 0,
         kExprCallFunction, kJSThrowI,
         kExprUnreachable,
       kExprCatch, except,
+        kExprUnreachable,
       kExprEnd,
     ])
     .exportFunc();
 
-  // Scenario 5: Does not catch an exception raised in JS if it is not a
-  // number.
   builder.addFunction("string_from_js", kSig_v_v)
     .addBody([
-        kExprCallFunction, kJSThrowString
+      kExprTry, kWasmStmt,
+        kExprCallFunction, kJSThrowString,
+      kExprCatch, except,
+        kExprUnreachable,
+      kExprEnd,
     ])
     .exportFunc();
 
   builder.addFunction("fp_from_js", kSig_v_v)
     .addBody([
-        kExprCallFunction, kJSThrowFP
+      kExprTry, kWasmStmt,
+        kExprCallFunction, kJSThrowFP,
+      kExprCatch, except,
+        kExprUnreachable,
+      kExprEnd,
     ])
     .exportFunc();
 
   builder.addFunction("large_from_js", kSig_v_v)
     .addBody([
-        kExprCallFunction, kJSThrowLarge
+      kExprTry, kWasmStmt,
+        kExprCallFunction, kJSThrowLarge,
+      kExprCatch, except,
+        kExprUnreachable,
+      kExprEnd,
     ])
     .exportFunc();
 
   builder.addFunction("undefined_from_js", kSig_v_v)
     .addBody([
-        kExprCallFunction, kJSThrowUndefined
+      kExprTry, kWasmStmt,
+        kExprCallFunction, kJSThrowUndefined,
+      kExprCatch, except,
+        kExprUnreachable,
+      kExprEnd,
     ])
     .exportFunc();
 
@@ -583,12 +613,11 @@ load("test/mjsunit/wasm/wasm-module-builder.js");
   assertEquals(3334333, instance.exports.from_direct_callee(3334333));
   assertEquals(-1, instance.exports.from_direct_callee(0xFFFFFFFF));
   assertEquals(0x7FFFFFFF, instance.exports.from_direct_callee(0x7FFFFFFF));
-  assertEquals(-10, instance.exports.from_indirect_callee(10));
-  assertEquals(-77, instance.exports.from_indirect_callee(77));
-  // TODO(mstarzinger): Re-enable the following test cases.
-  /*assertEquals(10, instance.exports.from_js(10));
-  assertEquals(-10, instance.exports.from_js(-10));*/
+  assertEquals(10, instance.exports.from_indirect_callee(10, 0));
+  assertEquals(77, instance.exports.from_indirect_callee(77, 1));
 
+  assertThrowsEquals(() => instance.exports.i_from_js(10), 10);
+  assertThrowsEquals(() => instance.exports.i_from_js(-10), -10);
   assertThrowsEquals(instance.exports.string_from_js, "use wasm");
   assertThrowsEquals(instance.exports.fp_from_js, 10.5);
   assertThrowsEquals(instance.exports.large_from_js, 1e+28);

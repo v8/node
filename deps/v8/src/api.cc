@@ -876,7 +876,7 @@ void RegisteredExtension::UnregisterAll() {
 namespace {
 class ExtensionResource : public String::ExternalOneByteStringResource {
  public:
-  ExtensionResource() : data_(0), length_(0) {}
+  ExtensionResource() : data_(nullptr), length_(0) {}
   ExtensionResource(const char* data, size_t length)
       : data_(data), length_(length) {}
   const char* data() const { return data_; }
@@ -1391,7 +1391,7 @@ static Local<FunctionTemplate> FunctionTemplateNew(
     next_serial_number = isolate->heap()->GetNextTemplateSerialNumber();
   }
   obj->set_serial_number(i::Smi::FromInt(next_serial_number));
-  if (callback != 0) {
+  if (callback != nullptr) {
     Utils::ToLocal(obj)->SetCallHandler(callback, data, side_effect_type);
   }
   obj->set_length(length);
@@ -1676,7 +1676,8 @@ static void TemplateSetAccessor(
     Template* template_obj, v8::Local<Name> name, Getter getter, Setter setter,
     Data data, AccessControl settings, PropertyAttribute attribute,
     v8::Local<AccessorSignature> signature, bool is_special_data_property,
-    bool replace_on_access, SideEffectType getter_side_effect_type) {
+    bool replace_on_access, SideEffectType getter_side_effect_type,
+    SideEffectType setter_side_effect_type) {
   auto info = Utils::OpenHandle(template_obj);
   auto isolate = info->GetIsolate();
   ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
@@ -1686,8 +1687,8 @@ static void TemplateSetAccessor(
                        is_special_data_property, replace_on_access);
   accessor_info->set_initial_property_attributes(
       static_cast<i::PropertyAttributes>(attribute));
-  accessor_info->set_has_no_side_effect(getter_side_effect_type ==
-                                        SideEffectType::kHasNoSideEffect);
+  accessor_info->set_getter_side_effect_type(getter_side_effect_type);
+  accessor_info->set_setter_side_effect_type(setter_side_effect_type);
   i::ApiNatives::AddNativeDataProperty(isolate, info, accessor_info);
 }
 
@@ -1695,29 +1696,34 @@ void Template::SetNativeDataProperty(
     v8::Local<String> name, AccessorGetterCallback getter,
     AccessorSetterCallback setter, v8::Local<Value> data,
     PropertyAttribute attribute, v8::Local<AccessorSignature> signature,
-    AccessControl settings, SideEffectType getter_side_effect_type) {
+    AccessControl settings, SideEffectType getter_side_effect_type,
+    SideEffectType setter_side_effect_type) {
   TemplateSetAccessor(this, name, getter, setter, data, settings, attribute,
-                      signature, true, false, getter_side_effect_type);
+                      signature, true, false, getter_side_effect_type,
+                      setter_side_effect_type);
 }
 
 void Template::SetNativeDataProperty(
     v8::Local<Name> name, AccessorNameGetterCallback getter,
     AccessorNameSetterCallback setter, v8::Local<Value> data,
     PropertyAttribute attribute, v8::Local<AccessorSignature> signature,
-    AccessControl settings, SideEffectType getter_side_effect_type) {
+    AccessControl settings, SideEffectType getter_side_effect_type,
+    SideEffectType setter_side_effect_type) {
   TemplateSetAccessor(this, name, getter, setter, data, settings, attribute,
-                      signature, true, false, getter_side_effect_type);
+                      signature, true, false, getter_side_effect_type,
+                      setter_side_effect_type);
 }
 
 void Template::SetLazyDataProperty(v8::Local<Name> name,
                                    AccessorNameGetterCallback getter,
                                    v8::Local<Value> data,
                                    PropertyAttribute attribute,
-                                   SideEffectType getter_side_effect_type) {
+                                   SideEffectType getter_side_effect_type,
+                                   SideEffectType setter_side_effect_type) {
   TemplateSetAccessor(this, name, getter,
                       static_cast<AccessorNameSetterCallback>(nullptr), data,
                       DEFAULT, attribute, Local<AccessorSignature>(), true,
-                      true, getter_side_effect_type);
+                      true, getter_side_effect_type, setter_side_effect_type);
 }
 
 void Template::SetIntrinsicDataProperty(Local<Name> name, Intrinsic intrinsic,
@@ -1737,10 +1743,11 @@ void ObjectTemplate::SetAccessor(v8::Local<String> name,
                                  v8::Local<Value> data, AccessControl settings,
                                  PropertyAttribute attribute,
                                  v8::Local<AccessorSignature> signature,
-                                 SideEffectType getter_side_effect_type) {
+                                 SideEffectType getter_side_effect_type,
+                                 SideEffectType setter_side_effect_type) {
   TemplateSetAccessor(this, name, getter, setter, data, settings, attribute,
                       signature, i::FLAG_disable_old_api_accessors, false,
-                      getter_side_effect_type);
+                      getter_side_effect_type, setter_side_effect_type);
 }
 
 void ObjectTemplate::SetAccessor(v8::Local<Name> name,
@@ -1749,10 +1756,11 @@ void ObjectTemplate::SetAccessor(v8::Local<Name> name,
                                  v8::Local<Value> data, AccessControl settings,
                                  PropertyAttribute attribute,
                                  v8::Local<AccessorSignature> signature,
-                                 SideEffectType getter_side_effect_type) {
+                                 SideEffectType getter_side_effect_type,
+                                 SideEffectType setter_side_effect_type) {
   TemplateSetAccessor(this, name, getter, setter, data, settings, attribute,
                       signature, i::FLAG_disable_old_api_accessors, false,
-                      getter_side_effect_type);
+                      getter_side_effect_type, setter_side_effect_type);
 }
 
 template <typename Getter, typename Setter, typename Query, typename Descriptor,
@@ -4015,7 +4023,8 @@ Maybe<bool> v8::Object::Set(v8::Local<v8::Context> context,
   auto value_obj = Utils::OpenHandle(*value);
   has_pending_exception =
       i::Runtime::SetObjectProperty(isolate, self, key_obj, value_obj,
-                                    i::LanguageMode::kSloppy)
+                                    i::LanguageMode::kSloppy,
+                                    i::StoreOrigin::kMaybeKeyed)
           .is_null();
   RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
   return Just(true);
@@ -4569,8 +4578,8 @@ static Maybe<bool> ObjectSetAccessor(
     Local<Context> context, Object* self, Local<Name> name, Getter getter,
     Setter setter, Data data, AccessControl settings,
     PropertyAttribute attributes, bool is_special_data_property,
-    bool replace_on_access,
-    SideEffectType getter_side_effect_type = SideEffectType::kHasSideEffect) {
+    bool replace_on_access, SideEffectType getter_side_effect_type,
+    SideEffectType setter_side_effect_type) {
   auto isolate = reinterpret_cast<i::Isolate*>(context->GetIsolate());
   ENTER_V8_NO_SCRIPT(isolate, context, Object, SetAccessor, Nothing<bool>(),
                      i::HandleScope);
@@ -4581,8 +4590,8 @@ static Maybe<bool> ObjectSetAccessor(
   i::Handle<i::AccessorInfo> info =
       MakeAccessorInfo(isolate, name, getter, setter, data, settings, signature,
                        is_special_data_property, replace_on_access);
-  info->set_has_no_side_effect(getter_side_effect_type ==
-                               SideEffectType::kHasNoSideEffect);
+  info->set_getter_side_effect_type(getter_side_effect_type);
+  info->set_setter_side_effect_type(setter_side_effect_type);
   if (info.is_null()) return Nothing<bool>();
   bool fast = obj->HasFastProperties();
   i::Handle<i::Object> result;
@@ -4605,11 +4614,12 @@ Maybe<bool> Object::SetAccessor(Local<Context> context, Local<Name> name,
                                 AccessorNameSetterCallback setter,
                                 MaybeLocal<Value> data, AccessControl settings,
                                 PropertyAttribute attribute,
-                                SideEffectType getter_side_effect_type) {
+                                SideEffectType getter_side_effect_type,
+                                SideEffectType setter_side_effect_type) {
   return ObjectSetAccessor(context, this, name, getter, setter,
                            data.FromMaybe(Local<Value>()), settings, attribute,
                            i::FLAG_disable_old_api_accessors, false,
-                           getter_side_effect_type);
+                           getter_side_effect_type, setter_side_effect_type);
 }
 
 
@@ -4636,19 +4646,22 @@ Maybe<bool> Object::SetNativeDataProperty(
     v8::Local<v8::Context> context, v8::Local<Name> name,
     AccessorNameGetterCallback getter, AccessorNameSetterCallback setter,
     v8::Local<Value> data, PropertyAttribute attributes,
-    SideEffectType getter_side_effect_type) {
+    SideEffectType getter_side_effect_type,
+    SideEffectType setter_side_effect_type) {
   return ObjectSetAccessor(context, this, name, getter, setter, data, DEFAULT,
-                           attributes, true, false, getter_side_effect_type);
+                           attributes, true, false, getter_side_effect_type,
+                           setter_side_effect_type);
 }
 
 Maybe<bool> Object::SetLazyDataProperty(
     v8::Local<v8::Context> context, v8::Local<Name> name,
     AccessorNameGetterCallback getter, v8::Local<Value> data,
-    PropertyAttribute attributes, SideEffectType getter_side_effect_type) {
+    PropertyAttribute attributes, SideEffectType getter_side_effect_type,
+    SideEffectType setter_side_effect_type) {
   return ObjectSetAccessor(context, this, name, getter,
                            static_cast<AccessorNameSetterCallback>(nullptr),
                            data, DEFAULT, attributes, true, true,
-                           getter_side_effect_type);
+                           getter_side_effect_type, setter_side_effect_type);
 }
 
 Maybe<bool> v8::Object::HasOwnProperty(Local<Context> context,
@@ -5938,16 +5951,16 @@ HeapStatistics::HeapStatistics()
       malloced_memory_(0),
       external_memory_(0),
       peak_malloced_memory_(0),
-      does_zap_garbage_(0),
+      does_zap_garbage_(false),
       number_of_native_contexts_(0),
       number_of_detached_contexts_(0) {}
 
-HeapSpaceStatistics::HeapSpaceStatistics(): space_name_(0),
-                                            space_size_(0),
-                                            space_used_size_(0),
-                                            space_available_size_(0),
-                                            physical_space_size_(0) { }
-
+HeapSpaceStatistics::HeapSpaceStatistics()
+    : space_name_(nullptr),
+      space_size_(0),
+      space_used_size_(0),
+      space_available_size_(0),
+      physical_space_size_(0) {}
 
 HeapObjectStatistics::HeapObjectStatistics()
     : object_type_(nullptr),
@@ -7300,14 +7313,6 @@ WasmCompiledModule::BufferReference WasmCompiledModule::GetWasmWireBytesRef() {
   return {bytes_vec.start(), bytes_vec.size()};
 }
 
-Local<String> WasmCompiledModule::GetWasmWireBytes() {
-  BufferReference ref = GetWasmWireBytesRef();
-  CHECK_LE(ref.size, String::kMaxLength);
-  return String::NewFromOneByte(GetIsolate(), ref.start, NewStringType::kNormal,
-                                static_cast<int>(ref.size))
-      .ToLocalChecked();
-}
-
 WasmCompiledModule::TransferrableModule
 WasmCompiledModule::GetTransferrableModule() {
   if (i::FLAG_wasm_shared_code) {
@@ -7509,9 +7514,8 @@ void ArrayBufferDeleter(void* buffer, size_t length, void* info) {
 
 v8::ArrayBuffer::Contents v8::ArrayBuffer::GetContents() {
   i::Handle<i::JSArrayBuffer> self = Utils::OpenHandle(this);
-  size_t byte_length = static_cast<size_t>(self->byte_length()->Number());
   Contents contents(
-      self->backing_store(), byte_length, self->allocation_base(),
+      self->backing_store(), self->byte_length(), self->allocation_base(),
       self->allocation_length(),
       self->is_wasm_memory() ? Allocator::AllocationMode::kReservation
                              : Allocator::AllocationMode::kNormal,
@@ -7539,7 +7543,7 @@ void v8::ArrayBuffer::Neuter() {
 
 size_t v8::ArrayBuffer::ByteLength() const {
   i::Handle<i::JSArrayBuffer> obj = Utils::OpenHandle(this);
-  return static_cast<size_t>(obj->byte_length()->Number());
+  return obj->byte_length();
 }
 
 
@@ -7747,9 +7751,8 @@ v8::SharedArrayBuffer::Contents::Contents(
 
 v8::SharedArrayBuffer::Contents v8::SharedArrayBuffer::GetContents() {
   i::Handle<i::JSArrayBuffer> self = Utils::OpenHandle(this);
-  size_t byte_length = static_cast<size_t>(self->byte_length()->Number());
   Contents contents(
-      self->backing_store(), byte_length, self->allocation_base(),
+      self->backing_store(), self->byte_length(), self->allocation_base(),
       self->allocation_length(),
       self->is_wasm_memory()
           ? ArrayBuffer::Allocator::AllocationMode::kReservation
@@ -7765,7 +7768,7 @@ v8::SharedArrayBuffer::Contents v8::SharedArrayBuffer::GetContents() {
 
 size_t v8::SharedArrayBuffer::ByteLength() const {
   i::Handle<i::JSArrayBuffer> obj = Utils::OpenHandle(this);
-  return static_cast<size_t>(obj->byte_length()->Number());
+  return obj->byte_length();
 }
 
 Local<SharedArrayBuffer> v8::SharedArrayBuffer::New(Isolate* isolate,
@@ -7832,6 +7835,7 @@ Local<Symbol> v8::Symbol::ForApi(Isolate* isolate, Local<String> name) {
 }
 
 #define WELL_KNOWN_SYMBOLS(V)                 \
+  V(AsyncIterator, async_iterator)            \
   V(HasInstance, has_instance)                \
   V(IsConcatSpreadable, is_concat_spreadable) \
   V(Iterator, iterator)                       \
@@ -8132,9 +8136,9 @@ void Isolate::RequestGarbageCollectionForTesting(GarbageCollectionType type) {
         kGCCallbackFlagForced);
   } else {
     DCHECK_EQ(kFullGarbageCollection, type);
-    reinterpret_cast<i::Isolate*>(this)->heap()->CollectAllGarbage(
-        i::Heap::kAbortIncrementalMarkingMask,
-        i::GarbageCollectionReason::kTesting, kGCCallbackFlagForced);
+    reinterpret_cast<i::Isolate*>(this)->heap()->PreciseCollectAllGarbage(
+        i::Heap::kNoGCFlags, i::GarbageCollectionReason::kTesting,
+        kGCCallbackFlagForced);
   }
 }
 
@@ -8271,6 +8275,11 @@ void Isolate::SetHostInitializeImportMetaObjectCallback(
     HostInitializeImportMetaObjectCallback callback) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   isolate->SetHostInitializeImportMetaObjectCallback(callback);
+}
+
+void Isolate::SetPrepareStackTraceCallback(PrepareStackTraceCallback callback) {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
+  isolate->SetPrepareStackTraceCallback(callback);
 }
 
 Isolate::DisallowJavascriptExecutionScope::DisallowJavascriptExecutionScope(
@@ -8698,15 +8707,10 @@ void Isolate::SetStackLimit(uintptr_t stack_limit) {
 
 void Isolate::GetCodeRange(void** start, size_t* length_in_bytes) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
-  if (isolate->heap()->memory_allocator()->code_range()->valid()) {
-    *start = reinterpret_cast<void*>(
-        isolate->heap()->memory_allocator()->code_range()->start());
-    *length_in_bytes =
-        isolate->heap()->memory_allocator()->code_range()->size();
-  } else {
-    *start = nullptr;
-    *length_in_bytes = 0;
-  }
+  const base::AddressRegion& code_range =
+      isolate->heap()->memory_allocator()->code_range();
+  *start = reinterpret_cast<void*>(code_range.begin());
+  *length_in_bytes = code_range.size();
 }
 
 MemoryRange Isolate::GetBuiltinsCodeRange() {
@@ -9098,7 +9102,10 @@ int debug::Script::ColumnOffset() const {
 
 std::vector<int> debug::Script::LineEnds() const {
   i::Handle<i::Script> script = Utils::OpenHandle(this);
-  if (script->type() == i::Script::TYPE_WASM) return std::vector<int>();
+  if (script->type() == i::Script::TYPE_WASM &&
+      this->SourceMappingURL().IsEmpty()) {
+    return std::vector<int>();
+  }
   i::Isolate* isolate = script->GetIsolate();
   i::HandleScope scope(isolate);
   i::Script::InitLineEnds(script);
@@ -9187,7 +9194,8 @@ bool debug::Script::GetPossibleBreakpoints(
     std::vector<debug::BreakLocation>* locations) const {
   CHECK(!start.IsEmpty());
   i::Handle<i::Script> script = Utils::OpenHandle(this);
-  if (script->type() == i::Script::TYPE_WASM) {
+  if (script->type() == i::Script::TYPE_WASM &&
+      this->SourceMappingURL().IsEmpty()) {
     i::WasmModuleObject* module_object =
         i::WasmModuleObject::cast(script->wasm_module_object());
     return module_object->GetPossibleBreakpoints(start, end, locations);
@@ -9238,9 +9246,13 @@ bool debug::Script::GetPossibleBreakpoints(
 int debug::Script::GetSourceOffset(const debug::Location& location) const {
   i::Handle<i::Script> script = Utils::OpenHandle(this);
   if (script->type() == i::Script::TYPE_WASM) {
-    return i::WasmModuleObject::cast(script->wasm_module_object())
-               ->GetFunctionOffset(location.GetLineNumber()) +
-           location.GetColumnNumber();
+    if (this->SourceMappingURL().IsEmpty()) {
+      return i::WasmModuleObject::cast(script->wasm_module_object())
+                 ->GetFunctionOffset(location.GetLineNumber()) +
+             location.GetColumnNumber();
+    }
+    DCHECK_EQ(0, location.GetLineNumber());
+    return location.GetColumnNumber();
   }
 
   int line = std::max(location.GetLineNumber() - script->line_offset(), 0);
@@ -9683,7 +9695,7 @@ int debug::GetNativeAccessorDescriptor(v8::Local<v8::Context> context,
   }
   auto isolate = reinterpret_cast<i::Isolate*>(context->GetIsolate());
   int result = 0;
-#define IS_BUILTIN_ACESSOR(name, _)                         \
+#define IS_BUILTIN_ACESSOR(name, ...)                       \
   if (*structure == *isolate->factory()->name##_accessor()) \
     result |= static_cast<int>(debug::NativeAccessorType::IsBuiltin);
   ACCESSOR_INFO_LIST(IS_BUILTIN_ACESSOR)
@@ -10447,9 +10459,9 @@ void EmbedderHeapTracer::GarbageCollectionForTesting(
   CHECK(i::FLAG_expose_gc);
   i::Heap* const heap = reinterpret_cast<i::Isolate*>(isolate_)->heap();
   heap->SetEmbedderStackStateForNextFinalizaton(stack_state);
-  heap->CollectAllGarbage(i::Heap::kAbortIncrementalMarkingMask,
-                          i::GarbageCollectionReason::kTesting,
-                          kGCCallbackFlagForced);
+  heap->PreciseCollectAllGarbage(i::Heap::kNoGCFlags,
+                                 i::GarbageCollectionReason::kTesting,
+                                 kGCCallbackFlagForced);
 }
 
 bool EmbedderHeapTracer::AdvanceTracing(double deadline_in_ms) {

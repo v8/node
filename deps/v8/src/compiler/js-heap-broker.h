@@ -64,6 +64,10 @@ class HeapObjectType {
   V(JSRegExp)                      \
   /* Subtypes of Context */        \
   V(NativeContext)                 \
+  /* Subtypes of FixedArray */     \
+  V(Context)                       \
+  V(ScopeInfo)                     \
+  V(ScriptContextTable)            \
   /* Subtypes of FixedArrayBase */ \
   V(BytecodeArray)                 \
   V(FixedArray)                    \
@@ -78,10 +82,7 @@ class HeapObjectType {
   V(FeedbackVector)                \
   V(Map)                           \
   V(Module)                        \
-  V(ScopeInfo)                     \
-  V(ScriptContextTable)            \
   V(SharedFunctionInfo)            \
-  V(Context)                       \
   V(FixedArrayBase)                \
   V(HeapNumber)                    \
   V(JSObject)                      \
@@ -126,7 +127,6 @@ class ObjectRef {
   HEAP_BROKER_OBJECT_LIST(HEAP_AS_METHOD_DECL)
 #undef HEAP_AS_METHOD_DECL
 
-  StringRef TypeOf() const;
   bool BooleanValue();
   double OddballToNumber() const;
 
@@ -146,17 +146,14 @@ class HeapObjectRef : public ObjectRef {
 
   HeapObjectType type() const;
   MapRef map() const;
-  base::Optional<MapRef> TryGetObjectCreateMap() const;
-  bool IsSeqString() const;
-  bool IsExternalString() const;
 };
 
 class PropertyCellRef : public HeapObjectRef {
  public:
   using HeapObjectRef::HeapObjectRef;
 
-  ObjectRef value() const;
   PropertyDetails property_details() const;
+  ObjectRef value() const;
 };
 
 class JSObjectRef : public HeapObjectRef {
@@ -169,21 +166,27 @@ class JSObjectRef : public HeapObjectRef {
   FixedArrayBaseRef elements() const;
   void EnsureElementsTenured();
   ElementsKind GetElementsKind() const;
+
+  void SerializeObjectCreateMap();
+  base::Optional<MapRef> GetObjectCreateMap() const;
 };
 
 class JSFunctionRef : public JSObjectRef {
  public:
   using JSObjectRef::JSObjectRef;
 
-  bool IsConstructor() const;
   bool has_initial_map() const;
-  MapRef initial_map() const;
   bool has_prototype() const;
-  ObjectRef prototype() const;
   bool PrototypeRequiresRuntimeLookup() const;
+
+  void Serialize();
+
+  // The following are available only after calling Serialize().
+  ObjectRef prototype() const;
+  MapRef initial_map() const;
   JSGlobalProxyRef global_proxy() const;
-  int InitialMapInstanceSizeWithMinSlack() const;
   SharedFunctionInfoRef shared() const;
+  int InitialMapInstanceSizeWithMinSlack() const;
 };
 
 class JSRegExpRef : public JSObjectRef {
@@ -214,8 +217,9 @@ class MutableHeapNumberRef : public HeapObjectRef {
 class ContextRef : public HeapObjectRef {
  public:
   using HeapObjectRef::HeapObjectRef;
+  void Serialize();
 
-  base::Optional<ContextRef> previous() const;
+  ContextRef previous() const;
   ObjectRef get(int index) const;
 };
 
@@ -238,6 +242,7 @@ class ContextRef : public HeapObjectRef {
   V(Map, set_key_value_iterator_map)          \
   V(Map, set_value_iterator_map)              \
   V(Map, sloppy_arguments_map)                \
+  V(Map, slow_object_with_null_prototype_map) \
   V(Map, strict_arguments_map)                \
   V(Map, string_iterator_map)                 \
   V(ScriptContextTable, script_context_table)
@@ -314,25 +319,27 @@ class MapRef : public HeapObjectRef {
   int GetInObjectPropertyOffset(int index) const;
   ElementsKind elements_kind() const;
   bool is_stable() const;
+  bool is_constructor() const;
   bool has_prototype_slot() const;
   bool is_deprecated() const;
   bool CanBeDeprecated() const;
   bool CanTransition() const;
   bool IsInobjectSlackTrackingInProgress() const;
   bool is_dictionary_map() const;
-  bool IsJSArrayMap() const;
   bool IsFixedCowArrayMap() const;
 
   ObjectRef constructor_or_backpointer() const;
+  ObjectRef prototype() const;
 
   base::Optional<MapRef> AsElementsKind(ElementsKind kind) const;
 
   // Concerning the underlying instance_descriptors:
-  MapRef FindFieldOwner(int descriptor) const;
-  PropertyDetails GetPropertyDetails(int i) const;
-  NameRef GetPropertyKey(int i) const;
-  FieldIndex GetFieldIndexFor(int i) const;
-  ObjectRef GetFieldType(int descriptor) const;
+  void SerializeDescriptors();
+  MapRef FindFieldOwner(int descriptor_index) const;
+  PropertyDetails GetPropertyDetails(int descriptor_index) const;
+  NameRef GetPropertyKey(int descriptor_index) const;
+  FieldIndex GetFieldIndexFor(int descriptor_index) const;
+  ObjectRef GetFieldType(int descriptor_index) const;
   bool IsUnboxedDoubleField(FieldIndex index) const;
 };
 
@@ -401,7 +408,7 @@ class SharedFunctionInfoRef : public HeapObjectRef {
   BytecodeArrayRef GetBytecodeArray() const;
 #define DECL_ACCESSOR(type, name) type name() const;
   BROKER_SFI_FIELDS(DECL_ACCESSOR)
-#undef DECL_ACCSESOR
+#undef DECL_ACCESSOR
 };
 
 class StringRef : public NameRef {
@@ -411,13 +418,17 @@ class StringRef : public NameRef {
   int length() const;
   uint16_t GetFirstChar();
   base::Optional<double> ToNumber();
+  bool IsSeqString() const;
+  bool IsExternalString() const;
 };
 
 class ModuleRef : public HeapObjectRef {
  public:
   using HeapObjectRef::HeapObjectRef;
 
-  CellRef GetCell(int cell_index);
+  void Serialize();
+
+  CellRef GetCell(int cell_index) const;
 };
 
 class CellRef : public HeapObjectRef {
@@ -453,6 +464,8 @@ class V8_EXPORT_PRIVATE JSHeapBroker : public NON_EXPORTED_BASE(ZoneObject) {
   Isolate* isolate() const { return isolate_; }
   Zone* zone() const { return zone_; }
 
+  NativeContextRef native_context();
+
   enum BrokerMode { kDisabled, kSerializing, kSerialized };
   BrokerMode mode() const { return mode_; }
   void StopSerializing() {
@@ -465,6 +478,8 @@ class V8_EXPORT_PRIVATE JSHeapBroker : public NON_EXPORTED_BASE(ZoneObject) {
   ObjectData* GetData(Handle<Object>) const;
   // Never returns nullptr.
   ObjectData* GetOrCreateData(Handle<Object>);
+  // Like the previous but wraps argument in handle first (for convenience).
+  ObjectData* GetOrCreateData(Object*);
 
   void Trace(const char* format, ...) const;
 

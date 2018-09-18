@@ -20,6 +20,7 @@
 #include "src/objects/hash-table-inl.h"
 #include "src/objects/js-array-inl.h"
 #ifdef V8_INTL_SUPPORT
+#include "src/objects/js-break-iterator-inl.h"
 #include "src/objects/js-collator-inl.h"
 #endif  // V8_INTL_SUPPORT
 #include "src/objects/js-collection-inl.h"
@@ -30,16 +31,18 @@
 #ifdef V8_INTL_SUPPORT
 #include "src/objects/js-list-format-inl.h"
 #include "src/objects/js-locale-inl.h"
+#include "src/objects/js-number-format-inl.h"
+#include "src/objects/js-plural-rules-inl.h"
 #endif  // V8_INTL_SUPPORT
 #include "src/objects/js-regexp-inl.h"
 #include "src/objects/js-regexp-string-iterator-inl.h"
 #ifdef V8_INTL_SUPPORT
-#include "src/objects/js-plural-rules-inl.h"
 #include "src/objects/js-relative-time-format-inl.h"
 #endif  // V8_INTL_SUPPORT
 #include "src/objects/literal-objects-inl.h"
 #include "src/objects/maybe-object.h"
 #include "src/objects/microtask-inl.h"
+#include "src/objects/microtask-queue-inl.h"
 #include "src/objects/module-inl.h"
 #include "src/objects/promise-inl.h"
 #include "src/ostreams.h"
@@ -93,10 +96,10 @@ void Object::VerifyPointer(Isolate* isolate, Object* p) {
 
 void MaybeObject::VerifyMaybeObjectPointer(Isolate* isolate, MaybeObject* p) {
   HeapObject* heap_object;
-  if (p->ToStrongOrWeakHeapObject(&heap_object)) {
+  if (p->GetHeapObject(&heap_object)) {
     HeapObject::VerifyHeapPointer(isolate, heap_object);
   } else {
-    CHECK(p->IsSmi() || p->IsClearedWeakHeapObject());
+    CHECK(p->IsSmi() || p->IsCleared());
   }
 }
 
@@ -225,6 +228,7 @@ void HeapObject::HeapObjectVerify(Isolate* isolate) {
     case JS_API_OBJECT_TYPE:
     case JS_SPECIAL_API_OBJECT_TYPE:
     case JS_CONTEXT_EXTENSION_OBJECT_TYPE:
+    case WASM_EXCEPTION_TYPE:
     case WASM_GLOBAL_TYPE:
     case WASM_MEMORY_TYPE:
     case WASM_TABLE_TYPE:
@@ -359,6 +363,9 @@ void HeapObject::HeapObjectVerify(Isolate* isolate) {
       CodeDataContainer::cast(this)->CodeDataContainerVerify(isolate);
       break;
 #ifdef V8_INTL_SUPPORT
+    case JS_INTL_V8_BREAK_ITERATOR_TYPE:
+      JSV8BreakIterator::cast(this)->JSV8BreakIteratorVerify(isolate);
+      break;
     case JS_INTL_COLLATOR_TYPE:
       JSCollator::cast(this)->JSCollatorVerify(isolate);
       break;
@@ -370,6 +377,9 @@ void HeapObject::HeapObjectVerify(Isolate* isolate) {
       break;
     case JS_INTL_LOCALE_TYPE:
       JSLocale::cast(this)->JSLocaleVerify(isolate);
+      break;
+    case JS_INTL_NUMBER_FORMAT_TYPE:
+      JSNumberFormat::cast(this)->JSNumberFormatVerify(isolate);
       break;
     case JS_INTL_PLURAL_RULES_TYPE:
       JSPluralRules::cast(this)->JSPluralRulesVerify(isolate);
@@ -440,8 +450,7 @@ void FeedbackVector::FeedbackVectorVerify(Isolate* isolate) {
   CHECK(IsFeedbackVector());
   MaybeObject* code = optimized_code_weak_or_smi();
   MaybeObject::VerifyMaybeObjectPointer(isolate, code);
-  CHECK(code->IsSmi() || code->IsClearedWeakHeapObject() ||
-        code->IsWeakHeapObject());
+  CHECK(code->IsSmi() || code->IsWeakOrCleared());
 }
 
 template <class Traits>
@@ -709,7 +718,7 @@ void DescriptorArray::DescriptorArrayVerify(Isolate* isolate) {
 
     // Check that properties with private symbols names are non-enumerable.
     for (int descriptor = 0; descriptor < nof_descriptors; descriptor++) {
-      Object* key = get(ToKeyIndex(descriptor))->ToObject();
+      Object* key = get(ToKeyIndex(descriptor))->cast<Object>();
       // number_of_descriptors() may be out of sync with the actual descriptors
       // written during descriptor array construction.
       if (key->IsUndefined(isolate)) continue;
@@ -720,13 +729,14 @@ void DescriptorArray::DescriptorArrayVerify(Isolate* isolate) {
       MaybeObject* value = get(ToValueIndex(descriptor));
       HeapObject* heap_object;
       if (details.location() == kField) {
-        CHECK(value == MaybeObject::FromObject(FieldType::None()) ||
-              value == MaybeObject::FromObject(FieldType::Any()) ||
-              value->IsClearedWeakHeapObject() ||
-              (value->ToWeakHeapObject(&heap_object) && heap_object->IsMap()));
+        CHECK(
+            value == MaybeObject::FromObject(FieldType::None()) ||
+            value == MaybeObject::FromObject(FieldType::Any()) ||
+            value->IsCleared() ||
+            (value->GetHeapObjectIfWeak(&heap_object) && heap_object->IsMap()));
       } else {
-        CHECK(!value->IsWeakOrClearedHeapObject());
-        CHECK(!value->ToObject()->IsMap());
+        CHECK(!value->IsWeakOrCleared());
+        CHECK(!value->cast<Object>()->IsMap());
       }
     }
   }
@@ -1275,6 +1285,13 @@ void PromiseReactionJobTask::PromiseReactionJobTaskVerify(Isolate* isolate) {
         promise_or_capability()->IsPromiseCapability());
 }
 
+void MicrotaskQueue::MicrotaskQueueVerify(Isolate* isolate) {
+  CHECK(IsMicrotaskQueue());
+  VerifyHeapPointer(isolate, queue());
+  VerifySmiField(kPendingMicrotaskCountOffset);
+  CHECK_LE(pending_microtask_count(), queue()->length());
+}
+
 void PromiseFulfillReactionJobTask::PromiseFulfillReactionJobTaskVerify(
     Isolate* isolate) {
   CHECK(IsPromiseFulfillReactionJobTask());
@@ -1450,9 +1467,6 @@ void JSProxy::JSProxyVerify(Isolate* isolate) {
 void JSArrayBuffer::JSArrayBufferVerify(Isolate* isolate) {
   CHECK(IsJSArrayBuffer());
   JSObjectVerify(isolate);
-  VerifyPointer(isolate, byte_length());
-  CHECK(byte_length()->IsSmi() || byte_length()->IsHeapNumber() ||
-        byte_length()->IsUndefined(isolate));
 }
 
 void JSArrayBufferView::JSArrayBufferViewVerify(Isolate* isolate) {
@@ -1581,7 +1595,7 @@ void PrototypeUsers::Verify(WeakArrayList* array) {
   while (empty_slot != kNoEmptySlotsMarker) {
     CHECK_GT(empty_slot, 0);
     CHECK_LT(empty_slot, array->length());
-    empty_slot = Smi::ToInt(array->Get(empty_slot)->ToSmi());
+    empty_slot = Smi::ToInt(array->Get(empty_slot)->cast<Smi>());
     ++empty_slots_count;
   }
 
@@ -1591,8 +1605,8 @@ void PrototypeUsers::Verify(WeakArrayList* array) {
   for (int i = kFirstIndex; i < array->length(); ++i) {
     HeapObject* heap_object;
     MaybeObject* object = array->Get(i);
-    if ((object->ToWeakHeapObject(&heap_object) && heap_object->IsMap()) ||
-        object->IsClearedWeakHeapObject()) {
+    if ((object->GetHeapObjectIfWeak(&heap_object) && heap_object->IsMap()) ||
+        object->IsCleared()) {
       ++weak_maps_count;
     } else {
       CHECK(object->IsSmi());
@@ -1806,9 +1820,8 @@ void Script::ScriptVerify(Isolate* isolate) {
   for (int i = 0; i < shared_function_infos()->length(); ++i) {
     MaybeObject* maybe_object = shared_function_infos()->Get(i);
     HeapObject* heap_object;
-    CHECK(maybe_object->IsWeakHeapObject() ||
-          maybe_object->IsClearedWeakHeapObject() ||
-          (maybe_object->ToStrongHeapObject(&heap_object) &&
+    CHECK(maybe_object->IsWeak() || maybe_object->IsCleared() ||
+          (maybe_object->GetHeapObjectIfStrong(&heap_object) &&
            heap_object->IsUndefined(isolate)));
   }
 }
@@ -1819,12 +1832,11 @@ void NormalizedMapCache::NormalizedMapCacheVerify(Isolate* isolate) {
     for (int i = 0; i < length(); i++) {
       MaybeObject* e = WeakFixedArray::Get(i);
       HeapObject* heap_object;
-      if (e->ToWeakHeapObject(&heap_object)) {
+      if (e->GetHeapObjectIfWeak(&heap_object)) {
         Map::cast(heap_object)->DictionaryMapVerify(isolate);
       } else {
-        CHECK(e->IsClearedWeakHeapObject() ||
-              (e->ToStrongHeapObject(&heap_object) &&
-               heap_object->IsUndefined(isolate)));
+        CHECK(e->IsCleared() || (e->GetHeapObjectIfStrong(&heap_object) &&
+                                 heap_object->IsUndefined(isolate)));
       }
     }
   }
@@ -1877,6 +1889,19 @@ void InterpreterData::InterpreterDataVerify(Isolate* isolate) {
 }
 
 #ifdef V8_INTL_SUPPORT
+void JSV8BreakIterator::JSV8BreakIteratorVerify(Isolate* isolate) {
+  JSObjectVerify(isolate);
+  VerifyObjectField(isolate, kLocaleOffset);
+  VerifyObjectField(isolate, kTypeOffset);
+  VerifyObjectField(isolate, kBreakIteratorOffset);
+  VerifyObjectField(isolate, kUnicodeStringOffset);
+  VerifyObjectField(isolate, kBoundAdoptTextOffset);
+  VerifyObjectField(isolate, kBoundFirstOffset);
+  VerifyObjectField(isolate, kBoundNextOffset);
+  VerifyObjectField(isolate, kBoundCurrentOffset);
+  VerifyObjectField(isolate, kBoundBreakTypeOffset);
+}
+
 void JSCollator::JSCollatorVerify(Isolate* isolate) {
   CHECK(IsJSCollator());
   JSObjectVerify(isolate);
@@ -1886,6 +1911,10 @@ void JSCollator::JSCollatorVerify(Isolate* isolate) {
 
 void JSDateTimeFormat::JSDateTimeFormatVerify(Isolate* isolate) {
   JSObjectVerify(isolate);
+  VerifyObjectField(isolate, kLocaleOffset);
+  VerifyObjectField(isolate, kNumberingSystemOffset);
+  VerifyObjectField(isolate, kICUSimpleDateFormatOffset);
+  VerifyObjectField(isolate, kBoundFormatOffset);
 }
 
 void JSListFormat::JSListFormatVerify(Isolate* isolate) {
@@ -1909,6 +1938,15 @@ void JSLocale::JSLocaleVerify(Isolate* isolate) {
   VerifyObjectField(isolate, kHourCycleOffset);
   VerifyObjectField(isolate, kNumericOffset);
   VerifyObjectField(isolate, kNumberingSystemOffset);
+}
+
+void JSNumberFormat::JSNumberFormatVerify(Isolate* isolate) {
+  CHECK(IsJSNumberFormat());
+  JSObjectVerify(isolate);
+  VerifyObjectField(isolate, kLocaleOffset);
+  VerifyObjectField(isolate, kIcuNumberFormatOffset);
+  VerifyObjectField(isolate, kBoundFormatOffset);
+  VerifyObjectField(isolate, kFlagsOffset);
 }
 
 void JSPluralRules::JSPluralRulesVerify(Isolate* isolate) {

@@ -20,6 +20,14 @@ CAST_ACCESSOR(JSArrayBuffer)
 CAST_ACCESSOR(JSArrayBufferView)
 CAST_ACCESSOR(JSTypedArray)
 
+size_t JSArrayBuffer::byte_length() const {
+  return READ_UINTPTR_FIELD(this, kByteLengthOffset);
+}
+
+void JSArrayBuffer::set_byte_length(size_t value) {
+  WRITE_UINTPTR_FIELD(this, kByteLengthOffset, value);
+}
+
 void* JSArrayBuffer::backing_store() const {
   intptr_t ptr = READ_INTPTR_FIELD(this, kBackingStoreOffset);
   return reinterpret_cast<void*>(ptr);
@@ -29,8 +37,6 @@ void JSArrayBuffer::set_backing_store(void* value, WriteBarrierMode mode) {
   intptr_t ptr = reinterpret_cast<intptr_t>(value);
   WRITE_INTPTR_FIELD(this, kBackingStoreOffset, ptr);
 }
-
-ACCESSORS(JSArrayBuffer, byte_length, Object, kByteLengthOffset)
 
 size_t JSArrayBuffer::allocation_length() const {
   if (backing_store() == nullptr) {
@@ -44,7 +50,7 @@ size_t JSArrayBuffer::allocation_length() const {
     DCHECK_NOT_NULL(data);
     return data->allocation_length;
   }
-  return byte_length()->Number();
+  return byte_length();
 }
 
 void* JSArrayBuffer::allocation_base() const {
@@ -63,11 +69,15 @@ void* JSArrayBuffer::allocation_base() const {
 }
 
 bool JSArrayBuffer::is_wasm_memory() const {
-  bool const is_wasm_memory = IsWasmMemory::decode(bit_field());
+  bool const is_wasm_memory = IsWasmMemoryBit::decode(bit_field());
   DCHECK_EQ(is_wasm_memory,
             GetIsolate()->wasm_engine()->memory_tracker()->IsWasmMemory(
                 backing_store()));
   return is_wasm_memory;
+}
+
+void JSArrayBuffer::set_is_wasm_memory(bool is_wasm_memory) {
+  set_bit_field(IsWasmMemoryBit::update(bit_field(), is_wasm_memory));
 }
 
 void JSArrayBuffer::set_bit_field(uint32_t bits) {
@@ -85,37 +95,17 @@ uint32_t JSArrayBuffer::bit_field() const {
   return READ_UINT32_FIELD(this, kBitFieldOffset);
 }
 
-bool JSArrayBuffer::is_external() { return IsExternal::decode(bit_field()); }
-
-void JSArrayBuffer::set_is_external(bool value) {
-  set_bit_field(IsExternal::update(bit_field(), value));
-}
-
-bool JSArrayBuffer::is_neuterable() {
-  return IsNeuterable::decode(bit_field());
-}
-
-void JSArrayBuffer::set_is_neuterable(bool value) {
-  set_bit_field(IsNeuterable::update(bit_field(), value));
-}
-
-bool JSArrayBuffer::was_neutered() { return WasNeutered::decode(bit_field()); }
-
-void JSArrayBuffer::set_was_neutered(bool value) {
-  set_bit_field(WasNeutered::update(bit_field(), value));
-}
-
-bool JSArrayBuffer::is_shared() { return IsShared::decode(bit_field()); }
-
-void JSArrayBuffer::set_is_shared(bool value) {
-  set_bit_field(IsShared::update(bit_field(), value));
-}
-
-bool JSArrayBuffer::is_growable() { return IsGrowable::decode(bit_field()); }
-
-void JSArrayBuffer::set_is_growable(bool value) {
-  set_bit_field(IsGrowable::update(bit_field(), value));
-}
+// |bit_field| fields.
+BIT_FIELD_ACCESSORS(JSArrayBuffer, bit_field, is_external,
+                    JSArrayBuffer::IsExternalBit)
+BIT_FIELD_ACCESSORS(JSArrayBuffer, bit_field, is_neuterable,
+                    JSArrayBuffer::IsNeuterableBit)
+BIT_FIELD_ACCESSORS(JSArrayBuffer, bit_field, was_neutered,
+                    JSArrayBuffer::WasNeuteredBit)
+BIT_FIELD_ACCESSORS(JSArrayBuffer, bit_field, is_shared,
+                    JSArrayBuffer::IsSharedBit)
+BIT_FIELD_ACCESSORS(JSArrayBuffer, bit_field, is_growable,
+                    JSArrayBuffer::IsGrowableBit)
 
 Object* JSArrayBufferView::byte_offset() const {
   if (WasNeutered()) return Smi::kZero;

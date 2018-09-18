@@ -13,6 +13,7 @@
 #include "src/heap/heap-write-barrier.h"
 #include "src/heap/heap.h"
 
+#include "src/base/atomic-utils.h"
 #include "src/base/platform/platform.h"
 #include "src/counters-inl.h"
 #include "src/feedback-vector.h"
@@ -24,6 +25,7 @@
 #include "src/log.h"
 #include "src/msan.h"
 #include "src/objects-inl.h"
+#include "src/objects/allocation-site-inl.h"
 #include "src/objects/api-callbacks-inl.h"
 #include "src/objects/descriptor-array.h"
 #include "src/objects/literal-objects.h"
@@ -64,7 +66,7 @@ MUTABLE_ROOT_LIST(ROOT_ACCESSOR)
 DATA_HANDLER_LIST(DATA_HANDLER_MAP_ACCESSOR)
 #undef DATA_HANDLER_MAP_ACCESSOR
 
-#define ACCESSOR_INFO_ACCESSOR(accessor_name, AccessorName)                \
+#define ACCESSOR_INFO_ACCESSOR(accessor_name, AccessorName, ...)           \
   AccessorInfo* Heap::accessor_name##_accessor() {                         \
     return AccessorInfo::cast(roots_[k##AccessorName##AccessorRootIndex]); \
   }
@@ -336,8 +338,7 @@ bool Heap::InNewSpace(Object* object) {
 // static
 bool Heap::InNewSpace(MaybeObject* object) {
   HeapObject* heap_object;
-  return object->ToStrongOrWeakHeapObject(&heap_object) &&
-         InNewSpace(heap_object);
+  return object->GetHeapObject(&heap_object) && InNewSpace(heap_object);
 }
 
 // static
@@ -365,8 +366,7 @@ bool Heap::InFromSpace(Object* object) {
 // static
 bool Heap::InFromSpace(MaybeObject* object) {
   HeapObject* heap_object;
-  return object->ToStrongOrWeakHeapObject(&heap_object) &&
-         InFromSpace(heap_object);
+  return object->GetHeapObject(&heap_object) && InFromSpace(heap_object);
 }
 
 // static
@@ -384,8 +384,7 @@ bool Heap::InToSpace(Object* object) {
 // static
 bool Heap::InToSpace(MaybeObject* object) {
   HeapObject* heap_object;
-  return object->ToStrongOrWeakHeapObject(&heap_object) &&
-         InToSpace(heap_object);
+  return object->GetHeapObject(&heap_object) && InToSpace(heap_object);
 }
 
 // static
@@ -581,6 +580,19 @@ int Heap::MaxNumberToStringCacheSize() const {
   // of entries.
   return static_cast<int>(number_string_cache_size * 2);
 }
+
+void Heap::IncrementExternalBackingStoreBytes(ExternalBackingStoreType type,
+                                              size_t amount) {
+  base::CheckedIncrement(&backing_store_bytes_, amount);
+  // TODO(mlippautz): Implement interrupt for global memory allocations that can
+  // trigger garbage collections.
+}
+
+void Heap::DecrementExternalBackingStoreBytes(ExternalBackingStoreType type,
+                                              size_t amount) {
+  base::CheckedDecrement(&backing_store_bytes_, amount);
+}
+
 AlwaysAllocateScope::AlwaysAllocateScope(Isolate* isolate)
     : heap_(isolate->heap()) {
   heap_->always_allocate_scope_count_++;

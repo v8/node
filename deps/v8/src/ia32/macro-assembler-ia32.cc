@@ -326,8 +326,6 @@ void TurboAssembler::CallRecordWriteStub(
       RecordWriteDescriptor::kObject));
   Register slot_parameter(
       callable.descriptor().GetRegisterParameter(RecordWriteDescriptor::kSlot));
-  Register isolate_parameter(callable.descriptor().GetRegisterParameter(
-      RecordWriteDescriptor::kIsolate));
   Register remembered_set_parameter(callable.descriptor().GetRegisterParameter(
       RecordWriteDescriptor::kRememberedSet));
   Register fp_mode_parameter(callable.descriptor().GetRegisterParameter(
@@ -339,8 +337,6 @@ void TurboAssembler::CallRecordWriteStub(
   pop(slot_parameter);
   pop(object_parameter);
 
-  mov(isolate_parameter,
-      Immediate(ExternalReference::isolate_address(isolate())));
   Move(remembered_set_parameter, Smi::FromEnum(remembered_set_action));
   Move(fp_mode_parameter, Smi::FromEnum(fp_mode));
   Call(callable.code(), RelocInfo::CODE_TARGET);
@@ -1368,7 +1364,7 @@ void TurboAssembler::Pshufd(XMMRegister dst, Operand src, uint8_t shuffle) {
   }
 }
 
-void TurboAssembler::Psraw(XMMRegister dst, int8_t shift) {
+void TurboAssembler::Psraw(XMMRegister dst, uint8_t shift) {
   if (CpuFeatures::IsSupported(AVX)) {
     CpuFeatureScope scope(this, AVX);
     vpsraw(dst, dst, shift);
@@ -1377,7 +1373,7 @@ void TurboAssembler::Psraw(XMMRegister dst, int8_t shift) {
   }
 }
 
-void TurboAssembler::Psrlw(XMMRegister dst, int8_t shift) {
+void TurboAssembler::Psrlw(XMMRegister dst, uint8_t shift) {
   if (CpuFeatures::IsSupported(AVX)) {
     CpuFeatureScope scope(this, AVX);
     vpsrlw(dst, dst, shift);
@@ -1397,7 +1393,7 @@ void TurboAssembler::Psignb(XMMRegister dst, Operand src) {
     psignb(dst, src);
     return;
   }
-  UNREACHABLE();
+  FATAL("no AVX or SSE3 support");
 }
 
 void TurboAssembler::Psignw(XMMRegister dst, Operand src) {
@@ -1411,7 +1407,7 @@ void TurboAssembler::Psignw(XMMRegister dst, Operand src) {
     psignw(dst, src);
     return;
   }
-  UNREACHABLE();
+  FATAL("no AVX or SSE3 support");
 }
 
 void TurboAssembler::Psignd(XMMRegister dst, Operand src) {
@@ -1425,7 +1421,7 @@ void TurboAssembler::Psignd(XMMRegister dst, Operand src) {
     psignd(dst, src);
     return;
   }
-  UNREACHABLE();
+  FATAL("no AVX or SSE3 support");
 }
 
 void TurboAssembler::Pshufb(XMMRegister dst, Operand src) {
@@ -1439,7 +1435,7 @@ void TurboAssembler::Pshufb(XMMRegister dst, Operand src) {
     pshufb(dst, src);
     return;
   }
-  UNREACHABLE();
+  FATAL("no AVX or SSE3 support");
 }
 
 void TurboAssembler::Pblendw(XMMRegister dst, Operand src, uint8_t imm8) {
@@ -1453,7 +1449,7 @@ void TurboAssembler::Pblendw(XMMRegister dst, Operand src, uint8_t imm8) {
     pblendw(dst, src, imm8);
     return;
   }
-  UNREACHABLE();
+  FATAL("no AVX or SSE4.1 support");
 }
 
 void TurboAssembler::Palignr(XMMRegister dst, Operand src, uint8_t imm8) {
@@ -1467,10 +1463,10 @@ void TurboAssembler::Palignr(XMMRegister dst, Operand src, uint8_t imm8) {
     palignr(dst, src, imm8);
     return;
   }
-  UNREACHABLE();
+  FATAL("no AVX or SSE3 support");
 }
 
-void TurboAssembler::Pextrb(Register dst, XMMRegister src, int8_t imm8) {
+void TurboAssembler::Pextrb(Register dst, XMMRegister src, uint8_t imm8) {
   if (CpuFeatures::IsSupported(AVX)) {
     CpuFeatureScope scope(this, AVX);
     vpextrb(dst, src, imm8);
@@ -1481,10 +1477,10 @@ void TurboAssembler::Pextrb(Register dst, XMMRegister src, int8_t imm8) {
     pextrb(dst, src, imm8);
     return;
   }
-  UNREACHABLE();
+  FATAL("no AVX or SSE4.1 support");
 }
 
-void TurboAssembler::Pextrw(Register dst, XMMRegister src, int8_t imm8) {
+void TurboAssembler::Pextrw(Register dst, XMMRegister src, uint8_t imm8) {
   if (CpuFeatures::IsSupported(AVX)) {
     CpuFeatureScope scope(this, AVX);
     vpextrw(dst, src, imm8);
@@ -1495,10 +1491,10 @@ void TurboAssembler::Pextrw(Register dst, XMMRegister src, int8_t imm8) {
     pextrw(dst, src, imm8);
     return;
   }
-  UNREACHABLE();
+  FATAL("no AVX or SSE4.1 support");
 }
 
-void TurboAssembler::Pextrd(Register dst, XMMRegister src, int8_t imm8) {
+void TurboAssembler::Pextrd(Register dst, XMMRegister src, uint8_t imm8) {
   if (imm8 == 0) {
     Movd(dst, src);
     return;
@@ -1513,37 +1509,44 @@ void TurboAssembler::Pextrd(Register dst, XMMRegister src, int8_t imm8) {
     pextrd(dst, src, imm8);
     return;
   }
-  DCHECK_LT(imm8, 4);
-  pshufd(xmm0, src, imm8);
-  movd(dst, xmm0);
+  // Without AVX or SSE, we can only have 64-bit values in xmm registers.
+  // We don't have an xmm scratch register, so move the data via the stack. This
+  // path is rarely required, so it's acceptable to be slow.
+  DCHECK_LT(imm8, 2);
+  sub(esp, Immediate(kDoubleSize));
+  movsd(Operand(esp, 0), src);
+  mov(dst, Operand(esp, imm8 * kUInt32Size));
+  add(esp, Immediate(kDoubleSize));
 }
 
-void TurboAssembler::Pinsrd(XMMRegister dst, Operand src, int8_t imm8,
-                            bool is_64_bits) {
+void TurboAssembler::Pinsrd(XMMRegister dst, Operand src, uint8_t imm8) {
+  if (CpuFeatures::IsSupported(AVX)) {
+    CpuFeatureScope scope(this, AVX);
+    vpinsrd(dst, dst, src, imm8);
+    return;
+  }
   if (CpuFeatures::IsSupported(SSE4_1)) {
     CpuFeatureScope sse_scope(this, SSE4_1);
     pinsrd(dst, src, imm8);
     return;
   }
-  if (is_64_bits) {
-    movd(xmm0, src);
-    if (imm8 == 1) {
-      punpckldq(dst, xmm0);
-    } else {
-      DCHECK_EQ(0, imm8);
-      psrlq(dst, 32);
-      punpckldq(xmm0, dst);
-      movaps(dst, xmm0);
-    }
+  // Without AVX or SSE, we can only have 64-bit values in xmm registers.
+  // We don't have an xmm scratch register, so move the data via the stack. This
+  // path is rarely required, so it's acceptable to be slow.
+  DCHECK_LT(imm8, 2);
+  sub(esp, Immediate(kDoubleSize));
+  // Write original content of {dst} to the stack.
+  movsd(Operand(esp, 0), dst);
+  // Overwrite the portion specified in {imm8}.
+  if (src.is_reg_only()) {
+    mov(Operand(esp, imm8 * kUInt32Size), src.reg());
   } else {
-    DCHECK_LT(imm8, 4);
-    push(eax);
-    mov(eax, src);
-    pinsrw(dst, eax, imm8 * 2);
-    shr(eax, 16);
-    pinsrw(dst, eax, imm8 * 2 + 1);
-    pop(eax);
+    movss(dst, src);
+    movss(Operand(esp, imm8 * kUInt32Size), dst);
   }
+  // Load back the full value into {dst}.
+  movsd(dst, Operand(esp, 0));
+  add(esp, Immediate(kDoubleSize));
 }
 
 void TurboAssembler::Lzcnt(Register dst, Operand src) {
@@ -1579,7 +1582,7 @@ void TurboAssembler::Popcnt(Register dst, Operand src) {
     popcnt(dst, src);
     return;
   }
-  UNREACHABLE();
+  FATAL("no POPCNT support");
 }
 
 void MacroAssembler::LoadWeakValue(Register in_out, Label* target_if_cleared) {

@@ -13,13 +13,7 @@ const Register CallInterfaceDescriptor::ContextRegister() { return esi; }
 
 void CallInterfaceDescriptor::DefaultInitializePlatformSpecific(
     CallInterfaceDescriptorData* data, int register_parameter_count) {
-#if defined(V8_TARGET_ARCH_IA32) && defined(V8_EMBEDDED_BUILTINS)
-  // TODO(jgruber,v8:6666): Keep kRootRegister free unconditionally.
   constexpr Register default_stub_registers[] = {eax, ecx, edx, edi};
-  DCHECK(!AreAliased(eax, ecx, edx, edi, kRootRegister));
-#else
-  constexpr Register default_stub_registers[] = {eax, ebx, ecx, edx, edi};
-#endif
   STATIC_ASSERT(arraysize(default_stub_registers) == kMaxBuiltinRegisterParams);
   CHECK_LE(static_cast<size_t>(register_parameter_count),
            arraysize(default_stub_registers));
@@ -29,7 +23,7 @@ void CallInterfaceDescriptor::DefaultInitializePlatformSpecific(
 
 void RecordWriteDescriptor::InitializePlatformSpecific(
     CallInterfaceDescriptorData* data) {
-  static const Register default_stub_registers[] = {ebx, ecx, edx, edi,
+  static const Register default_stub_registers[] = {ecx, edx, edi,
                                                     kReturnRegister0};
 
   data->RestrictAllocatableRegisters(default_stub_registers,
@@ -217,7 +211,7 @@ void ApiCallbackDescriptor::InitializePlatformSpecific(
     CallInterfaceDescriptorData* data) {
   Register registers[] = {
       JavaScriptFrame::context_register(),  // callee context
-      ebx,                                  // call_data
+      eax,                                  // call_data
       ecx,                                  // holder
       edx,                                  // api_function_address
   };
@@ -236,7 +230,7 @@ void InterpreterPushArgsThenCallDescriptor::InitializePlatformSpecific(
     CallInterfaceDescriptorData* data) {
   Register registers[] = {
       eax,  // argument count (not including receiver)
-      ebx,  // address of first argument
+      ecx,  // address of first argument
       edi   // the target callable to be call
   };
   data->InitializePlatformSpecific(arraysize(registers), registers);
@@ -246,9 +240,6 @@ void InterpreterPushArgsThenConstructDescriptor::InitializePlatformSpecific(
     CallInterfaceDescriptorData* data) {
   Register registers[] = {
       eax,  // argument count (not including receiver)
-      edx,  // new target
-      edi,  // constructor
-      ebx,  // allocation site feedback
       ecx,  // address of first argument
   };
   data->InitializePlatformSpecific(arraysize(registers), registers);

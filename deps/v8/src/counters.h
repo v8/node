@@ -401,7 +401,7 @@ class HistogramTimer : public TimedHistogram {
 // Parser is currently reentrant (when it throws an error, we call back
 // into JavaScript and all bets are off), but ElapsedTimer is not
 // reentry-safe. Fix this properly and remove |allow_nesting|.
-class HistogramTimerScope BASE_EMBEDDED {
+class HistogramTimerScope {
  public:
   explicit HistogramTimerScope(HistogramTimer* timer,
                                bool allow_nesting = false)
@@ -439,7 +439,7 @@ enum class OptionalHistogramTimerScopeMode { TAKE_TIME, DONT_TAKE_TIME };
 
 // Helper class for scoping a HistogramTimer.
 // It will not take time if take_time is set to false.
-class OptionalHistogramTimerScope BASE_EMBEDDED {
+class OptionalHistogramTimerScope {
  public:
   OptionalHistogramTimerScope(HistogramTimer* timer,
                               OptionalHistogramTimerScopeMode mode)
@@ -1172,6 +1172,8 @@ class RuntimeCallTimerScope {
   HR(gc_finalize_mark, V8.GCFinalizeMC.Mark, 0, 10000, 101)                    \
   HR(gc_finalize_prologue, V8.GCFinalizeMC.Prologue, 0, 10000, 101)            \
   HR(gc_finalize_sweep, V8.GCFinalizeMC.Sweep, 0, 10000, 101)                  \
+  HR(gc_scavenger_scavenge_main, V8.GCScavenger.ScavengeMain, 0, 10000, 101)   \
+  HR(gc_scavenger_scavenge_roots, V8.GCScavenger.ScavengeRoots, 0, 10000, 101) \
   HR(scavenge_reason, V8.GCScavengeReason, 0, 21, 22)                          \
   HR(young_generation_handling, V8.GCYoungGenerationHandling, 0, 2, 3)         \
   /* Asm/Wasm. */                                                              \

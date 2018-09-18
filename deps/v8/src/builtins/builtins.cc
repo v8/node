@@ -51,9 +51,7 @@ struct BuiltinMetadata {
 #define DECL_TFC(Name, ...) { #Name, Builtins::TFC, {} },
 #define DECL_TFS(Name, ...) { #Name, Builtins::TFS, {} },
 #define DECL_TFH(Name, ...) { #Name, Builtins::TFH, {} },
-#define DECL_BCH(Name, ...) { #Name "Handler", Builtins::BCH, {} }, \
-                            { #Name "WideHandler", Builtins::BCH, {} }, \
-                            { #Name "ExtraWideHandler", Builtins::BCH, {} },
+#define DECL_BCH(Name, ...) { #Name, Builtins::BCH, {} },
 #define DECL_ASM(Name, ...) { #Name, Builtins::ASM, {} },
 const BuiltinMetadata builtin_metadata[] = {
   BUILTIN_LIST(DECL_CPP, DECL_API, DECL_TFJ, DECL_TFC, DECL_TFS, DECL_TFH,

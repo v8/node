@@ -1081,6 +1081,7 @@ void InstructionSelector::VisitBlock(BasicBlock* block) {
     std::reverse(instructions_.begin() + instruction_start,
                  instructions_.end());
     if (!node) return true;
+    if (!source_positions_) return true;
     SourcePosition source_position = source_positions_->GetSourcePosition(node);
     if (source_position.IsKnown() && IsSourcePositionUsed(node)) {
       sequence()->SetSourcePosition(instructions_[instruction_start],
@@ -1467,10 +1468,14 @@ void InstructionSelector::VisitNode(Node* node) {
       return MarkAsFloat64(node), VisitChangeFloat32ToFloat64(node);
     case IrOpcode::kChangeInt32ToFloat64:
       return MarkAsFloat64(node), VisitChangeInt32ToFloat64(node);
+    case IrOpcode::kChangeInt64ToFloat64:
+      return MarkAsFloat64(node), VisitChangeInt64ToFloat64(node);
     case IrOpcode::kChangeUint32ToFloat64:
       return MarkAsFloat64(node), VisitChangeUint32ToFloat64(node);
     case IrOpcode::kChangeFloat64ToInt32:
       return MarkAsWord32(node), VisitChangeFloat64ToInt32(node);
+    case IrOpcode::kChangeFloat64ToInt64:
+      return MarkAsWord64(node), VisitChangeFloat64ToInt64(node);
     case IrOpcode::kChangeFloat64ToUint32:
       return MarkAsWord32(node), VisitChangeFloat64ToUint32(node);
     case IrOpcode::kChangeFloat64ToUint64:
@@ -2284,8 +2289,15 @@ void InstructionSelector::VisitChangeInt32ToInt64(Node* node) {
   UNIMPLEMENTED();
 }
 
+void InstructionSelector::VisitChangeInt64ToFloat64(Node* node) {
+  UNIMPLEMENTED();
+}
 
 void InstructionSelector::VisitChangeUint32ToUint64(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitChangeFloat64ToInt64(Node* node) {
   UNIMPLEMENTED();
 }
 

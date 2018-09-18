@@ -5,7 +5,6 @@
 #include "src/builtins/builtins-typed-array-gen.h"
 
 #include "src/builtins/builtins-constructor-gen.h"
-#include "src/builtins/builtins-iterator-gen.h"
 #include "src/builtins/builtins-utils-gen.h"
 #include "src/builtins/builtins.h"
 #include "src/builtins/growable-fixed-array-gen.h"
@@ -189,14 +188,15 @@ TF_BUILTIN(TypedArrayInitialize, TypedArrayBuiltinsAssembler) {
     //  - Set all embedder fields to Smi(0).
     StoreObjectFieldNoWriteBarrier(buffer, JSArrayBuffer::kBitFieldSlot,
                                    SmiConstant(0));
-    int32_t bitfield_value = (1 << JSArrayBuffer::IsExternal::kShift) |
-                             (1 << JSArrayBuffer::IsNeuterable::kShift);
+    int32_t bitfield_value = (1 << JSArrayBuffer::IsExternalBit::kShift) |
+                             (1 << JSArrayBuffer::IsNeuterableBit::kShift);
     StoreObjectFieldNoWriteBarrier(buffer, JSArrayBuffer::kBitFieldOffset,
                                    Int32Constant(bitfield_value),
                                    MachineRepresentation::kWord32);
 
     StoreObjectFieldNoWriteBarrier(buffer, JSArrayBuffer::kByteLengthOffset,
-                                   byte_length);
+                                   SmiToIntPtr(CAST(byte_length)),
+                                   MachineType::PointerRepresentation());
     StoreObjectFieldNoWriteBarrier(buffer, JSArrayBuffer::kBackingStoreOffset,
                                    SmiConstant(0));
     for (int i = 0; i < v8::ArrayBuffer::kEmbedderFieldCount; i++) {
@@ -399,8 +399,8 @@ void TypedArrayBuiltinsAssembler::ConstructByArrayBuffer(
   BIND(&length_undefined);
   {
     ThrowIfArrayBufferIsDetached(context, buffer, "Construct");
-    Node* buffer_byte_length =
-        LoadObjectField(buffer, JSArrayBuffer::kByteLengthOffset);
+    TNode<Number> buffer_byte_length = ChangeUintPtrToTagged(
+        LoadObjectField<UintPtrT>(buffer, JSArrayBuffer::kByteLengthOffset));
 
     Node* remainder = CallBuiltin(Builtins::kModulus, context,
                                   buffer_byte_length, element_size);
@@ -424,8 +424,8 @@ void TypedArrayBuiltinsAssembler::ConstructByArrayBuffer(
     new_byte_length.Bind(SmiMul(new_length, element_size));
     // Reading the byte length must come after the ToIndex operation, which
     // could cause the buffer to become detached.
-    Node* buffer_byte_length =
-        LoadObjectField(buffer, JSArrayBuffer::kByteLengthOffset);
+    TNode<Number> buffer_byte_length = ChangeUintPtrToTagged(
+        LoadObjectField<UintPtrT>(buffer, JSArrayBuffer::kByteLengthOffset));
 
     Node* end = CallBuiltin(Builtins::kAdd, context, offset.value(),
                             new_byte_length.value());
@@ -511,7 +511,7 @@ void TypedArrayBuiltinsAssembler::ConstructByTypedArray(
   BIND(&check_for_sab);
   TNode<Uint32T> bitfield =
       LoadObjectField<Uint32T>(source_buffer, JSArrayBuffer::kBitFieldOffset);
-  Branch(IsSetWord32<JSArrayBuffer::IsShared>(bitfield), &construct,
+  Branch(IsSetWord32<JSArrayBuffer::IsSharedBit>(bitfield), &construct,
          &if_buffernotshared);
 
   BIND(&if_buffernotshared);
@@ -640,8 +640,9 @@ void TypedArrayBuiltinsAssembler::ConstructByIterable(
   Label fast_path(this), slow_path(this), done(this);
   CSA_ASSERT(this, IsCallable(iterator_fn));
 
-  TNode<JSArray> array_like = CAST(
-      CallBuiltin(Builtins::kIterableToList, context, iterable, iterator_fn));
+  TNode<JSArray> array_like =
+      CAST(CallBuiltin(Builtins::kIterableToListMayPreserveHoles, context,
+                       iterable, iterator_fn));
   TNode<Object> initial_length = LoadJSArrayLength(array_like);
 
   TNode<JSFunction> default_constructor = CAST(LoadContextElement(
@@ -1604,28 +1605,6 @@ TF_BUILTIN(TypedArrayOf, TypedArrayBuiltinsAssembler) {
   BIND(&if_neutered);
   ThrowTypeError(context, MessageTemplate::kDetachedOperation,
                  "%TypedArray%.of");
-}
-
-// This builtin always returns a new JSArray and is thus safe to use even in the
-// presence of code that may call back into user-JS.
-TF_BUILTIN(IterableToList, TypedArrayBuiltinsAssembler) {
-  TNode<Context> context = CAST(Parameter(Descriptor::kContext));
-  TNode<Object> iterable = CAST(Parameter(Descriptor::kIterable));
-  TNode<Object> iterator_fn = CAST(Parameter(Descriptor::kIteratorFn));
-
-  IteratorBuiltinsAssembler iterator_assembler(state());
-  Return(iterator_assembler.IterableToList(context, iterable, iterator_fn));
-}
-
-TF_BUILTIN(IterableToListWithSymbolLookup, TypedArrayBuiltinsAssembler) {
-  TNode<Context> context = CAST(Parameter(Descriptor::kContext));
-  TNode<Object> iterable = CAST(Parameter(Descriptor::kIterable));
-
-  IteratorBuiltinsAssembler iterator_assembler(state());
-  TNode<Object> iterator_fn =
-      iterator_assembler.GetIteratorMethod(context, iterable);
-
-  TailCallBuiltin(Builtins::kIterableToList, context, iterable, iterator_fn);
 }
 
 // ES6 #sec-%typedarray%.from

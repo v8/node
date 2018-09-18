@@ -121,6 +121,8 @@ namespace internal {
   V(PROMISE_REJECT_REACTION_JOB_TASK_TYPE)                         \
   V(PROMISE_RESOLVE_THENABLE_JOB_TASK_TYPE)                        \
                                                                    \
+  V(MICROTASK_QUEUE_TYPE)                                          \
+                                                                   \
   V(ALLOCATION_SITE_TYPE)                                          \
                                                                    \
   V(FIXED_ARRAY_TYPE)                                              \
@@ -205,6 +207,7 @@ namespace internal {
   V(JS_DATA_VIEW_TYPE)
 
 #define INSTANCE_TYPE_LIST_AFTER_INTL(V) \
+  V(WASM_EXCEPTION_TYPE)                 \
   V(WASM_GLOBAL_TYPE)                    \
   V(WASM_INSTANCE_TYPE)                  \
   V(WASM_MEMORY_TYPE)                    \
@@ -216,10 +219,12 @@ namespace internal {
 #ifdef V8_INTL_SUPPORT
 #define INSTANCE_TYPE_LIST(V)          \
   INSTANCE_TYPE_LIST_BEFORE_INTL(V)    \
+  V(JS_INTL_V8_BREAK_ITERATOR_TYPE)    \
   V(JS_INTL_COLLATOR_TYPE)             \
   V(JS_INTL_DATE_TIME_FORMAT_TYPE)     \
   V(JS_INTL_LIST_FORMAT_TYPE)          \
   V(JS_INTL_LOCALE_TYPE)               \
+  V(JS_INTL_NUMBER_FORMAT_TYPE)        \
   V(JS_INTL_PLURAL_RULES_TYPE)         \
   V(JS_INTL_RELATIVE_TIME_FORMAT_TYPE) \
   INSTANCE_TYPE_LIST_AFTER_INTL(V)
@@ -326,7 +331,8 @@ namespace internal {
   V(PROMISE_REJECT_REACTION_JOB_TASK, PromiseRejectReactionJobTask,          \
     promise_reject_reaction_job_task)                                        \
   V(PROMISE_RESOLVE_THENABLE_JOB_TASK, PromiseResolveThenableJobTask,        \
-    promise_resolve_thenable_job_task)
+    promise_resolve_thenable_job_task)                                       \
+  V(MICROTASK_QUEUE, MicrotaskQueue, microtask_queue)
 
 #define ALLOCATION_SITE_LIST(V)                                     \
   V(ALLOCATION_SITE, AllocationSite, WithWeakNext, allocation_site) \

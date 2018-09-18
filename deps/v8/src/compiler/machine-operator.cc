@@ -145,6 +145,7 @@ MachineType AtomicOpType(Operator const* op) {
   V(TruncateFloat64ToWord32, Operator::kNoProperties, 1, 0, 1)            \
   V(ChangeFloat32ToFloat64, Operator::kNoProperties, 1, 0, 1)             \
   V(ChangeFloat64ToInt32, Operator::kNoProperties, 1, 0, 1)               \
+  V(ChangeFloat64ToInt64, Operator::kNoProperties, 1, 0, 1)               \
   V(ChangeFloat64ToUint32, Operator::kNoProperties, 1, 0, 1)              \
   V(ChangeFloat64ToUint64, Operator::kNoProperties, 1, 0, 1)              \
   V(TruncateFloat64ToUint32, Operator::kNoProperties, 1, 0, 1)            \
@@ -155,6 +156,7 @@ MachineType AtomicOpType(Operator const* op) {
   V(TryTruncateFloat32ToUint64, Operator::kNoProperties, 1, 0, 2)         \
   V(TryTruncateFloat64ToUint64, Operator::kNoProperties, 1, 0, 2)         \
   V(ChangeInt32ToFloat64, Operator::kNoProperties, 1, 0, 1)               \
+  V(ChangeInt64ToFloat64, Operator::kNoProperties, 1, 0, 1)               \
   V(Float64SilenceNaN, Operator::kNoProperties, 1, 0, 1)                  \
   V(RoundFloat64ToInt32, Operator::kNoProperties, 1, 0, 1)                \
   V(RoundInt32ToFloat32, Operator::kNoProperties, 1, 0, 1)                \

@@ -306,19 +306,32 @@ class V8_EXPORT_PRIVATE CallInterfaceDescriptor {
   explicit name() : base(key()) {}               \
   static inline CallDescriptors::Key key();
 
-#if defined(V8_TARGET_ARCH_IA32) && defined(V8_EMBEDDED_BUILTINS)
-// TODO(jgruber,v8:6666): Keep kRootRegister free unconditionally.
+#if defined(V8_TARGET_ARCH_IA32)
+// To support all possible cases, we must limit the number of register args for
+// TFS builtins on ia32 to 3. Out of the 6 allocatable registers, esi is taken
+// as the context register and ebx is the root register. One register must
+// remain available to store the jump/call target. Thus 3 registers remain for
+// arguments. The reason this applies to TFS builtins specifically is because
+// this becomes relevant for builtins used as targets of Torque function
+// pointers (which must have a register available to store the target).
+// TODO(jgruber): Ideally we should just decrement kMaxBuiltinRegisterParams but
+// that comes with its own set of complications. It's possible, but requires
+// refactoring the calling convention of other existing stubs.
 constexpr int kMaxBuiltinRegisterParams = 4;
+constexpr int kMaxTFSBuiltinRegisterParams = 3;
 #else
 constexpr int kMaxBuiltinRegisterParams = 5;
+constexpr int kMaxTFSBuiltinRegisterParams = kMaxBuiltinRegisterParams;
 #endif
+STATIC_ASSERT(kMaxTFSBuiltinRegisterParams <= kMaxBuiltinRegisterParams);
 
 #define DECLARE_DEFAULT_DESCRIPTOR(name, base)                                 \
   DECLARE_DESCRIPTOR_WITH_BASE(name, base)                                     \
  protected:                                                                    \
   static const int kRegisterParams =                                           \
-      kParameterCount > kMaxBuiltinRegisterParams ? kMaxBuiltinRegisterParams  \
-                                                  : kParameterCount;           \
+      kParameterCount > kMaxTFSBuiltinRegisterParams                           \
+          ? kMaxTFSBuiltinRegisterParams                                       \
+          : kParameterCount;                                                   \
   static const int kStackParams = kParameterCount - kRegisterParams;           \
   void InitializePlatformSpecific(CallInterfaceDescriptorData* data)           \
       override {                                                               \
@@ -428,7 +441,7 @@ class AllocateDescriptor : public CallInterfaceDescriptor {
  public:
   DEFINE_PARAMETERS_NO_CONTEXT(kRequestedSize)
   DEFINE_RESULT_AND_PARAMETER_TYPES(MachineType::TaggedPointer(),  // result 1
-                                    MachineType::Int32())  // kRequestedSize
+                                    MachineType::IntPtr())  // kRequestedSize
   DECLARE_DESCRIPTOR(AllocateDescriptor, CallInterfaceDescriptor)
 };
 
@@ -654,10 +667,9 @@ class FastNewObjectDescriptor : public CallInterfaceDescriptor {
 
 class RecordWriteDescriptor final : public CallInterfaceDescriptor {
  public:
-  DEFINE_PARAMETERS(kObject, kSlot, kIsolate, kRememberedSet, kFPMode)
+  DEFINE_PARAMETERS(kObject, kSlot, kRememberedSet, kFPMode)
   DEFINE_PARAMETER_TYPES(MachineType::TaggedPointer(),  // kObject
                          MachineType::Pointer(),        // kSlot
-                         MachineType::Pointer(),        // kIsolate
                          MachineType::TaggedSigned(),   // kRememberedSet
                          MachineType::TaggedSigned())   // kFPMode
 
@@ -930,6 +942,9 @@ class CEntry1ArgvOnStackDescriptor : public CallInterfaceDescriptor {
 
 class ApiCallbackDescriptor : public CallInterfaceDescriptor {
  public:
+  // TODO(jgruber): This could be simplified to pass call data on the stack
+  // since this is what the CallApiCallbackStub anyways. This would free a
+  // register.
   DEFINE_PARAMETERS_NO_CONTEXT(kTargetContext, kCallData, kHolder,
                                kApiFunctionAddress)
   DEFINE_PARAMETER_TYPES(MachineType::AnyTagged(),  // kTargetContext
@@ -998,15 +1013,24 @@ class InterpreterPushArgsThenCallDescriptor : public CallInterfaceDescriptor {
 class InterpreterPushArgsThenConstructDescriptor
     : public CallInterfaceDescriptor {
  public:
-  DEFINE_PARAMETERS(kNumberOfArguments, kNewTarget, kConstructor,
-                    kFeedbackElement, kFirstArgument)
+  DEFINE_PARAMETERS(kNumberOfArguments, kFirstArgument, kConstructor,
+                    kNewTarget, kFeedbackElement)
   DEFINE_PARAMETER_TYPES(MachineType::Int32(),      // kNumberOfArguments
-                         MachineType::AnyTagged(),  // kNewTarget
+                         MachineType::Pointer(),    // kFirstArgument
                          MachineType::AnyTagged(),  // kConstructor
-                         MachineType::AnyTagged(),  // kFeedbackElement
-                         MachineType::Pointer())    // kFirstArgument
+                         MachineType::AnyTagged(),  // kNewTarget
+                         MachineType::AnyTagged())  // kFeedbackElement
   DECLARE_DESCRIPTOR(InterpreterPushArgsThenConstructDescriptor,
                      CallInterfaceDescriptor)
+
+#if V8_TARGET_ARCH_IA32
+  static const bool kPassLastArgsOnStack = true;
+#else
+  static const bool kPassLastArgsOnStack = false;
+#endif
+
+  // Pass constructor, new target and feedback element through the stack.
+  static const int kStackArgumentsCount = kPassLastArgsOnStack ? 3 : 0;
 };
 
 class InterpreterCEntry1Descriptor : public CallInterfaceDescriptor {

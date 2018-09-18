@@ -63,8 +63,11 @@ inline bool IsInRange(T value, U lower_limit, U higher_limit) {
   DCHECK_LE(lower_limit, higher_limit);
   STATIC_ASSERT(sizeof(U) <= sizeof(T));
   typedef typename std::make_unsigned<T>::type unsigned_T;
-  return static_cast<unsigned_T>(value - lower_limit) <=
-         static_cast<unsigned_T>(higher_limit - lower_limit);
+  // Use static_cast to support enum classes.
+  return static_cast<unsigned_T>(static_cast<unsigned_T>(value) -
+                                 static_cast<unsigned_T>(lower_limit)) <=
+         static_cast<unsigned_T>(static_cast<unsigned_T>(higher_limit) -
+                                 static_cast<unsigned_T>(lower_limit));
 }
 
 // X must be a power of 2.  Returns the number of trailing zeros.
@@ -529,7 +532,7 @@ inline uint32_t ComputeAddressHash(Address address) {
 // Generated memcpy/memmove
 
 // Initializes the codegen support that depends on CPU features.
-void init_memcopy_functions(Isolate* isolate);
+void init_memcopy_functions();
 
 #if defined(V8_TARGET_ARCH_IA32)
 // Limit below which the extra overhead of the MemCopy function is likely
@@ -1622,18 +1625,86 @@ static inline V ByteReverse(V value) {
   }
 }
 
-// Represents a linked list that threads through the nodes in the linked list.
-// Entries in the list are pointers to nodes. The nodes need to have a T**
-// next() method that returns the location where the next value is stored.
 template <typename T>
-class ThreadedList final {
+struct ThreadedListTraits {
+  static T** next(T* t) { return t->next(); }
+};
+
+// Represents a linked list that threads through the nodes in the linked list.
+// Entries in the list are pointers to nodes. By default nodes need to have a
+// T** next() method that returns the location where the next value is stored.
+// The default can be overwritten by providing a ThreadedTraits class.
+template <typename T, typename BaseClass,
+          typename TLTraits = ThreadedListTraits<T>>
+class ThreadedListBase final : public BaseClass {
  public:
-  ThreadedList() : head_(nullptr), tail_(&head_) {}
+  ThreadedListBase() : head_(nullptr), tail_(&head_) {}
   void Add(T* v) {
     DCHECK_NULL(*tail_);
-    DCHECK_NULL(*v->next());
+    DCHECK_NULL(*TLTraits::next(v));
     *tail_ = v;
-    tail_ = v->next();
+    tail_ = TLTraits::next(v);
+  }
+
+  void AddFront(T* v) {
+    DCHECK_NULL(*TLTraits::next(v));
+    DCHECK_NOT_NULL(v);
+    T** const next = TLTraits::next(v);
+
+    *next = head_;
+    if (head_ == nullptr) tail_ = next;
+    head_ = v;
+  }
+
+  // Reinitializing the head to a new node, this costs O(n).
+  void ReinitializeHead(T* v) {
+    head_ = v;
+    T* current = v;
+    if (current != nullptr) {  // Find tail
+      T* tmp;
+      while ((tmp = *TLTraits::next(current))) {
+        current = tmp;
+      }
+      tail_ = TLTraits::next(current);
+    } else {
+      tail_ = &head_;
+    }
+
+    SLOW_DCHECK(Verify());
+  }
+
+  void DropHead() {
+    DCHECK_NOT_NULL(head_);
+    SLOW_DCHECK(Verify());
+
+    T* old_head = head_;
+    head_ = *TLTraits::next(head_);
+    if (head_ == nullptr) tail_ = &head_;
+    *TLTraits::next(old_head) = nullptr;
+  }
+
+  void Append(ThreadedListBase&& list) {
+    SLOW_DCHECK(Verify());
+    SLOW_DCHECK(list.Verify());
+
+    *tail_ = list.head_;
+    tail_ = list.tail_;
+    list.Clear();
+  }
+
+  void Prepend(ThreadedListBase&& list) {
+    SLOW_DCHECK(Verify());
+    SLOW_DCHECK(list.Verify());
+
+    if (list.head_ == nullptr) return;
+
+    T* new_head = list.head_;
+    *list.tail_ = head_;
+    if (head_ == nullptr) {
+      tail_ = list.tail_;
+    }
+    head_ = new_head;
+    list.Clear();
   }
 
   void Clear() {
@@ -1641,18 +1712,72 @@ class ThreadedList final {
     tail_ = &head_;
   }
 
+  ThreadedListBase& operator=(ThreadedListBase&& other) V8_NOEXCEPT {
+    head_ = other.head_;
+    tail_ = other.head_ ? other.tail_ : &head_;
+#ifdef DEBUG
+    other.Clear();
+#endif
+    return *this;
+  }
+
+  ThreadedListBase(ThreadedListBase&& other) V8_NOEXCEPT
+      : head_(other.head_),
+        tail_(other.head_ ? other.tail_ : &head_) {
+#ifdef DEBUG
+    other.Clear();
+#endif
+  }
+
+  bool Remove(T* v) {
+    SLOW_DCHECK(Verify());
+
+    T* current = first();
+    if (current == v) {
+      DropHead();
+      return true;
+    }
+
+    while (current != nullptr) {
+      T* next = *TLTraits::next(current);
+      if (next == v) {
+        *TLTraits::next(current) = *TLTraits::next(next);
+        *TLTraits::next(next) = nullptr;
+
+        if (TLTraits::next(next) == tail_) {
+          tail_ = TLTraits::next(current);
+        }
+        return true;
+      }
+      current = next;
+    }
+    return false;
+  }
+
   class Iterator final {
    public:
+    using iterator_category = std::forward_iterator_tag;
+    using difference_type = std::ptrdiff_t;
+    using value_type = T*;
+    using reference = value_type;
+    using pointer = value_type*;
+
+   public:
     Iterator& operator++() {
-      entry_ = (*entry_)->next();
+      entry_ = TLTraits::next(*entry_);
       return *this;
     }
-    bool operator!=(const Iterator& other) { return entry_ != other.entry_; }
+    bool operator==(const Iterator& other) const {
+      return entry_ == other.entry_;
+    }
+    bool operator!=(const Iterator& other) const {
+      return entry_ != other.entry_;
+    }
     T* operator*() { return *entry_; }
     T* operator->() { return *entry_; }
     Iterator& operator=(T* entry) {
-      T* next = *(*entry_)->next();
-      *entry->next() = next;
+      T* next = *TLTraits::next(*entry_);
+      *TLTraits::next(entry) = next;
       *entry_ = entry;
       return *this;
     }
@@ -1662,16 +1787,26 @@ class ThreadedList final {
 
     T** entry_;
 
-    friend class ThreadedList;
+    friend class ThreadedListBase;
   };
 
   class ConstIterator final {
    public:
+    using iterator_category = std::forward_iterator_tag;
+    using difference_type = std::ptrdiff_t;
+    using value_type = T*;
+    using reference = const value_type;
+    using pointer = const value_type*;
+
+   public:
     ConstIterator& operator++() {
-      entry_ = (*entry_)->next();
+      entry_ = TLTraits::next(*entry_);
       return *this;
     }
-    bool operator!=(const ConstIterator& other) {
+    bool operator==(const ConstIterator& other) const {
+      return entry_ == other.entry_;
+    }
+    bool operator!=(const ConstIterator& other) const {
       return entry_ != other.entry_;
     }
     const T* operator*() const { return *entry_; }
@@ -1681,7 +1816,7 @@ class ThreadedList final {
 
     T* const* entry_;
 
-    friend class ThreadedList;
+    friend class ThreadedListBase;
   };
 
   Iterator begin() { return Iterator(&head_); }
@@ -1690,21 +1825,34 @@ class ThreadedList final {
   ConstIterator begin() const { return ConstIterator(&head_); }
   ConstIterator end() const { return ConstIterator(tail_); }
 
+  // Rewinds the list's tail to the reset point, i.e., cutting of the rest of
+  // the list, including the reset_point.
   void Rewind(Iterator reset_point) {
+    SLOW_DCHECK(Verify());
+
     tail_ = reset_point.entry_;
     *tail_ = nullptr;
   }
 
-  void MoveTail(ThreadedList<T>* parent, Iterator location) {
-    if (parent->end() != location) {
+  // Moves the tail of the from_list, starting at the from_location, to the end
+  // of this list.
+  void MoveTail(ThreadedListBase* from_list, Iterator from_location) {
+    SLOW_DCHECK(Verify());
+
+    if (from_list->end() != from_location) {
       DCHECK_NULL(*tail_);
-      *tail_ = *location;
-      tail_ = parent->tail_;
-      parent->Rewind(location);
+      *tail_ = *from_location;
+      tail_ = from_list->tail_;
+      from_list->Rewind(from_location);
+
+      SLOW_DCHECK(Verify());
+      SLOW_DCHECK(from_list->Verify());
     }
   }
 
   bool is_empty() const { return head_ == nullptr; }
+
+  T* first() const { return head_; }
 
   // Slow. For testing purposes.
   int LengthForTest() {
@@ -1712,17 +1860,36 @@ class ThreadedList final {
     for (Iterator t = begin(); t != end(); ++t) ++result;
     return result;
   }
+
   T* AtForTest(int i) {
     Iterator t = begin();
     while (i-- > 0) ++t;
     return *t;
   }
 
+  bool Verify() {
+    T* last = this->first();
+    if (last == nullptr) {
+      CHECK_EQ(&head_, tail_);
+    } else {
+      while (*TLTraits::next(last) != nullptr) {
+        last = *TLTraits::next(last);
+      }
+      CHECK_EQ(TLTraits::next(last), tail_);
+    }
+    return true;
+  }
+
  private:
   T* head_;
   T** tail_;
-  DISALLOW_COPY_AND_ASSIGN(ThreadedList);
+  DISALLOW_COPY_AND_ASSIGN(ThreadedListBase);
 };
+
+struct EmptyBase {};
+
+template <typename T, typename TLTraits = ThreadedListTraits<T>>
+using ThreadedList = ThreadedListBase<T, EmptyBase, TLTraits>;
 
 V8_EXPORT_PRIVATE bool PassesFilter(Vector<const char> name,
                                     Vector<const char> filter);

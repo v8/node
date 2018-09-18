@@ -212,26 +212,32 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
 #define HARMONY_INPROGRESS_BASE(V)                                    \
   V(harmony_do_expressions, "harmony do-expressions")                 \
   V(harmony_class_fields, "harmony fields in class literals")         \
-  V(harmony_static_fields, "harmony static fields in class literals") \
   V(harmony_await_optimization, "harmony await taking 1 tick")
 
 #ifdef V8_INTL_SUPPORT
-#define HARMONY_INPROGRESS(V)                    \
-  HARMONY_INPROGRESS_BASE(V)                     \
-  V(harmony_locale, "Intl.Locale")               \
-  V(harmony_intl_list_format, "Intl.ListFormat") \
-  V(harmony_intl_relative_time_format, "Intl.RelativeTimeFormat")
+#define HARMONY_INPROGRESS(V)      \
+  HARMONY_INPROGRESS_BASE(V)       \
+  V(harmony_locale, "Intl.Locale") \
+  V(harmony_intl_list_format, "Intl.ListFormat")
 #else
 #define HARMONY_INPROGRESS(V) HARMONY_INPROGRESS_BASE(V)
 #endif
 
 // Features that are complete (but still behind --harmony/es-staging flag).
-#define HARMONY_STAGED(V)                                                  \
+#define HARMONY_STAGED_BASE(V)                                             \
   V(harmony_public_fields, "harmony public fields in class literals")      \
   V(harmony_private_fields, "harmony private fields in class literals")    \
   V(harmony_numeric_separator, "harmony numeric separator between digits") \
   V(harmony_string_matchall, "harmony String.prototype.matchAll")          \
-  V(harmony_global, "harmony global")
+  V(harmony_static_fields, "harmony static fields in class literals")
+
+#ifdef V8_INTL_SUPPORT
+#define HARMONY_STAGED(V) \
+  HARMONY_STAGED_BASE(V)  \
+  V(harmony_intl_relative_time_format, "Intl.RelativeTimeFormat")
+#else
+#define HARMONY_STAGED(V) HARMONY_STAGED_BASE(V)
+#endif
 
 // Features that are shipping (turned on by default, but internal flag remains).
 #define HARMONY_SHIPPING(V)                                              \
@@ -243,7 +249,8 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
   V(harmony_dynamic_import, "harmony dynamic import")                    \
   V(harmony_array_prototype_values, "harmony Array.prototype.values")    \
   V(harmony_array_flat, "harmony Array.prototype.{flat,flatMap}")        \
-  V(harmony_symbol_description, "harmony Symbol.prototype.description")
+  V(harmony_symbol_description, "harmony Symbol.prototype.description")  \
+  V(harmony_global, "harmony global")
 
 // Once a shipping feature has proved stable in the wild, it will be dropped
 // from HARMONY_SHIPPING, all occurrences of the FLAG_ variable are removed,
@@ -317,7 +324,7 @@ DEFINE_BOOL(optimize_for_size, false,
             "speed")
 
 // Flag for one shot optimiztions.
-DEFINE_BOOL(enable_one_shot_optimization, false,
+DEFINE_BOOL(enable_one_shot_optimization, true,
             "Enable size optimizations for the code that will "
             "only be executed once")
 
@@ -874,8 +881,6 @@ DEFINE_BOOL(expose_trigger_failure, false, "expose trigger-failure extension")
 DEFINE_INT(stack_trace_limit, 10, "number of stack frames to capture")
 DEFINE_BOOL(builtins_in_stack_traces, false,
             "show built-in functions in stack traces")
-DEFINE_BOOL(enable_experimental_builtins, false,
-            "enable new csa-based experimental builtins")
 DEFINE_BOOL(disallow_code_generation_from_strings, false,
             "disallow eval and friends")
 DEFINE_BOOL(expose_async_hooks, false, "expose async_hooks object")
@@ -1154,6 +1159,9 @@ DEFINE_ARGS(js_arguments,
             "Pass all remaining arguments to the script. Alias for \"--\".")
 DEFINE_BOOL(mock_arraybuffer_allocator, false,
             "Use a mock ArrayBuffer allocator for testing.")
+DEFINE_SIZE_T(mock_arraybuffer_allocator_limit, 0,
+              "Memory limit for mock ArrayBuffer allocator used to simulate "
+              "OOM for testing.")
 
 //
 // GDB JIT integration flags.

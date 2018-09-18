@@ -22,8 +22,8 @@ namespace interpreter {
 
 class BytecodeArrayBuilderTest : public TestWithIsolateAndZone {
  public:
-  BytecodeArrayBuilderTest() {}
-  ~BytecodeArrayBuilderTest() override {}
+  BytecodeArrayBuilderTest() = default;
+  ~BytecodeArrayBuilderTest() override = default;
 };
 
 using ToBooleanMode = BytecodeArrayBuilder::ToBooleanMode;
@@ -194,7 +194,8 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
       .CallRuntime(Runtime::kIsArray, reg)
       .CallRuntimeForPair(Runtime::kLoadLookupSlotForCall, reg_list, pair)
       .CallJSRuntime(Context::OBJECT_CREATE, reg_list)
-      .CallWithSpread(reg, reg_list, 1);
+      .CallWithSpread(reg, reg_list, 1)
+      .CallNoFeedback(reg, reg_list);
 
   // Emit binary operator invocations.
   builder.BinaryOperation(Token::Value::ADD, reg, 1)

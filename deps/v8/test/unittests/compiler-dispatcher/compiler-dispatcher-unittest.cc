@@ -238,7 +238,7 @@ class MockPlatform : public v8::Platform {
     TaskWrapper(MockPlatform* platform,
                 std::vector<std::unique_ptr<Task>> tasks, bool signal)
         : platform_(platform), tasks_(std::move(tasks)), signal_(signal) {}
-    ~TaskWrapper() = default;
+    ~TaskWrapper() override = default;
 
     void Run() override {
       for (auto& task : tasks_) {
@@ -826,7 +826,7 @@ class PressureNotificationTask : public CancelableTask {
   PressureNotificationTask(Isolate* isolate, CompilerDispatcher* dispatcher,
                            base::Semaphore* sem)
       : CancelableTask(isolate), dispatcher_(dispatcher), sem_(sem) {}
-  ~PressureNotificationTask() override {}
+  ~PressureNotificationTask() override = default;
 
   void RunInternal() override {
     dispatcher_->MemoryPressureNotification(v8::MemoryPressureLevel::kCritical,

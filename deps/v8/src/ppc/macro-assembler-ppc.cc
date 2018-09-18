@@ -483,8 +483,6 @@ void TurboAssembler::CallRecordWriteStub(
       RecordWriteDescriptor::kObject));
   Register slot_parameter(
       callable.descriptor().GetRegisterParameter(RecordWriteDescriptor::kSlot));
-  Register isolate_parameter(callable.descriptor().GetRegisterParameter(
-      RecordWriteDescriptor::kIsolate));
   Register remembered_set_parameter(callable.descriptor().GetRegisterParameter(
       RecordWriteDescriptor::kRememberedSet));
   Register fp_mode_parameter(callable.descriptor().GetRegisterParameter(
@@ -496,7 +494,6 @@ void TurboAssembler::CallRecordWriteStub(
   pop(slot_parameter);
   pop(object_parameter);
 
-  Move(isolate_parameter, ExternalReference::isolate_address(isolate()));
   Move(remembered_set_parameter, Smi::FromEnum(remembered_set_action));
   Move(fp_mode_parameter, Smi::FromEnum(fp_mode));
   Call(callable.code(), RelocInfo::CODE_TARGET);
@@ -909,11 +906,10 @@ void TurboAssembler::LoadPC(Register dst) {
 }
 
 void TurboAssembler::ComputeCodeStartAddress(Register dst) {
-  Label current_pc;
-  mov_label_addr(dst, &current_pc);
-
-  bind(&current_pc);
-  subi(dst, dst, Operand(pc_offset()));
+  mflr(r0);
+  LoadPC(dst);
+  subi(dst, dst, Operand(pc_offset() - kInstrSize));
+  mtlr(r0);
 }
 
 void TurboAssembler::LoadConstantPoolPointerRegister() {
@@ -1770,10 +1766,10 @@ void TurboAssembler::Abort(AbortReason reason) {
     FrameScope assume_frame(this, StackFrame::NONE);
     mov(r3, Operand(static_cast<int>(reason)));
     PrepareCallCFunction(1, 0, r4);
-    Move(r4, ExternalReference::abort_with_reason());
+    Move(ip, ExternalReference::abort_with_reason());
     // Use Call directly to avoid any unneeded overhead. The function won't
     // return anyway.
-    Call(r4);
+    Call(ip);
     return;
   }
 
@@ -2898,8 +2894,10 @@ void TurboAssembler::SwapP(Register src, Register dst, Register scratch) {
 }
 
 void TurboAssembler::SwapP(Register src, MemOperand dst, Register scratch) {
-  if (dst.ra() != r0) DCHECK(!AreAliased(src, dst.ra(), scratch));
-  if (dst.rb() != r0) DCHECK(!AreAliased(src, dst.rb(), scratch));
+  if (dst.ra() != r0 && dst.ra().is_valid())
+    DCHECK(!AreAliased(src, dst.ra(), scratch));
+  if (dst.rb() != r0 && dst.rb().is_valid())
+    DCHECK(!AreAliased(src, dst.rb(), scratch));
   DCHECK(!AreAliased(src, scratch));
   mr(scratch, src);
   LoadP(src, dst, r0);

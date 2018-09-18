@@ -8,6 +8,7 @@
 #include <iosfwd>
 #include <memory>
 
+#include "include/v8-internal.h"
 #include "include/v8.h"
 #include "include/v8config.h"
 #include "src/assert-scope.h"
@@ -75,12 +76,15 @@
 //           - JSDate
 //         - JSMessageObject
 //         - JSModuleNamespace
+//         - JSV8BreakIterator     // If V8_INTL_SUPPORT enabled.
 //         - JSCollator            // If V8_INTL_SUPPORT enabled.
 //         - JSDateTimeFormat      // If V8_INTL_SUPPORT enabled.
 //         - JSListFormat          // If V8_INTL_SUPPORT enabled.
 //         - JSLocale              // If V8_INTL_SUPPORT enabled.
+//         - JSNumberFormat        // If V8_INTL_SUPPORT enabled.
 //         - JSPluralRules         // If V8_INTL_SUPPORT enabled.
 //         - JSRelativeTimeFormat  // If V8_INTL_SUPPORT enabled.
+//         - WasmExceptionObject
 //         - WasmGlobalObject
 //         - WasmInstanceObject
 //         - WasmMemoryObject
@@ -171,6 +175,7 @@
 //           - PromiseFulfillReactionJobTask
 //           - PromiseRejectReactionJobTask
 //         - PromiseResolveThenableJobTask
+//       - MicrotaskQueue
 //       - Module
 //       - ModuleInfoEntry
 //     - FeedbackCell
@@ -489,6 +494,8 @@ enum InstanceType : uint16_t {
   PROMISE_REJECT_REACTION_JOB_TASK_TYPE,
   PROMISE_RESOLVE_THENABLE_JOB_TASK_TYPE,  // LAST_MICROTASK_TYPE
 
+  MICROTASK_QUEUE_TYPE,
+
   ALLOCATION_SITE_TYPE,
   // FixedArrays.
   FIXED_ARRAY_TYPE,  // FIRST_FIXED_ARRAY_TYPE
@@ -583,14 +590,17 @@ enum InstanceType : uint16_t {
   JS_DATA_VIEW_TYPE,
 
 #ifdef V8_INTL_SUPPORT
+  JS_INTL_V8_BREAK_ITERATOR_TYPE,
   JS_INTL_COLLATOR_TYPE,
   JS_INTL_DATE_TIME_FORMAT_TYPE,
   JS_INTL_LIST_FORMAT_TYPE,
   JS_INTL_LOCALE_TYPE,
+  JS_INTL_NUMBER_FORMAT_TYPE,
   JS_INTL_PLURAL_RULES_TYPE,
   JS_INTL_RELATIVE_TIME_FORMAT_TYPE,
 #endif  // V8_INTL_SUPPORT
 
+  WASM_EXCEPTION_TYPE,
   WASM_GLOBAL_TYPE,
   WASM_INSTANCE_TYPE,
   WASM_MEMORY_TYPE,
@@ -702,10 +712,12 @@ class JSAsyncGeneratorObject;
 class JSGlobalObject;
 class JSGlobalProxy;
 #ifdef V8_INTL_SUPPORT
+class JSV8BreakIterator;
 class JSCollator;
 class JSDateTimeFormat;
 class JSListFormat;
 class JSLocale;
+class JSNumberFormat;
 class JSPluralRules;
 class JSRelativeTimeFormat;
 #endif  // V8_INTL_SUPPORT
@@ -714,6 +726,7 @@ class KeyAccumulator;
 class LayoutDescriptor;
 class LookupIterator;
 class FieldType;
+class MicrotaskQueue;
 class Module;
 class ModuleInfoEntry;
 class ObjectHashTable;
@@ -903,6 +916,7 @@ class ZoneForwardList;
   V(UncompiledDataWithoutPreParsedScope)       \
   V(Undetectable)                              \
   V(UniqueName)                                \
+  V(WasmExceptionObject)                       \
   V(WasmGlobalObject)                          \
   V(WasmInstanceObject)                        \
   V(WasmMemoryObject)                          \
@@ -914,10 +928,12 @@ class ZoneForwardList;
 #ifdef V8_INTL_SUPPORT
 #define HEAP_OBJECT_ORDINARY_TYPE_LIST(V) \
   HEAP_OBJECT_ORDINARY_TYPE_LIST_BASE(V)  \
+  V(JSV8BreakIterator)                    \
   V(JSCollator)                           \
   V(JSDateTimeFormat)                     \
   V(JSListFormat)                         \
   V(JSLocale)                             \
+  V(JSNumberFormat)                       \
   V(JSPluralRules)                        \
   V(JSRelativeTimeFormat)
 #else
@@ -987,6 +1003,7 @@ class ZoneForwardList;
   V(JSMessageObject, JS_MESSAGE_OBJECT_TYPE)                           \
   V(JSModuleNamespace, JS_MODULE_NAMESPACE_TYPE)                       \
   V(JSPromise, JS_PROMISE_TYPE)                                        \
+  V(JSProxy, JS_PROXY_TYPE)                                            \
   V(JSRegExp, JS_REGEXP_TYPE)                                          \
   V(JSRegExpResult, JS_ARRAY_TYPE)                                     \
   V(JSRegExpStringIterator, JS_REGEXP_STRING_ITERATOR_TYPE)            \
@@ -1025,6 +1042,7 @@ class ZoneForwardList;
     UNCOMPILED_DATA_WITHOUT_PRE_PARSED_SCOPE_TYPE)                     \
   V(UncompiledDataWithPreParsedScope,                                  \
     UNCOMPILED_DATA_WITH_PRE_PARSED_SCOPE_TYPE)                        \
+  V(WasmExceptionObject, WASM_EXCEPTION_TYPE)                          \
   V(WasmGlobalObject, WASM_GLOBAL_TYPE)                                \
   V(WasmInstanceObject, WASM_INSTANCE_TYPE)                            \
   V(WasmMemoryObject, WASM_MEMORY_TYPE)                                \
@@ -1033,13 +1051,15 @@ class ZoneForwardList;
   V(WeakArrayList, WEAK_ARRAY_LIST_TYPE)
 #ifdef V8_INTL_SUPPORT
 
-#define INSTANCE_TYPE_CHECKERS_SINGLE(V)             \
-  INSTANCE_TYPE_CHECKERS_SINGLE_BASE(V)              \
-  V(JSCollator, JS_INTL_COLLATOR_TYPE)               \
-  V(JSDateTimeFormat, JS_INTL_DATE_TIME_FORMAT_TYPE) \
-  V(JSListFormat, JS_INTL_LIST_FORMAT_TYPE)          \
-  V(JSLocale, JS_INTL_LOCALE_TYPE)                   \
-  V(JSPluralRules, JS_INTL_PLURAL_RULES_TYPE)        \
+#define INSTANCE_TYPE_CHECKERS_SINGLE(V)               \
+  INSTANCE_TYPE_CHECKERS_SINGLE_BASE(V)                \
+  V(JSV8BreakIterator, JS_INTL_V8_BREAK_ITERATOR_TYPE) \
+  V(JSCollator, JS_INTL_COLLATOR_TYPE)                 \
+  V(JSDateTimeFormat, JS_INTL_DATE_TIME_FORMAT_TYPE)   \
+  V(JSListFormat, JS_INTL_LIST_FORMAT_TYPE)            \
+  V(JSLocale, JS_INTL_LOCALE_TYPE)                     \
+  V(JSNumberFormat, JS_INTL_NUMBER_FORMAT_TYPE)        \
+  V(JSPluralRules, JS_INTL_PLURAL_RULES_TYPE)          \
   V(JSRelativeTimeFormat, JS_INTL_RELATIVE_TIME_FORMAT_TYPE)
 
 #else
@@ -1065,7 +1085,8 @@ class ZoneForwardList;
 #define INSTANCE_TYPE_CHECKERS_CUSTOM(V) \
   V(FixedArrayBase)                      \
   V(InternalizedString)                  \
-  V(JSObject)
+  V(JSObject)                            \
+  V(JSReceiver)
 
 #define INSTANCE_TYPE_CHECKERS(V)  \
   INSTANCE_TYPE_CHECKERS_SINGLE(V) \
@@ -1124,13 +1145,6 @@ class Object {
   V8_INLINE bool IsNullOrUndefined(Isolate* isolate) const;
   V8_INLINE bool IsNullOrUndefined(ReadOnlyRoots roots) const;
   V8_INLINE bool IsNullOrUndefined() const;
-
-  // A non-keyed store is of the form a.x = foo or a["x"] = foo whereas
-  // a keyed store is of the form a[expression] = foo.
-  enum StoreFromKeyed {
-    MAY_BE_STORE_FROM_KEYED,
-    CERTAINLY_NOT_STORE_FROM_KEYED
-  };
 
   enum class Conversion { kToNumber, kToNumeric };
 
@@ -1338,19 +1352,19 @@ class Object {
   // covered by it (eg., concerning API callbacks).
   V8_WARN_UNUSED_RESULT static Maybe<bool> SetProperty(
       LookupIterator* it, Handle<Object> value, LanguageMode language_mode,
-      StoreFromKeyed store_mode);
+      StoreOrigin store_origin);
   V8_WARN_UNUSED_RESULT static MaybeHandle<Object> SetProperty(
       Isolate* isolate, Handle<Object> object, Handle<Name> name,
       Handle<Object> value, LanguageMode language_mode,
-      StoreFromKeyed store_mode = MAY_BE_STORE_FROM_KEYED);
+      StoreOrigin store_origin = StoreOrigin::kMaybeKeyed);
   V8_WARN_UNUSED_RESULT static inline MaybeHandle<Object> SetPropertyOrElement(
       Isolate* isolate, Handle<Object> object, Handle<Name> name,
       Handle<Object> value, LanguageMode language_mode,
-      StoreFromKeyed store_mode = MAY_BE_STORE_FROM_KEYED);
+      StoreOrigin store_origin = StoreOrigin::kMaybeKeyed);
 
   V8_WARN_UNUSED_RESULT static Maybe<bool> SetSuperProperty(
       LookupIterator* it, Handle<Object> value, LanguageMode language_mode,
-      StoreFromKeyed store_mode);
+      StoreOrigin store_origin);
 
   V8_WARN_UNUSED_RESULT static Maybe<bool> CannotCreateProperty(
       Isolate* isolate, Handle<Object> receiver, Handle<Object> name,
@@ -1367,7 +1381,7 @@ class Object {
       LookupIterator* it, Handle<Object> value);
   V8_WARN_UNUSED_RESULT static Maybe<bool> AddDataProperty(
       LookupIterator* it, Handle<Object> value, PropertyAttributes attributes,
-      ShouldThrow should_throw, StoreFromKeyed store_mode);
+      ShouldThrow should_throw, StoreOrigin store_origin);
   V8_WARN_UNUSED_RESULT static inline MaybeHandle<Object> GetPropertyOrElement(
       Isolate* isolate, Handle<Object> object, Handle<Name> name);
   V8_WARN_UNUSED_RESULT static inline MaybeHandle<Object> GetPropertyOrElement(
@@ -1489,7 +1503,7 @@ class Object {
   // Return value is only meaningful if [found] is set to true on return.
   V8_WARN_UNUSED_RESULT static Maybe<bool> SetPropertyInternal(
       LookupIterator* it, Handle<Object> value, LanguageMode language_mode,
-      StoreFromKeyed store_mode, bool* found);
+      StoreOrigin store_origin, bool* found);
 
   V8_WARN_UNUSED_RESULT static MaybeHandle<Name> ConvertToName(
       Isolate* isolate, Handle<Object> input);
@@ -1574,6 +1588,13 @@ class Smi: public Object {
     return result;
   }
 
+  // Compare two Smis x, y as if they were converted to strings and then
+  // compared lexicographically. Returns:
+  // -1 if x < y.
+  //  0 if x == y.
+  //  1 if x > y.
+  static Smi* LexicographicCompare(Isolate* isolate, Smi* x, Smi* y);
+
   DECL_CAST(Smi)
 
   // Dispatched behavior.
@@ -1593,7 +1614,7 @@ class Smi: public Object {
 // during GC other data (e.g. mark bits, forwarding addresses) is sometimes
 // encoded in the first word.  The class MapWord is an abstraction of the
 // value in a heap object's first word.
-class MapWord BASE_EMBEDDED {
+class MapWord {
  public:
   // Normal state: the map word contains a map pointer.
 
@@ -1920,8 +1941,6 @@ enum class KeyCollectionMode {
       static_cast<int>(v8::KeyCollectionMode::kIncludePrototypes)
 };
 
-enum class AllocationSiteUpdateMode { kUpdate, kCheckOnly };
-
 class PropertyArray : public HeapObject {
  public:
   // [length]: length of the array.
@@ -1961,8 +1980,6 @@ class PropertyArray : public HeapObject {
 
   // Garbage collection support.
   typedef FlexibleBodyDescriptor<kHeaderSize> BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
   static const int kLengthFieldSize = 10;
   class LengthField : public BitField<int, 0, kLengthFieldSize> {};
@@ -1980,11 +1997,6 @@ class PropertyArray : public HeapObject {
 // JSObject and JSProxy.
 class JSReceiver : public HeapObject, public NeverReadOnlySpaceObject {
  public:
-  // Use the mixin methods over the HeapObject methods.
-  // TODO(v8:7786) Remove once the HeapObject methods are gone.
-  using NeverReadOnlySpaceObject::GetHeap;
-  using NeverReadOnlySpaceObject::GetIsolate;
-
   // Returns true if there is no slow (ie, dictionary) backing store.
   inline bool HasFastProperties() const;
 
@@ -2240,7 +2252,7 @@ class JSObject: public JSReceiver {
 
   static V8_WARN_UNUSED_RESULT MaybeHandle<JSObject> New(
       Handle<JSFunction> constructor, Handle<JSReceiver> new_target,
-      Handle<AllocationSite> site = Handle<AllocationSite>::null());
+      Handle<AllocationSite> site);
 
   static MaybeHandle<Context> GetFunctionRealm(Handle<JSObject> object);
 
@@ -2718,12 +2730,8 @@ class JSObject: public JSReceiver {
   STATIC_ASSERT(kMaxEmbedderFields <= kMaxInObjectProperties);
 
   class BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
   class FastBodyDescriptor;
-  // No weak fields.
-  typedef FastBodyDescriptor FastBodyDescriptorWeak;
 
   // Gets the number of currently used elements.
   int GetFastElementsUsage();
@@ -3117,6 +3125,8 @@ enum class BuiltinFunctionId : uint8_t {
   kGlobalIsNaN,
   kNumberConstructor,
   kSymbolConstructor,
+  kSymbolPrototypeToString,
+  kSymbolPrototypeValueOf,
   kTypedArrayByteLength,
   kTypedArrayByteOffset,
   kTypedArrayEntries,
@@ -3637,196 +3647,12 @@ class JSMessageObject: public JSObject {
   typedef FixedBodyDescriptor<HeapObject::kMapOffset,
                               kStackFramesOffset + kPointerSize,
                               kSize> BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 };
-
-class AllocationSite : public Struct, public NeverReadOnlySpaceObject {
- public:
-  static const uint32_t kMaximumArrayBytesToPretransition = 8 * 1024;
-  static const double kPretenureRatio;
-  static const int kPretenureMinimumCreated = 100;
-
-  // Values for pretenure decision field.
-  enum PretenureDecision {
-    kUndecided = 0,
-    kDontTenure = 1,
-    kMaybeTenure = 2,
-    kTenure = 3,
-    kZombie = 4,
-    kLastPretenureDecisionValue = kZombie
-  };
-
-  // Use the mixin methods over the HeapObject methods.
-  // TODO(v8:7786) Remove once the HeapObject methods are gone.
-  using NeverReadOnlySpaceObject::GetHeap;
-  using NeverReadOnlySpaceObject::GetIsolate;
-
-  const char* PretenureDecisionName(PretenureDecision decision);
-
-  // Contains either a Smi-encoded bitfield or a boilerplate. If it's a Smi the
-  // AllocationSite is for a constructed Array.
-  DECL_ACCESSORS(transition_info_or_boilerplate, Object)
-  DECL_ACCESSORS(boilerplate, JSObject)
-  DECL_INT_ACCESSORS(transition_info)
-
-  // nested_site threads a list of sites that represent nested literals
-  // walked in a particular order. So [[1, 2], 1, 2] will have one
-  // nested_site, but [[1, 2], 3, [4]] will have a list of two.
-  DECL_ACCESSORS(nested_site, Object)
-
-  // Bitfield containing pretenuring information.
-  DECL_INT32_ACCESSORS(pretenure_data)
-
-  DECL_INT32_ACCESSORS(pretenure_create_count)
-  DECL_ACCESSORS(dependent_code, DependentCode)
-
-  // heap->allocation_site_list() points to the last AllocationSite which form
-  // a linked list through the weak_next property. The GC might remove elements
-  // from the list by updateing weak_next.
-  DECL_ACCESSORS(weak_next, Object)
-
-  inline void Initialize();
-
-  // Checks if the allocation site contain weak_next field;
-  inline bool HasWeakNext() const;
-
-  // This method is expensive, it should only be called for reporting.
-  bool IsNested();
-
-  // transition_info bitfields, for constructed array transition info.
-  class ElementsKindBits:       public BitField<ElementsKind, 0,  15> {};
-  class UnusedBits:             public BitField<int,          15, 14> {};
-  class DoNotInlineBit:         public BitField<bool,         29,  1> {};
-
-  // Bitfields for pretenure_data
-  class MementoFoundCountBits:  public BitField<int,               0, 26> {};
-  class PretenureDecisionBits:  public BitField<PretenureDecision, 26, 3> {};
-  class DeoptDependentCodeBit:  public BitField<bool,              29, 1> {};
-  STATIC_ASSERT(PretenureDecisionBits::kMax >= kLastPretenureDecisionValue);
-
-  // Increments the mementos found counter and returns true when the first
-  // memento was found for a given allocation site.
-  inline bool IncrementMementoFoundCount(int increment = 1);
-
-  inline void IncrementMementoCreateCount();
-
-  PretenureFlag GetPretenureMode() const;
-
-  void ResetPretenureDecision();
-
-  inline PretenureDecision pretenure_decision() const;
-  inline void set_pretenure_decision(PretenureDecision decision);
-
-  inline bool deopt_dependent_code() const;
-  inline void set_deopt_dependent_code(bool deopt);
-
-  inline int memento_found_count() const;
-  inline void set_memento_found_count(int count);
-
-  inline int memento_create_count() const;
-  inline void set_memento_create_count(int count);
-
-  // The pretenuring decision is made during gc, and the zombie state allows
-  // us to recognize when an allocation site is just being kept alive because
-  // a later traversal of new space may discover AllocationMementos that point
-  // to this AllocationSite.
-  inline bool IsZombie() const;
-
-  inline bool IsMaybeTenure() const;
-
-  inline void MarkZombie();
-
-  inline bool MakePretenureDecision(PretenureDecision current_decision,
-                                    double ratio,
-                                    bool maximum_size_scavenge);
-
-  inline bool DigestPretenuringFeedback(bool maximum_size_scavenge);
-
-  inline ElementsKind GetElementsKind() const;
-  inline void SetElementsKind(ElementsKind kind);
-
-  inline bool CanInlineCall() const;
-  inline void SetDoNotInlineCall();
-
-  inline bool PointsToLiteral() const;
-
-  template <AllocationSiteUpdateMode update_or_check =
-                AllocationSiteUpdateMode::kUpdate>
-  static bool DigestTransitionFeedback(Handle<AllocationSite> site,
-                                       ElementsKind to_kind);
-
-  DECL_PRINTER(AllocationSite)
-  DECL_VERIFIER(AllocationSite)
-
-  DECL_CAST(AllocationSite)
-  static inline bool ShouldTrack(ElementsKind boilerplate_elements_kind);
-  static bool ShouldTrack(ElementsKind from, ElementsKind to);
-  static inline bool CanTrack(InstanceType type);
-
-// Layout description.
-// AllocationSite has to start with TransitionInfoOrboilerPlateOffset
-// and end with WeakNext field.
-#define ALLOCATION_SITE_FIELDS(V)                     \
-  V(kTransitionInfoOrBoilerplateOffset, kPointerSize) \
-  V(kNestedSiteOffset, kPointerSize)                  \
-  V(kDependentCodeOffset, kPointerSize)               \
-  V(kCommonPointerFieldEndOffset, 0)                  \
-  V(kPretenureDataOffset, kInt32Size)                 \
-  V(kPretenureCreateCountOffset, kInt32Size)          \
-  /* Size of AllocationSite without WeakNext field */ \
-  V(kSizeWithoutWeakNext, 0)                          \
-  V(kWeakNextOffset, kPointerSize)                    \
-  /* Size of AllocationSite with WeakNext field */    \
-  V(kSizeWithWeakNext, 0)
-
-  DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize, ALLOCATION_SITE_FIELDS)
-
-  static const int kStartOffset = HeapObject::kHeaderSize;
-
-  template <bool includeWeakNext>
-  class BodyDescriptorImpl;
-
-  // BodyDescriptor is used to traverse all the pointer fields including
-  // weak_next
-  typedef BodyDescriptorImpl<true> BodyDescriptor;
-
-  // BodyDescriptorWeak is used to traverse all the pointer fields
-  // except for weak_next
-  typedef BodyDescriptorImpl<false> BodyDescriptorWeak;
-
- private:
-  inline bool PretenuringDecisionMade() const;
-
-  DISALLOW_IMPLICIT_CONSTRUCTORS(AllocationSite);
-};
-
-
-class AllocationMemento: public Struct {
- public:
-  static const int kAllocationSiteOffset = HeapObject::kHeaderSize;
-  static const int kSize = kAllocationSiteOffset + kPointerSize;
-
-  DECL_ACCESSORS(allocation_site, Object)
-
-  inline bool IsValid() const;
-  inline AllocationSite* GetAllocationSite() const;
-  inline Address GetAllocationSiteUnchecked() const;
-
-  DECL_PRINTER(AllocationMemento)
-  DECL_VERIFIER(AllocationMemento)
-
-  DECL_CAST(AllocationMemento)
-
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(AllocationMemento);
-};
-
 
 // Utility superclass for stack-allocated objects that must be updated
 // on gc.  It provides two ways for the gc to update instances, either
 // iterating or updating after gc.
-class Relocatable BASE_EMBEDDED {
+class Relocatable {
  public:
   explicit inline Relocatable(Isolate* isolate);
   inline virtual ~Relocatable();
@@ -3905,8 +3731,6 @@ class Oddball: public HeapObject {
 
   typedef FixedBodyDescriptor<kToStringOffset, kTypeOfOffset + kPointerSize,
                               kSize> BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
   STATIC_ASSERT(kToNumberRawOffset == HeapNumber::kValueOffset);
   STATIC_ASSERT(kKindOffset == Internals::kOddballKindOffset);
@@ -3945,8 +3769,6 @@ class Cell: public HeapObject {
   typedef FixedBodyDescriptor<kValueOffset,
                               kValueOffset + kPointerSize,
                               kSize> BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(Cell);
@@ -3973,8 +3795,6 @@ class FeedbackCell : public Struct {
 
   typedef FixedBodyDescriptor<kValueOffset, kValueOffset + kPointerSize, kSize>
       BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(FeedbackCell);
@@ -4031,8 +3851,6 @@ class PropertyCell : public HeapObject {
   static const int kSize = kDependentCodeOffset + kPointerSize;
 
   typedef FixedBodyDescriptor<kNameOffset, kSize, kSize> BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(PropertyCell);
@@ -4114,8 +3932,6 @@ class Foreign: public HeapObject {
   STATIC_ASSERT(kForeignAddressOffset == Internals::kForeignAddressOffset);
 
   class BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
  private:
   friend class Factory;
@@ -4179,9 +3995,6 @@ class AccessorPair: public Struct {
 
 class StackFrameInfo : public Struct, public NeverReadOnlySpaceObject {
  public:
-  using NeverReadOnlySpaceObject::GetHeap;
-  using NeverReadOnlySpaceObject::GetIsolate;
-
   DECL_INT_ACCESSORS(line_number)
   DECL_INT_ACCESSORS(column_number)
   DECL_INT_ACCESSORS(script_id)

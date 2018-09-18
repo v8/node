@@ -52,37 +52,47 @@ void* TryAllocateBackingStore(WasmMemoryTracker* memory_tracker, Heap* heap,
   // Let the WasmMemoryTracker know we are going to reserve a bunch of
   // address space.
   // Try up to three times; getting rid of dead JSArrayBuffer allocations might
-  // require two GCs.
-  // TODO(gc): Fix this to only require one GC (crbug.com/v8/7621).
+  // require two GCs because the first GC maybe incremental and may have
+  // floating garbage.
+  static constexpr int kAllocationRetries = 2;
   bool did_retry = false;
   for (int trial = 0;; ++trial) {
     if (memory_tracker->ReserveAddressSpace(*allocation_length)) break;
-    // Collect garbage and retry.
-    heap->MemoryPressureNotification(MemoryPressureLevel::kCritical, true);
+
     did_retry = true;
     // After first and second GC: retry.
-    if (trial < 2) continue;
-    // We are over the address space limit. Fail.
-    //
-    // When running under the correctness fuzzer (i.e.
-    // --abort-on-stack-or-string-length-overflow is preset), we crash instead
-    // so it is not incorrectly reported as a correctness violation. See
-    // https://crbug.com/828293#c4
-    if (FLAG_abort_on_stack_or_string_length_overflow) {
-      FATAL("could not allocate wasm memory");
+    if (trial == kAllocationRetries) {
+      // We are over the address space limit. Fail.
+      //
+      // When running under the correctness fuzzer (i.e.
+      // --abort-on-stack-or-string-length-overflow is preset), we crash instead
+      // so it is not incorrectly reported as a correctness violation. See
+      // https://crbug.com/828293#c4
+      if (FLAG_abort_on_stack_or_string_length_overflow) {
+        FATAL("could not allocate wasm memory");
+      }
+      AddAllocationStatusSample(
+          heap->isolate(), AllocationStatus::kAddressSpaceLimitReachedFailure);
+      return nullptr;
     }
-    AddAllocationStatusSample(
-        heap->isolate(), AllocationStatus::kAddressSpaceLimitReachedFailure);
-    return nullptr;
+    // Collect garbage and retry.
+    heap->MemoryPressureNotification(MemoryPressureLevel::kCritical, true);
   }
 
   // The Reserve makes the whole region inaccessible by default.
-  *allocation_base = AllocatePages(nullptr, *allocation_length, kWasmPageSize,
-                                   PageAllocator::kNoAccess);
-  if (*allocation_base == nullptr) {
-    memory_tracker->ReleaseReservation(*allocation_length);
-    AddAllocationStatusSample(heap->isolate(), AllocationStatus::kOtherFailure);
-    return nullptr;
+  DCHECK_NULL(*allocation_base);
+  for (int trial = 0;; ++trial) {
+    *allocation_base =
+        AllocatePages(GetPlatformPageAllocator(), nullptr, *allocation_length,
+                      kWasmPageSize, PageAllocator::kNoAccess);
+    if (*allocation_base != nullptr) break;
+    if (trial == kAllocationRetries) {
+      memory_tracker->ReleaseReservation(*allocation_length);
+      AddAllocationStatusSample(heap->isolate(),
+                                AllocationStatus::kOtherFailure);
+      return nullptr;
+    }
+    heap->MemoryPressureNotification(MemoryPressureLevel::kCritical, true);
   }
   byte* memory = reinterpret_cast<byte*>(*allocation_base);
   if (require_full_guard_regions) {
@@ -91,8 +101,9 @@ void* TryAllocateBackingStore(WasmMemoryTracker* memory_tracker, Heap* heap,
 
   // Make the part we care about accessible.
   if (size > 0) {
-    bool result = SetPermissions(memory, RoundUp(size, kWasmPageSize),
-                                 PageAllocator::kReadWrite);
+    bool result =
+        SetPermissions(GetPlatformPageAllocator(), memory,
+                       RoundUp(size, kWasmPageSize), PageAllocator::kReadWrite);
     // SetPermissions commits the extra memory, which may put us over the
     // process memory limit. If so, report this as an OOM.
     if (!result) {
@@ -132,17 +143,14 @@ bool WasmMemoryTracker::ReserveAddressSpace(size_t num_bytes) {
   constexpr size_t kAddressSpaceLimit = 0x80000000;  // 2 GiB
 #endif
 
-  int retries = 5;  // cmpxchng can fail, retry some number of times.
-  do {
-    size_t old_count = reserved_address_space_;
-    if ((kAddressSpaceLimit - old_count) < num_bytes) return false;
+  while (true) {
+    size_t old_count = reserved_address_space_.load();
+    if (kAddressSpaceLimit - old_count < num_bytes) return false;
     if (reserved_address_space_.compare_exchange_weak(old_count,
                                                       old_count + num_bytes)) {
       return true;
     }
-  } while (retries-- > 0);
-
-  return false;
+  }
 }
 
 void WasmMemoryTracker::ReleaseReservation(size_t num_bytes) {
@@ -225,7 +233,8 @@ bool WasmMemoryTracker::FreeMemoryIfIsWasmMemory(Isolate* isolate,
                                                  const void* buffer_start) {
   if (IsWasmMemory(buffer_start)) {
     const AllocationData allocation = ReleaseAllocation(isolate, buffer_start);
-    CHECK(FreePages(allocation.allocation_base, allocation.allocation_length));
+    CHECK(FreePages(GetPlatformPageAllocator(), allocation.allocation_base,
+                    allocation.allocation_length));
     return true;
   }
   return false;

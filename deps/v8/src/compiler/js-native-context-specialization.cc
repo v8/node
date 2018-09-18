@@ -113,9 +113,38 @@ Reduction JSNativeContextSpecialization::Reduce(Node* node) {
       return ReduceJSStoreInArrayLiteral(node);
     case IrOpcode::kJSToObject:
       return ReduceJSToObject(node);
+    case IrOpcode::kJSToString:
+      return ReduceJSToString(node);
     default:
       break;
   }
+  return NoChange();
+}
+
+Reduction JSNativeContextSpecialization::ReduceJSToString(Node* node) {
+  DCHECK_EQ(IrOpcode::kJSToString, node->opcode());
+  Node* const input = node->InputAt(0);
+  Reduction reduction;
+
+  HeapObjectMatcher matcher(input);
+  if (matcher.HasValue() && matcher.Value()->IsString()) {
+    reduction = Changed(input);  // JSToString(x:string) => x
+    ReplaceWithValue(node, reduction.replacement());
+    return reduction;
+  }
+
+  // TODO(turbofan): This optimization is weaker than what we used to have
+  // in js-typed-lowering for OrderedNumbers. We don't have types here though,
+  // so alternative approach should be designed if this causes performance
+  // regressions and the stronger optimization should be re-implemented.
+  NumberMatcher number_matcher(input);
+  if (number_matcher.HasValue()) {
+    reduction = Replace(jsgraph()->HeapConstant(factory()->NumberToString(
+        factory()->NewNumber(number_matcher.Value()))));
+    ReplaceWithValue(node, reduction.replacement());
+    return reduction;
+  }
+
   return NoChange();
 }
 
@@ -408,6 +437,9 @@ Reduction JSNativeContextSpecialization::ReduceJSOrdinaryHasInstance(
   // Optimize if we currently know the "prototype" property.
   if (m.Value()->IsJSFunction()) {
     JSFunctionRef function = m.Ref(js_heap_broker()).AsJSFunction();
+    // TODO(neis): This is a temporary hack needed because the copy reducer
+    // runs only after this pass.
+    function.Serialize();
     // TODO(neis): Remove the has_prototype_slot condition once the broker is
     // always enabled.
     if (!function.map().has_prototype_slot() || !function.has_prototype() ||
@@ -998,6 +1030,16 @@ Reduction JSNativeContextSpecialization::ReduceNamedAccess(
           this_effect = graph()->NewNode(simplified()->MapGuard(maps), receiver,
                                          this_effect, this_control);
         }
+
+        // If all {receiver_maps} are Strings we also need to rename the
+        // {receiver} here to make sure that TurboFan knows that along this
+        // path the {this_receiver} is a String. This is because we want
+        // strict checking of types, for example for StringLength operators.
+        if (HasOnlyStringMaps(receiver_maps)) {
+          this_receiver = this_effect =
+              graph()->NewNode(common()->TypeGuard(Type::String()), receiver,
+                               this_effect, this_control);
+        }
       }
 
       // Generate the actual property access.
@@ -1100,6 +1142,9 @@ Reduction JSNativeContextSpecialization::ReduceJSLoadNamed(Node* node) {
         p.name().is_identical_to(factory()->prototype_string())) {
       // Optimize "prototype" property of functions.
       JSFunctionRef function = m.Ref(js_heap_broker()).AsJSFunction();
+      // TODO(neis): This is a temporary hack needed because the copy reducer
+      // runs only after this pass.
+      function.Serialize();
       // TODO(neis): Remove the has_prototype_slot condition once the broker is
       // always enabled.
       if (!function.map().has_prototype_slot() || !function.has_prototype() ||
@@ -1831,6 +1876,8 @@ JSNativeContextSpecialization::BuildPropertyLoad(
     value = effect =
         graph()->NewNode(simplified()->LoadField(AccessBuilder::ForCellValue()),
                          cell, effect, control);
+  } else if (access_info.IsStringLength()) {
+    value = graph()->NewNode(simplified()->StringLength(), receiver);
   } else {
     DCHECK(access_info.IsDataField() || access_info.IsDataConstantField());
     value = access_builder.BuildLoadDataField(name, access_info, receiver,
@@ -2091,8 +2138,9 @@ Reduction JSNativeContextSpecialization::ReduceJSStoreDataPropertyInLiteral(
   if (!Map::TryUpdate(isolate(), receiver_map).ToHandle(&receiver_map))
     return NoChange();
 
-  Handle<Name> cached_name = handle(
-      Name::cast(nexus.GetFeedbackExtra()->ToStrongHeapObject()), isolate());
+  Handle<Name> cached_name =
+      handle(Name::cast(nexus.GetFeedbackExtra()->GetHeapObjectAssumeStrong()),
+             isolate());
 
   PropertyAccessInfo access_info;
   AccessInfoFactory access_info_factory(js_heap_broker(), dependencies(),
@@ -2294,12 +2342,19 @@ JSNativeContextSpecialization::BuildElementAccess(
       dependencies()->DependOnProtector(PropertyCellRef(
           js_heap_broker(), factory()->array_buffer_neutering_protector()));
     } else {
-      // Default to zero if the {receiver}s buffer was neutered.
-      Node* check = effect = graph()->NewNode(
-          simplified()->ArrayBufferWasNeutered(), buffer, effect, control);
-      length = graph()->NewNode(
-          common()->Select(MachineRepresentation::kTagged, BranchHint::kFalse),
-          check, jsgraph()->ZeroConstant(), length);
+      // Bail out if the {buffer} was neutered.
+      Node* buffer_bit_field = effect = graph()->NewNode(
+          simplified()->LoadField(AccessBuilder::ForJSArrayBufferBitField()),
+          buffer, effect, control);
+      Node* check = graph()->NewNode(
+          simplified()->NumberEqual(),
+          graph()->NewNode(
+              simplified()->NumberBitwiseAnd(), buffer_bit_field,
+              jsgraph()->Constant(JSArrayBuffer::WasNeuteredBit::kMask)),
+          jsgraph()->ZeroConstant());
+      effect = graph()->NewNode(
+          simplified()->CheckIf(DeoptimizeReason::kArrayBufferWasNeutered),
+          check, effect, control);
     }
 
     if (load_mode == LOAD_IGNORE_OUT_OF_BOUNDS ||

@@ -658,6 +658,24 @@ scriptParsed
 }
 scriptFailedToParse
 {
+    scriptSource : {a:2:<nl>//# sourceURL=http://a.js
+}
+{
+    endColumn : 25
+    endLine : 1
+    executionContextId : <executionContextId>
+    hasSourceURL : true
+    hash : 33c5612558c02e5a3bfa0d098c82865f38f98df2
+    isModule : false
+    length : 31
+    scriptId : <scriptId>
+    sourceMapURL : 
+    startColumn : 0
+    startLine : 0
+    url : http://a.js
+}
+scriptFailedToParse
+{
     scriptSource : }//# sourceURL=failed.js<nl>//# sourceMappingURL=failed-map
 }
 {
@@ -668,24 +686,6 @@ scriptFailedToParse
     hash : 01ee31bb2ab335516427f7ff73ddc9d476adbab4
     isModule : false
     length : 56
-    scriptId : <scriptId>
-    sourceMapURL : failed-map
-    startColumn : 0
-    startLine : 0
-    url : failed.js
-}
-scriptFailedToParse
-{
-    scriptSource : {a:2://# sourceURL=failed.js<nl>//# sourceMappingURL=failed-map
-}
-{
-    endColumn : 31
-    endLine : 1
-    executionContextId : <executionContextId>
-    hasSourceURL : true
-    hash : 370d368557b75a8e281e4a84625a9e0263647da6
-    isModule : false
-    length : 60
     scriptId : <scriptId>
     sourceMapURL : failed-map
     startColumn : 0

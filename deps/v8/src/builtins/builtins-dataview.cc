@@ -53,7 +53,7 @@ BUILTIN(DataViewConstructor) {
 
   // 6. Let bufferByteLength be the value of buffer's
   // [[ArrayBufferByteLength]] internal slot.
-  double const buffer_byte_length = array_buffer->byte_length()->Number();
+  double const buffer_byte_length = array_buffer->byte_length();
 
   // 7. If offset > bufferByteLength, throw a RangeError exception.
   if (offset->Number() > buffer_byte_length) {
@@ -86,8 +86,9 @@ BUILTIN(DataViewConstructor) {
   //     "%DataViewPrototype%", «[[DataView]], [[ViewedArrayBuffer]],
   //     [[ByteLength]], [[ByteOffset]]»).
   Handle<JSObject> result;
-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, result,
-                                     JSObject::New(target, new_target));
+  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+      isolate, result,
+      JSObject::New(target, new_target, Handle<AllocationSite>::null()));
   for (int i = 0; i < ArrayBufferView::kEmbedderFieldCount; ++i) {
     Handle<JSDataView>::cast(result)->SetEmbedderField(i, Smi::kZero);
   }
