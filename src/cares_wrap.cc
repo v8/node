@@ -2129,7 +2129,7 @@ void Initialize(Local<Object> target,
   Local<String> addrInfoWrapString =
       FIXED_ONE_BYTE_STRING(env->isolate(), "GetAddrInfoReqWrap");
   aiw->SetClassName(addrInfoWrapString);
-  target->Set(addrInfoWrapString, aiw->GetFunction());
+  target->Set(addrInfoWrapString, aiw->GetFunction(context).ToLocalChecked());
 
   Local<FunctionTemplate> niw =
       BaseObject::MakeLazilyInitializedJSTemplate(env);
@@ -2137,7 +2137,7 @@ void Initialize(Local<Object> target,
   Local<String> nameInfoWrapString =
       FIXED_ONE_BYTE_STRING(env->isolate(), "GetNameInfoReqWrap");
   niw->SetClassName(nameInfoWrapString);
-  target->Set(nameInfoWrapString, niw->GetFunction());
+  target->Set(nameInfoWrapString, niw->GetFunction(context).ToLocalChecked());
 
   Local<FunctionTemplate> qrw =
       BaseObject::MakeLazilyInitializedJSTemplate(env);
@@ -2145,7 +2145,7 @@ void Initialize(Local<Object> target,
   Local<String> queryWrapString =
       FIXED_ONE_BYTE_STRING(env->isolate(), "QueryReqWrap");
   qrw->SetClassName(queryWrapString);
-  target->Set(queryWrapString, qrw->GetFunction());
+  target->Set(queryWrapString, qrw->GetFunction(context).ToLocalChecked());
 
   Local<FunctionTemplate> channel_wrap =
       env->NewFunctionTemplate(ChannelWrap::New);
@@ -2172,7 +2172,8 @@ void Initialize(Local<Object> target,
   Local<String> channelWrapString =
       FIXED_ONE_BYTE_STRING(env->isolate(), "ChannelWrap");
   channel_wrap->SetClassName(channelWrapString);
-  target->Set(channelWrapString, channel_wrap->GetFunction());
+  target->Set(channelWrapString,
+              channel_wrap->GetFunction(context).ToLocalChecked());
 }
 
 }  // anonymous namespace

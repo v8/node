@@ -1125,7 +1125,9 @@ napi_status napi_define_class(napi_env env,
     }
   }
 
-  *result = v8impl::JsValueFromV8LocalValue(scope.Escape(tpl->GetFunction()));
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  *result = v8impl::JsValueFromV8LocalValue(
+      scope.Escape(tpl->GetFunction(context).ToLocalChecked()));
 
   if (static_property_count > 0) {
     std::vector<napi_property_descriptor> static_descriptors;

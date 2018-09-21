@@ -226,7 +226,7 @@ void Initialize(Local<Object> target,
   env->SetProtoMethod(category_set, "disable", NodeCategorySet::Disable);
 
   target->Set(FIXED_ONE_BYTE_STRING(env->isolate(), "CategorySet"),
-              category_set->GetFunction());
+              category_set->GetFunction(env->context()).ToLocalChecked());
 }
 
 }  // namespace node

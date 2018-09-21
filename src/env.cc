@@ -212,8 +212,10 @@ void Environment::Start(int argc,
   auto process_template = FunctionTemplate::New(isolate());
   process_template->SetClassName(FIXED_ONE_BYTE_STRING(isolate(), "process"));
 
-  auto process_object =
-      process_template->GetFunction()->NewInstance(context()).ToLocalChecked();
+  auto process_object = process_template->GetFunction(context())
+                            .ToLocalChecked()
+                            ->NewInstance(context())
+                            .ToLocalChecked();
   set_process_object(process_object);
 
   SetupProcessObject(this, argc, argv, exec_argc, exec_argv);

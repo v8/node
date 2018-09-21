@@ -59,7 +59,8 @@ class SignalWrap : public HandleWrap {
     env->SetProtoMethod(constructor, "start", Start);
     env->SetProtoMethod(constructor, "stop", Stop);
 
-    target->Set(signalString, constructor->GetFunction());
+    target->Set(signalString,
+                constructor->GetFunction(env->context()).ToLocalChecked());
   }
 
   size_t self_size() const override { return sizeof(*this); }
