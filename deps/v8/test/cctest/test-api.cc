@@ -684,9 +684,9 @@ TEST(MakingExternalUnalignedOneByteString) {
 
   // Trigger GCs and force evacuation.
   CcTest::CollectAllGarbage();
-  CcTest::CollectAllGarbage(i::Heap::kReduceMemoryFootprintMask);
+  CcTest::heap()->CollectAllGarbage(i::Heap::kReduceMemoryFootprintMask,
+                                    i::GarbageCollectionReason::kTesting);
 }
-
 
 THREADED_TEST(UsingExternalString) {
   i::Factory* factory = CcTest::i_isolate()->factory();
@@ -13675,7 +13675,7 @@ TEST(ObjectProtoToStringES6) {
     CHECK(value->IsString() &&                                             \
           value->Equals(context.local(), v8_str("[object " #expected "]")) \
               .FromJust());                                                \
-  } while (0)
+  } while (false)
 
   TEST_TOSTRINGTAG(Array, Object, Object);
   TEST_TOSTRINGTAG(Object, Arguments, Arguments);
@@ -13714,7 +13714,7 @@ TEST(ObjectProtoToStringES6) {
     CHECK(value->IsString() &&                                             \
           value->Equals(context.local(), v8_str("[object " #expected "]")) \
               .FromJust());                                                \
-  } while (0)
+  } while (false)
 
 #define TEST_TOSTRINGTAG_TYPES(tagValue)                    \
   TEST_TOSTRINGTAG(Array, tagValue, Array);                 \

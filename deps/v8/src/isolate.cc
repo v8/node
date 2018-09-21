@@ -2265,10 +2265,6 @@ char* Isolate::RestoreThread(char* from) {
   return from + sizeof(ThreadLocalTop);
 }
 
-Isolate::ThreadDataTable::ThreadDataTable() : table_() {}
-
-Isolate::ThreadDataTable::~ThreadDataTable() {}
-
 void Isolate::ReleaseSharedPtrs() {
   while (managed_ptr_destructors_head_) {
     ManagedPtrDestructor* l = managed_ptr_destructors_head_;
@@ -2304,6 +2300,7 @@ void Isolate::UnregisterManagedPtrDestructor(ManagedPtrDestructor* destructor) {
   destructor->next_ = nullptr;
 }
 
+// NOLINTNEXTLINE
 Isolate::PerIsolateThreadData::~PerIsolateThreadData() {
 #if defined(USE_SIMULATOR)
   delete simulator_;
@@ -2593,6 +2590,13 @@ void Isolate::ClearSerializerData() {
   external_reference_map_ = nullptr;
 }
 
+bool Isolate::LogObjectRelocation() {
+  return FLAG_verify_predictable || logger()->is_logging() || is_profiling() ||
+         heap()->isolate()->logger()->is_listening_to_code_events() ||
+         (heap_profiler() != nullptr &&
+          heap_profiler()->is_tracking_object_moves()) ||
+         heap()->has_heap_object_allocation_tracker();
+}
 
 void Isolate::Deinit() {
   TRACE_ISOLATE(deinit);
@@ -3034,8 +3038,6 @@ bool Isolate::Init(StartupDeserializer* des) {
     load_stub_cache_->Initialize();
     store_stub_cache_->Initialize();
     interpreter_->InitializeDispatchTable();
-    setup_delegate_->SetupInterpreter(interpreter_);
-
     heap_.NotifyDeserializationComplete();
   }
   delete setup_delegate_;
@@ -3636,7 +3638,7 @@ ISOLATE_INIT_ARRAY_LIST(ISOLATE_FIELD_OFFSET)
 #undef ISOLATE_FIELD_OFFSET
 #endif
 
-Handle<Symbol> Isolate::SymbolFor(Heap::RootListIndex dictionary_index,
+Handle<Symbol> Isolate::SymbolFor(RootIndex dictionary_index,
                                   Handle<String> name, bool private_symbol) {
   Handle<String> key = factory()->InternalizeString(name);
   Handle<NameDictionary> dictionary =
@@ -3650,14 +3652,14 @@ Handle<Symbol> Isolate::SymbolFor(Heap::RootListIndex dictionary_index,
     dictionary = NameDictionary::Add(this, dictionary, key, symbol,
                                      PropertyDetails::Empty(), &entry);
     switch (dictionary_index) {
-      case Heap::kPublicSymbolTableRootIndex:
+      case RootIndex::kPublicSymbolTable:
         symbol->set_is_public(true);
         heap()->set_public_symbol_table(*dictionary);
         break;
-      case Heap::kApiSymbolTableRootIndex:
+      case RootIndex::kApiSymbolTable:
         heap()->set_api_symbol_table(*dictionary);
         break;
-      case Heap::kApiPrivateSymbolTableRootIndex:
+      case RootIndex::kApiPrivateSymbolTable:
         heap()->set_api_private_symbol_table(*dictionary);
         break;
       default:
@@ -3718,7 +3720,7 @@ void Isolate::FireCallCompletedCallback() {
   if (!handle_scope_implementer()->CallDepthIsZero()) return;
 
   bool run_microtasks =
-      pending_microtask_count() &&
+      heap()->default_microtask_queue()->pending_microtask_count() &&
       !handle_scope_implementer()->HasMicrotasksSuppressions() &&
       handle_scope_implementer()->microtasks_policy() ==
           v8::MicrotasksPolicy::kAuto;
@@ -3961,18 +3963,9 @@ void Isolate::ReportPromiseReject(Handle<JSPromise> promise,
 }
 
 void Isolate::EnqueueMicrotask(Handle<Microtask> microtask) {
-  Handle<FixedArray> queue(heap()->microtask_queue(), this);
-  int num_tasks = pending_microtask_count();
-  DCHECK_LE(num_tasks, queue->length());
-  if (num_tasks == queue->length()) {
-    queue = factory()->CopyFixedArrayAndGrow(queue, std::max(num_tasks, 8));
-    heap()->set_microtask_queue(*queue);
-  }
-  DCHECK_LE(8, queue->length());
-  DCHECK_LT(num_tasks, queue->length());
-  DCHECK(queue->get(num_tasks)->IsUndefined(this));
-  queue->set(num_tasks, *microtask);
-  set_pending_microtask_count(num_tasks + 1);
+  Handle<MicrotaskQueue> microtask_queue(heap()->default_microtask_queue(),
+                                         this);
+  MicrotaskQueue::EnqueueMicrotask(this, microtask_queue, microtask);
 }
 
 
@@ -3980,25 +3973,27 @@ void Isolate::RunMicrotasks() {
   // Increase call depth to prevent recursive callbacks.
   v8::Isolate::SuppressMicrotaskExecutionScope suppress(
       reinterpret_cast<v8::Isolate*>(this));
-  if (pending_microtask_count()) {
+  HandleScope scope(this);
+  Handle<MicrotaskQueue> microtask_queue(heap()->default_microtask_queue(),
+                                         this);
+  if (microtask_queue->pending_microtask_count()) {
     is_running_microtasks_ = true;
     TRACE_EVENT0("v8.execute", "RunMicrotasks");
     TRACE_EVENT_CALL_STATS_SCOPED(this, "v8", "V8.RunMicrotasks");
 
-    HandleScope scope(this);
     MaybeHandle<Object> maybe_exception;
     MaybeHandle<Object> maybe_result = Execution::RunMicrotasks(
         this, Execution::MessageHandling::kReport, &maybe_exception);
     // If execution is terminating, bail out, clean up, and propagate to
     // TryCatch scope.
     if (maybe_result.is_null() && maybe_exception.is_null()) {
-      heap()->set_microtask_queue(ReadOnlyRoots(heap()).empty_fixed_array());
-      set_pending_microtask_count(0);
+      microtask_queue->set_queue(ReadOnlyRoots(heap()).empty_fixed_array());
+      microtask_queue->set_pending_microtask_count(0);
       handle_scope_implementer()->LeaveMicrotaskContext();
       SetTerminationOnExternalTryCatch();
     }
-    CHECK_EQ(0, pending_microtask_count());
-    CHECK_EQ(0, heap()->microtask_queue()->length());
+    CHECK_EQ(0, microtask_queue->pending_microtask_count());
+    CHECK_EQ(0, microtask_queue->queue()->length());
     is_running_microtasks_ = false;
   }
   FireMicrotasksCompletedCallback();

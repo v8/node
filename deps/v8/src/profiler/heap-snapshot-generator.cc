@@ -535,7 +535,7 @@ SnapshotObjectId HeapObjectsMap::GenerateId(v8::RetainedObjectInfo* info) {
                                            heap_->HashSeed());
   intptr_t element_count = info->GetElementCount();
   if (element_count != -1) {
-    id ^= ComputeIntegerHash(static_cast<uint32_t>(element_count));
+    id ^= ComputeUnseededHash(static_cast<uint32_t>(element_count));
   }
   return id << 1;
 }
@@ -550,8 +550,6 @@ V8HeapExplorer::V8HeapExplorer(HeapSnapshot* snapshot,
       progress_(progress),
       filler_(nullptr),
       global_object_name_resolver_(resolver) {}
-
-V8HeapExplorer::~V8HeapExplorer() = default;
 
 HeapEntry* V8HeapExplorer::AllocateEntry(HeapThing ptr) {
   return AddEntry(reinterpret_cast<HeapObject*>(ptr));
@@ -2004,7 +2002,7 @@ class GlobalHandlesExtractor : public PersistentHandleVisitor {
  public:
   explicit GlobalHandlesExtractor(NativeObjectsExplorer* explorer)
       : explorer_(explorer) {}
-  ~GlobalHandlesExtractor() override {}
+  ~GlobalHandlesExtractor() override = default;
   void VisitPersistentHandle(Persistent<Value>* value,
                              uint16_t class_id) override {
     Handle<Object> object = Utils::OpenPersistent(value);
@@ -2109,7 +2107,7 @@ class NativeGroupRetainedObjectInfo : public v8::RetainedObjectInfo {
         hash_(reinterpret_cast<intptr_t>(label)),
         label_(label) {}
 
-  ~NativeGroupRetainedObjectInfo() override {}
+  ~NativeGroupRetainedObjectInfo() override = default;
   void Dispose() override {
     CHECK(!disposed_);
     disposed_ = true;

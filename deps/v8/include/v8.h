@@ -855,7 +855,7 @@ class V8_EXPORT HandleScope {
   void operator=(const HandleScope&) = delete;
 
  protected:
-  V8_INLINE HandleScope() {}
+  V8_INLINE HandleScope() = default;
 
   void Initialize(Isolate* isolate);
 
@@ -895,7 +895,7 @@ class V8_EXPORT HandleScope {
 class V8_EXPORT EscapableHandleScope : public HandleScope {
  public:
   explicit EscapableHandleScope(Isolate* isolate);
-  V8_INLINE ~EscapableHandleScope() {}
+  V8_INLINE ~EscapableHandleScope() = default;
 
   /**
    * Pushes the value into the previous scope and returns a handle to it.
@@ -1337,7 +1337,7 @@ class V8_EXPORT ScriptCompiler {
    */
   class V8_EXPORT ExternalSourceStream {
    public:
-    virtual ~ExternalSourceStream() {}
+    virtual ~ExternalSourceStream() = default;
 
     /**
      * V8 calls this to request the next chunk of data from the embedder. This
@@ -1415,7 +1415,7 @@ class V8_EXPORT ScriptCompiler {
    */
   class ScriptStreamingTask {
    public:
-    virtual ~ScriptStreamingTask() {}
+    virtual ~ScriptStreamingTask() = default;
     virtual void Run() = 0;
   };
 
@@ -1838,9 +1838,9 @@ class V8_EXPORT JSON {
    * \param json_string The string to parse.
    * \return The corresponding value if successfully parsed.
    */
-  static V8_DEPRECATE_SOON("Use the maybe version taking context",
-                           MaybeLocal<Value> Parse(Isolate* isolate,
-                                                   Local<String> json_string));
+  static V8_DEPRECATED("Use the maybe version taking context",
+                       MaybeLocal<Value> Parse(Isolate* isolate,
+                                               Local<String> json_string));
   static V8_WARN_UNUSED_RESULT MaybeLocal<Value> Parse(
       Local<Context> context, Local<String> json_string);
 
@@ -1868,7 +1868,7 @@ class V8_EXPORT ValueSerializer {
  public:
   class V8_EXPORT Delegate {
    public:
-    virtual ~Delegate() {}
+    virtual ~Delegate() = default;
 
     /**
      * Handles the case where a DataCloneError would be thrown in the structured
@@ -1940,7 +1940,7 @@ class V8_EXPORT ValueSerializer {
    * Returns the stored data. This serializer should not be used once the buffer
    * is released. The contents are undefined if a previous write has failed.
    */
-  V8_DEPRECATE_SOON("Use Release()", std::vector<uint8_t> ReleaseBuffer());
+  V8_DEPRECATED("Use Release()", std::vector<uint8_t> ReleaseBuffer());
 
   /**
    * Returns the stored data (allocated using the delegate's
@@ -1961,10 +1961,10 @@ class V8_EXPORT ValueSerializer {
   /**
    * Similar to TransferArrayBuffer, but for SharedArrayBuffer.
    */
-  V8_DEPRECATE_SOON("Use Delegate::GetSharedArrayBufferId",
-                    void TransferSharedArrayBuffer(
-                        uint32_t transfer_id,
-                        Local<SharedArrayBuffer> shared_array_buffer));
+  V8_DEPRECATED("Use Delegate::GetSharedArrayBufferId",
+                void TransferSharedArrayBuffer(
+                    uint32_t transfer_id,
+                    Local<SharedArrayBuffer> shared_array_buffer));
 
   /**
    * Indicate whether to treat ArrayBufferView objects as host objects,
@@ -2005,7 +2005,7 @@ class V8_EXPORT ValueDeserializer {
  public:
   class V8_EXPORT Delegate {
    public:
-    virtual ~Delegate() {}
+    virtual ~Delegate() = default;
 
     /**
      * The embedder overrides this method to read some kind of host object, if
@@ -2620,7 +2620,7 @@ class V8_EXPORT String : public Name {
 
   class V8_EXPORT ExternalStringResourceBase {  // NOLINT
    public:
-    virtual ~ExternalStringResourceBase() {}
+    virtual ~ExternalStringResourceBase() = default;
 
     V8_DEPRECATE_SOON("Use IsCacheable().",
                       virtual bool IsCompressible() const) {
@@ -2644,7 +2644,7 @@ class V8_EXPORT String : public Name {
     }
 
    protected:
-    ExternalStringResourceBase() {}
+    ExternalStringResourceBase() = default;
 
     /**
      * Internally V8 will call this Dispose method when the external string
@@ -2695,7 +2695,7 @@ class V8_EXPORT String : public Name {
      * Override the destructor to manage the life cycle of the underlying
      * buffer.
      */
-    virtual ~ExternalStringResource() {}
+    ~ExternalStringResource() override = default;
 
     /**
      * The string data from the underlying buffer.
@@ -2708,7 +2708,7 @@ class V8_EXPORT String : public Name {
     virtual size_t length() const = 0;
 
    protected:
-    ExternalStringResource() {}
+    ExternalStringResource() = default;
   };
 
   /**
@@ -2728,13 +2728,13 @@ class V8_EXPORT String : public Name {
      * Override the destructor to manage the life cycle of the underlying
      * buffer.
      */
-    virtual ~ExternalOneByteStringResource() {}
+    ~ExternalOneByteStringResource() override = default;
     /** The string data from the underlying buffer.*/
     virtual const char* data() const = 0;
     /** The number of Latin-1 characters in the string.*/
     virtual size_t length() const = 0;
    protected:
-    ExternalOneByteStringResource() {}
+    ExternalOneByteStringResource() = default;
   };
 
   /**
@@ -4404,7 +4404,7 @@ class V8_EXPORT WasmModuleObjectBuilderStreaming final {
   void Abort(MaybeLocal<Value> exception);
   Local<Promise> GetPromise();
 
-  ~WasmModuleObjectBuilderStreaming();
+  ~WasmModuleObjectBuilderStreaming() = default;
 
  private:
   WasmModuleObjectBuilderStreaming(const WasmModuleObjectBuilderStreaming&) =
@@ -4463,7 +4463,7 @@ class V8_EXPORT ArrayBuffer : public Object {
    */
   class V8_EXPORT Allocator { // NOLINT
    public:
-    virtual ~Allocator() {}
+    virtual ~Allocator() = default;
 
     /**
      * Allocate |length| bytes. Return NULL if allocation is not successful.
@@ -5040,8 +5040,8 @@ class V8_EXPORT SharedArrayBuffer : public Object {
  */
 class V8_EXPORT Date : public Object {
  public:
-  static V8_DEPRECATE_SOON("Use maybe version.",
-                           Local<Value> New(Isolate* isolate, double time));
+  static V8_DEPRECATED("Use maybe version.",
+                       Local<Value> New(Isolate* isolate, double time));
   static V8_WARN_UNUSED_RESULT MaybeLocal<Value> New(Local<Context> context,
                                                      double time);
 
@@ -6214,8 +6214,8 @@ V8_EXPORT ExternalOneByteStringResourceImpl
   ExternalOneByteStringResourceImpl() : data_(nullptr), length_(0) {}
   ExternalOneByteStringResourceImpl(const char* data, size_t length)
       : data_(data), length_(length) {}
-  const char* data() const { return data_; }
-  size_t length() const { return length_; }
+  const char* data() const override { return data_; }
+  size_t length() const override { return length_; }
 
  private:
   const char* data_;
@@ -6302,14 +6302,14 @@ class V8_EXPORT ResourceConstraints {
                          uint64_t virtual_memory_limit);
 
   // Returns the max semi-space size in MB.
-  V8_DEPRECATE_SOON("Use max_semi_space_size_in_kb()",
-                    size_t max_semi_space_size()) {
+  V8_DEPRECATED("Use max_semi_space_size_in_kb()",
+                size_t max_semi_space_size()) {
     return max_semi_space_size_in_kb_ / 1024;
   }
 
   // Sets the max semi-space size in MB.
-  V8_DEPRECATE_SOON("Use set_max_semi_space_size_in_kb(size_t limit_in_kb)",
-                    void set_max_semi_space_size(size_t limit_in_mb)) {
+  V8_DEPRECATED("Use set_max_semi_space_size_in_kb(size_t limit_in_kb)",
+                void set_max_semi_space_size(size_t limit_in_mb)) {
     max_semi_space_size_in_kb_ = limit_in_mb * 1024;
   }
 
@@ -6327,12 +6327,12 @@ class V8_EXPORT ResourceConstraints {
   void set_max_old_space_size(size_t limit_in_mb) {
     max_old_space_size_ = limit_in_mb;
   }
-  V8_DEPRECATE_SOON("max_executable_size_ is subsumed by max_old_space_size_",
-                    size_t max_executable_size() const) {
+  V8_DEPRECATED("max_executable_size_ is subsumed by max_old_space_size_",
+                size_t max_executable_size() const) {
     return max_executable_size_;
   }
-  V8_DEPRECATE_SOON("max_executable_size_ is subsumed by max_old_space_size_",
-                    void set_max_executable_size(size_t limit_in_mb)) {
+  V8_DEPRECATED("max_executable_size_ is subsumed by max_old_space_size_",
+                void set_max_executable_size(size_t limit_in_mb)) {
     max_executable_size_ = limit_in_mb;
   }
   uint32_t* stack_limit() const { return stack_limit_; }
@@ -6891,7 +6891,7 @@ typedef void (*JitCodeEventHandler)(const JitCodeEvent* event);
  */
 class V8_EXPORT ExternalResourceVisitor {  // NOLINT
  public:
-  virtual ~ExternalResourceVisitor() {}
+  virtual ~ExternalResourceVisitor() = default;
   virtual void VisitExternalString(Local<String> string) {}
 };
 
@@ -6901,7 +6901,7 @@ class V8_EXPORT ExternalResourceVisitor {  // NOLINT
  */
 class V8_EXPORT PersistentHandleVisitor {  // NOLINT
  public:
-  virtual ~PersistentHandleVisitor() {}
+  virtual ~PersistentHandleVisitor() = default;
   virtual void VisitPersistentHandle(Persistent<Value>* value,
                                      uint16_t class_id) {}
 };
@@ -7021,7 +7021,8 @@ class V8_EXPORT EmbedderHeapTracer {
    * The embedder is expected to throw away all intermediate data and reset to
    * the initial state.
    */
-  virtual void AbortTracing() = 0;
+  V8_DEPRECATE_SOON("Obsolete as V8 will not abort tracing anymore.",
+                    virtual void AbortTracing()) {}
 
   /*
    * Called by the embedder to request immediate finalization of the currently
@@ -7354,6 +7355,8 @@ class V8_EXPORT Isolate {
     kFunctionTokenOffsetTooLongForToString = 49,
     kWasmSharedMemory = 50,
     kWasmThreadOpcodes = 51,
+    kAtomicsNotify = 52,
+    kAtomicsWake = 53,
 
     // If you add new values here, you'll also need to update Chromium's:
     // web_feature.mojom, UseCounterCallback.cpp, and enums.xml. V8 changes to
@@ -7683,6 +7686,11 @@ class V8_EXPORT Isolate {
    * Sets the embedder heap tracer for the isolate.
    */
   void SetEmbedderHeapTracer(EmbedderHeapTracer* tracer);
+
+  /*
+   * Gets the currently active heap tracer for the isolate.
+   */
+  EmbedderHeapTracer* GetEmbedderHeapTracer();
 
   /**
    * Use for |AtomicsWaitCallback| to indicate the type of event it receives.

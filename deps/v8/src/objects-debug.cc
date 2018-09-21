@@ -1475,14 +1475,8 @@ void JSArrayBufferView::JSArrayBufferViewVerify(Isolate* isolate) {
   VerifyPointer(isolate, buffer());
   CHECK(buffer()->IsJSArrayBuffer() || buffer()->IsUndefined(isolate) ||
         buffer() == Smi::kZero);
-
-  VerifyPointer(isolate, raw_byte_offset());
-  CHECK(raw_byte_offset()->IsSmi() || raw_byte_offset()->IsHeapNumber() ||
-        raw_byte_offset()->IsUndefined(isolate));
-
-  VerifyPointer(isolate, raw_byte_length());
-  CHECK(raw_byte_length()->IsSmi() || raw_byte_length()->IsHeapNumber() ||
-        raw_byte_length()->IsUndefined(isolate));
+  CHECK_LE(byte_length(), JSArrayBuffer::kMaxByteLength);
+  CHECK_LE(byte_offset(), JSArrayBuffer::kMaxByteLength);
 }
 
 void JSTypedArray::JSTypedArrayVerify(Isolate* isolate) {
@@ -2166,8 +2160,9 @@ bool CanLeak(Object* obj, Heap* heap) {
   if (obj->IsContext()) return true;
   if (obj->IsMap()) {
     Map* map = Map::cast(obj);
-    for (int i = 0; i < Heap::kStrongRootListLength; i++) {
-      Heap::RootListIndex root_index = static_cast<Heap::RootListIndex>(i);
+    for (int i = 0; i < static_cast<int>(RootIndex::kStrongRootListLength);
+         i++) {
+      RootIndex root_index = static_cast<RootIndex>(i);
       if (map == heap->root(root_index)) return false;
     }
     return true;

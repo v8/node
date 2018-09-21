@@ -117,7 +117,7 @@ class HeapEntry {
   };
   static const int kNoEntry;
 
-  HeapEntry() { }
+  HeapEntry() = default;
   HeapEntry(HeapSnapshot* snapshot,
             Type type,
             const char* name,
@@ -312,7 +312,7 @@ class V8HeapExplorer : public HeapEntriesAllocator {
   V8HeapExplorer(HeapSnapshot* snapshot,
                  SnapshottingProgressReportingInterface* progress,
                  v8::HeapProfiler::ObjectNameResolver* resolver);
-  ~V8HeapExplorer() override;
+  ~V8HeapExplorer() override = default;
   HeapEntry* AllocateEntry(HeapThing ptr) override;
   int EstimateObjectsCount();
   bool IterateAndExtractReferences(SnapshotFiller* filler);
@@ -480,7 +480,7 @@ class NativeObjectsExplorer {
 
   struct RetainedInfoHasher {
     std::size_t operator()(v8::RetainedObjectInfo* info) const {
-      return ComputeIntegerHash(static_cast<uint32_t>(info->GetHash()));
+      return ComputeUnseededHash(static_cast<uint32_t>(info->GetHash()));
     }
   };
   struct RetainedInfoEquals {

@@ -253,7 +253,7 @@ class ActivationsFinder : public ThreadVisitor {
   // Find the frames with activations of codes marked for deoptimization, search
   // for the trampoline to the deoptimizer call respective to each code, and use
   // it to replace the current pc on the stack.
-  void VisitThread(Isolate* isolate, ThreadLocalTop* top) {
+  void VisitThread(Isolate* isolate, ThreadLocalTop* top) override {
     for (StackFrameIterator it(isolate, top); !it.done(); it.Advance()) {
       if (it.frame()->type() == StackFrame::OPTIMIZED) {
         Code* code = it.frame()->LookupCode();
@@ -1739,7 +1739,7 @@ void Deoptimizer::MaterializeHeapObjects() {
   translated_state_.Prepare(static_cast<Address>(stack_fp_));
   if (FLAG_deopt_every_n_times > 0) {
     // Doing a GC here will find problems with the deoptimized frames.
-    isolate_->heap()->CollectAllGarbage(Heap::kFinalizeIncrementalMarkingMask,
+    isolate_->heap()->CollectAllGarbage(Heap::kNoGCFlags,
                                         GarbageCollectionReason::kTesting);
   }
 

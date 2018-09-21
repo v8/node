@@ -134,11 +134,6 @@ ExternalReference ExternalReference::handle_scope_implementer_address(
   return ExternalReference(isolate->handle_scope_implementer_address());
 }
 
-ExternalReference ExternalReference::pending_microtask_count_address(
-    Isolate* isolate) {
-  return ExternalReference(isolate->pending_microtask_count_address());
-}
-
 ExternalReference ExternalReference::interpreter_dispatch_table_address(
     Isolate* isolate) {
   return ExternalReference(isolate->interpreter()->dispatch_table_address());
@@ -764,6 +759,15 @@ ExternalReference ExternalReference::jsreceiver_create_identity_hash(
   return ExternalReference(Redirect(FUNCTION_ADDR(f)));
 }
 
+static uint32_t ComputeSeededIntegerHash(Isolate* isolate, uint32_t key) {
+  DisallowHeapAllocation no_gc;
+  return ComputeSeededHash(key, isolate->heap()->HashSeed());
+}
+
+ExternalReference ExternalReference::compute_integer_hash() {
+  return ExternalReference(Redirect(FUNCTION_ADDR(ComputeSeededIntegerHash)));
+}
+
 ExternalReference
 ExternalReference::copy_fast_number_jsarray_elements_to_typed_array() {
   return ExternalReference(
@@ -820,8 +824,8 @@ ExternalReference ExternalReference::page_flags(Page* page) {
                            MemoryChunk::kFlagsOffset);
 }
 
-ExternalReference ExternalReference::ForDeoptEntry(Address entry) {
-  return ExternalReference(entry);
+ExternalReference ExternalReference::FromRawAddress(Address address) {
+  return ExternalReference(address);
 }
 
 ExternalReference ExternalReference::cpu_features() {

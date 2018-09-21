@@ -154,7 +154,7 @@
   'test-mark-compact/Promotion': [PASS, FAIL],
 
   # BUG(v8:3434).
-  ' test-api/LoadICFastApi_DirectCall_GCMoveStubWithProfiler': [SKIP],
+  'test-api/LoadICFastApi_DirectCall_GCMoveStubWithProfiler': [SKIP],
 }],  # 'arch == arm64'
 
 ['arch == arm64 and simulator_run', {
@@ -204,6 +204,8 @@
   'test-cpu-profiler/TickEvents': [SKIP],
   # BUG(v8:6924). The test allocates a lot of memory.
   'test-api/NewStringRangeError': [PASS, NO_VARIANTS],
+  # BUG(v8:8209). Flaky
+  'test-cpu-profiler/Issue1398': [SKIP],
 }],  # 'tsan == True'
 
 ##############################################################################
@@ -285,10 +287,17 @@
   'test-serialize/StartupSerializerTwice': [SKIP],
   'test-serialize/StartupSerializerOnceRunScript': [SKIP],
   'test-serialize/StartupSerializerTwiceRunScript': [SKIP],
-
-  # crbug.com/v8/7605
-  'test-heap/OutOfMemorySmallObjects': [PASS, ['not simulator_run', SKIP]],
 }],  # 'arch == arm'
+
+##############################################################################
+['arch == arm and not simulator_run', {
+  # crbug.com/v8/7605
+  'test-heap/OutOfMemorySmallObjects': [SKIP],
+
+  # BUG(v8:8201).
+  'test-run-wasm-atomics/*': [SKIP],
+  'test-run-wasm-atomics64/*': [SKIP],
+}],  # 'arch == arm and not simulator_run'
 
 ##############################################################################
 ['arch == mipsel or arch == mips', {
@@ -373,29 +382,6 @@
 ['system == android', {
   # Uses too much memory.
   'test-api/NewStringRangeError': [SKIP],
-  # https://crbug.com/v8/8157
-  'test-assembler-arm64/abs': [FAIL],
-  'test-assembler-arm64/adcs_sbcs_w': [FAIL],
-  'test-assembler-arm64/adcs_sbcs_x': [FAIL],
-  'test-assembler-arm64/default_nan_double': [FAIL],
-  'test-assembler-arm64/default_nan_float': [FAIL],
-  'test-assembler-arm64/fcvt_sd': [FAIL],
-  'test-assembler-arm64/fmadd_fmsub_double': [FAIL],
-  'test-assembler-arm64/fmadd_fmsub_double_nans': [FAIL],
-  'test-assembler-arm64/fmadd_fmsub_float': [FAIL],
-  'test-assembler-arm64/fmadd_fmsub_float_nans': [FAIL],
-  'test-assembler-arm64/fmax_fmin_d': [FAIL],
-  'test-assembler-arm64/fmax_fmin_s': [FAIL],
-  'test-assembler-arm64/ldr_pcrel_large_offset': [FAIL],
-  'test-assembler-arm64/process_nans_double': [FAIL],
-  'test-assembler-arm64/process_nans_float': [FAIL],
-  'test-assembler-arm64/push_pop_fp_simple_32': [FAIL],
-  'test-assembler-arm64/push_pop_fp_simple_64': [FAIL],
-  'test-assembler-arm64/push_pop_simple_64': [FAIL],
-  'test-assembler-arm64/scvtf_ucvtf_double': [FAIL],
-  'test-assembler-arm64/scvtf_ucvtf_float': [FAIL],
-  'test-assembler-arm64/smull': [FAIL],
-  'test-code-stubs-arm64/ConvertDToI': [FAIL],
 }],  # 'system == android'
 
 ##############################################################################

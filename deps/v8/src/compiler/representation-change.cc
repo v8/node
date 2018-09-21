@@ -350,6 +350,7 @@ Node* RepresentationChanger::GetTaggedPointerRepresentationFor(
   // Eagerly fold representation changes for constants.
   switch (node->opcode()) {
     case IrOpcode::kHeapConstant:
+    case IrOpcode::kDelayedStringConstant:
       return node;  // No change necessary.
     case IrOpcode::kInt32Constant:
     case IrOpcode::kFloat64Constant:
@@ -433,6 +434,7 @@ Node* RepresentationChanger::GetTaggedRepresentationFor(
   switch (node->opcode()) {
     case IrOpcode::kNumberConstant:
     case IrOpcode::kHeapConstant:
+    case IrOpcode::kDelayedStringConstant:
       return node;  // No change necessary.
     case IrOpcode::kInt32Constant:
     case IrOpcode::kFloat64Constant:
@@ -962,7 +964,7 @@ Node* RepresentationChanger::GetWord64RepresentationFor(
         jsgraph()->common()->DeadValue(MachineRepresentation::kWord64), node);
   } else if (output_rep == MachineRepresentation::kBit) {
     return node;  // Sloppy comparison -> word64
-  } else if (output_rep == MachineRepresentation::kWord32) {
+  } else if (IsWord(output_rep)) {
     if (output_type.Is(Type::Unsigned32())) {
       op = machine()->ChangeUint32ToUint64();
     } else if (output_type.Is(Type::Signed32())) {
@@ -972,17 +974,23 @@ Node* RepresentationChanger::GetWord64RepresentationFor(
                        MachineRepresentation::kWord64);
     }
   } else if (output_rep == MachineRepresentation::kFloat32) {
-    if (output_type.Is(cache_.kSafeInteger)) {
+    if (output_type.Is(cache_.kInt64)) {
       // float32 -> float64 -> int64
       node = InsertChangeFloat32ToFloat64(node);
       op = machine()->ChangeFloat64ToInt64();
+    } else if (output_type.Is(cache_.kUint64)) {
+      // float32 -> float64 -> uint64
+      node = InsertChangeFloat32ToFloat64(node);
+      op = machine()->ChangeFloat64ToUint64();
     } else {
       return TypeError(node, output_rep, output_type,
                        MachineRepresentation::kWord64);
     }
   } else if (output_rep == MachineRepresentation::kFloat64) {
-    if (output_type.Is(cache_.kSafeInteger)) {
+    if (output_type.Is(cache_.kInt64)) {
       op = machine()->ChangeFloat64ToInt64();
+    } else if (output_type.Is(cache_.kUint64)) {
+      op = machine()->ChangeFloat64ToUint64();
     } else {
       return TypeError(node, output_rep, output_type,
                        MachineRepresentation::kWord64);
@@ -995,7 +1003,7 @@ Node* RepresentationChanger::GetWord64RepresentationFor(
                        MachineRepresentation::kWord64);
     }
   } else if (CanBeTaggedPointer(output_rep)) {
-    if (output_type.Is(cache_.kSafeInteger)) {
+    if (output_type.Is(cache_.kInt64)) {
       op = simplified()->ChangeTaggedToInt64();
     } else {
       return TypeError(node, output_rep, output_type,

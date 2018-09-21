@@ -16,6 +16,8 @@ namespace internal {
 #define __ ACCESS_MASM(masm)
 
 void DebugCodegen::GenerateHandleDebuggerStatement(MacroAssembler* masm) {
+  Assembler::SupportsRootRegisterScope supports_root_register(masm);
+
   {
     FrameScope scope(masm, StackFrame::INTERNAL);
     __ CallRuntime(Runtime::kHandleDebuggerStatement, 0);
@@ -27,6 +29,8 @@ void DebugCodegen::GenerateHandleDebuggerStatement(MacroAssembler* masm) {
 }
 
 void DebugCodegen::GenerateFrameDropperTrampoline(MacroAssembler* masm) {
+  Assembler::SupportsRootRegisterScope supports_root_register(masm);
+
   // Frame is being dropped:
   // - Drop to the target frame specified by eax.
   // - Look up current function on the frame.
@@ -40,10 +44,12 @@ void DebugCodegen::GenerateFrameDropperTrampoline(MacroAssembler* masm) {
   __ movzx_w(
       eax, FieldOperand(eax, SharedFunctionInfo::kFormalParameterCountOffset));
 
-  ParameterCount dummy(eax);
-  __ InvokeFunction(edi, dummy, dummy, JUMP_FUNCTION);
+  // The expected and actual argument counts don't matter as long as they match
+  // and we don't enter the ArgumentsAdaptorTrampoline.
+  ParameterCount dummy(0);
+  __ mov(esi, FieldOperand(edi, JSFunction::kContextOffset));
+  __ InvokeFunctionCode(edi, no_reg, dummy, dummy, JUMP_FUNCTION);
 }
-
 
 const bool LiveEdit::kFrameDropperSupported = true;
 

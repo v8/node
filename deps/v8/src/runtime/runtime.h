@@ -118,9 +118,7 @@ namespace internal {
   F(NotifyDeoptimized, 0, 1)              \
   F(ResolvePossiblyDirectEval, 6, 1)
 
-#define FOR_EACH_INTRINSIC_DATE(F) \
-  F(DateCurrentTime, 0, 1)         \
-  F(IsDate, 1, 1)
+#define FOR_EACH_INTRINSIC_DATE(F) F(DateCurrentTime, 0, 1)
 
 #define FOR_EACH_INTRINSIC_DEBUG(F)             \
   F(ClearStepping, 0, 1)                        \
@@ -128,7 +126,6 @@ namespace internal {
   F(DebugBreakAtEntry, 1, 1)                    \
   F(DebugCollectCoverage, 0, 1)                 \
   F(DebugGetLoadedScriptIds, 0, 1)              \
-  F(DebugIsActive, 0, 1)                        \
   F(DebugOnFunctionCall, 2, 1)                  \
   F(DebugPopPromise, 0, 1)                      \
   F(DebugPrepareStepInSuspendedGenerator, 0, 1) \
@@ -195,7 +192,6 @@ namespace internal {
   F(CreateJSGeneratorObject, 2, 1)            \
   F(GeneratorClose, 1, 1)                     \
   F(GeneratorGetFunction, 1, 1)               \
-  F(GeneratorGetInputOrDebugPos, 1, 1)        \
   F(GeneratorGetResumeMode, 1, 1)
 
 #ifdef V8_INTL_SUPPORT
@@ -326,25 +322,19 @@ namespace internal {
   F(ObjectValuesSkipFastPath, 1, 1)                             \
   F(OptimizeObjectForAddingMultipleProperties, 2, 1)            \
   F(PerformSideEffectCheckForObject, 1, 1)                      \
-  F(SameValue, 2, 1)                                            \
-  F(SameValueZero, 2, 1)                                        \
   F(SetDataProperties, 2, 1)                                    \
   F(SetKeyedProperty, 4, 1)                                     \
   F(SetNamedProperty, 4, 1)                                     \
   F(StoreDataPropertyInLiteral, 3, 1)                           \
   F(ShrinkPropertyDictionary, 1, 1)                             \
   F(ToFastProperties, 1, 1)                                     \
-  F(ToInteger, 1, 1)                                            \
   F(ToLength, 1, 1)                                             \
   F(ToName, 1, 1)                                               \
   F(ToNumber, 1, 1)                                             \
   F(ToNumeric, 1, 1)                                            \
   F(ToObject, 1, 1)                                             \
-  F(ToPrimitive, 1, 1)                                          \
-  F(ToPrimitive_Number, 1, 1)                                   \
   F(ToString, 1, 1)                                             \
-  F(TryMigrateInstance, 1, 1)                                   \
-  F(ValueOf, 1, 1)
+  F(TryMigrateInstance, 1, 1)
 
 #define FOR_EACH_INTRINSIC_OPERATORS(F) \
   F(Add, 2, 1)                          \
@@ -724,7 +714,7 @@ class RuntimeState {
   }
 
  private:
-  RuntimeState() {}
+  RuntimeState() = default;
 #ifndef V8_INTL_SUPPORT
   unibrow::Mapping<unibrow::ToUppercase, 128> to_upper_mapping_;
   unibrow::Mapping<unibrow::ToLowercase, 128> to_lower_mapping_;

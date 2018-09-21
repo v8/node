@@ -450,10 +450,6 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   HEAP_IMMOVABLE_OBJECT_LIST(HEAP_CONSTANT_TEST)
 #undef HEAP_CONSTANT_TEST
 
-  TNode<Int64T> HashSeed();
-  TNode<Int32T> HashSeedHigh();
-  TNode<Int32T> HashSeedLow();
-
   Node* IntPtrOrSmiConstant(int value, ParameterMode mode);
   TNode<Smi> LanguageModeConstant(LanguageMode mode) {
     return SmiConstant(static_cast<int>(mode));
@@ -831,7 +827,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // Load a SMI and untag it.
   TNode<IntPtrT> LoadAndUntagSmi(Node* base, int index);
   // Load a SMI root, untag it, and convert to Word32.
-  TNode<Int32T> LoadAndUntagToWord32Root(Heap::RootListIndex root_index);
+  TNode<Int32T> LoadAndUntagToWord32Root(RootIndex root_index);
 
   TNode<MaybeObject> LoadMaybeWeakObjectField(SloppyTNode<HeapObject> object,
                                               int offset) {
@@ -873,8 +869,6 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   TNode<Smi> LoadWeakFixedArrayLength(TNode<WeakFixedArray> array);
   TNode<IntPtrT> LoadAndUntagWeakFixedArrayLength(
       SloppyTNode<WeakFixedArray> array);
-  // Load the length of a JSTypedArray instance.
-  TNode<Smi> LoadTypedArrayLength(TNode<JSTypedArray> typed_array);
   // Load the bit field of a Map.
   TNode<Int32T> LoadMapBitField(SloppyTNode<Map> map);
   // Load bit field 2 of a map.
@@ -1171,11 +1165,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
       MachineRepresentation rep = MachineRepresentation::kTagged);
   // Store the Map of an HeapObject.
   Node* StoreMap(Node* object, Node* map);
-  Node* StoreMapNoWriteBarrier(Node* object,
-                               Heap::RootListIndex map_root_index);
+  Node* StoreMapNoWriteBarrier(Node* object, RootIndex map_root_index);
   Node* StoreMapNoWriteBarrier(Node* object, Node* map);
-  Node* StoreObjectFieldRoot(Node* object, int offset,
-                             Heap::RootListIndex root);
+  Node* StoreObjectFieldRoot(Node* object, int offset, RootIndex root);
   // Store an array element to a FixedArray.
   void StoreFixedArrayElement(
       TNode<FixedArray> object, int index, SloppyTNode<Object> value,
@@ -1474,8 +1466,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* InternalArrayCreate(TNode<Context> context, TNode<Number> len);
 
   void FillFixedArrayWithValue(ElementsKind kind, Node* array, Node* from_index,
-                               Node* to_index,
-                               Heap::RootListIndex value_root_index,
+                               Node* to_index, RootIndex value_root_index,
                                ParameterMode mode = INTPTR_PARAMETERS);
 
   // Uses memset to effectively initialize the given FixedArray with zeroes.
@@ -1541,9 +1532,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   TNode<FixedDoubleArray> HeapObjectToFixedDoubleArray(TNode<HeapObject> base,
                                                        Label* cast_fail) {
-    GotoIf(WordNotEqual(LoadMap(base),
-                        LoadRoot(Heap::kFixedDoubleArrayMapRootIndex)),
-           cast_fail);
+    GotoIf(
+        WordNotEqual(LoadMap(base), LoadRoot(RootIndex::kFixedDoubleArrayMap)),
+        cast_fail);
     return UncheckedCast<FixedDoubleArray>(base);
   }
 
@@ -1563,8 +1554,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   typedef base::Flags<ExtractFixedArrayFlag> ExtractFixedArrayFlags;
 
   // Copy a portion of an existing FixedArray or FixedDoubleArray into a new
-  // FixedArray, including special appropriate handling for empty arrays and COW
-  // arrays.
+  // array, including special appropriate handling for empty arrays and COW
+  // arrays. The result array will be of the same type as the original array.
   //
   // * |source| is either a FixedArray or FixedDoubleArray from which to copy
   // elements.
@@ -1599,6 +1590,33 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     return ExtractFixedArray(source, first, count, capacity, extract_flags,
                              SMI_PARAMETERS);
   }
+
+  // Copy a portion of an existing FixedArray or FixedDoubleArray into a new
+  // FixedArray, including special appropriate handling for COW arrays.
+  // * |source| is either a FixedArray or FixedDoubleArray from which to copy
+  // elements. |source| is assumed to be non-empty.
+  // * |first| is the starting element index to copy from.
+  // * |count| is the number of elements to copy out of the source array
+  // starting from and including the element indexed by |start|.
+  // * |capacity| determines the size of the allocated result array, with
+  // |capacity| >= |count|.
+  // * |source_map| is the map of the |source|.
+  // * |from_kind| is the elements kind that is consistent with |source| being
+  // a FixedArray or FixedDoubleArray. This function only cares about double vs.
+  // non-double, so as to distinguish FixedDoubleArray vs. FixedArray. It does
+  // not care about holeyness. For example, when |source| is a FixedArray,
+  // PACKED/HOLEY_ELEMENTS can be used, but not PACKED_DOUBLE_ELEMENTS.
+  // * The function uses |allocation_flags| and |extract_flags| to decide how to
+  // allocate the result FixedArray.
+  // * |parameter_mode| determines the parameter mode of |first|, |count| and
+  // |capacity|.
+  TNode<FixedArray> ExtractToFixedArray(
+      Node* source, Node* first, Node* count, Node* capacity, Node* source_map,
+      ElementsKind from_kind = PACKED_ELEMENTS,
+      AllocationFlags allocation_flags = AllocationFlag::kNone,
+      ExtractFixedArrayFlags extract_flags =
+          ExtractFixedArrayFlag::kAllFixedArrays,
+      ParameterMode parameter_mode = INTPTR_PARAMETERS);
 
   // Copy the entire contents of a FixedArray or FixedDoubleArray to a new
   // array, including special appropriate handling for empty arrays and COW
@@ -2325,8 +2343,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                             int inlined_probes = kInlinedDictionaryProbes,
                             LookupMode mode = kFindExisting);
 
-  Node* ComputeIntegerHash(Node* key);
-  Node* ComputeIntegerHash(Node* key, Node* seed);
+  Node* ComputeUnseededHash(Node* key);
+  Node* ComputeSeededHash(Node* key);
 
   void NumberDictionaryLookup(TNode<NumberDictionary> dictionary,
                               TNode<IntPtrT> intptr_index, Label* if_found,
@@ -2682,7 +2700,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                                                ParameterMode mode);
 
   void InitializeFieldsWithRoot(Node* object, Node* start_offset,
-                                Node* end_offset, Heap::RootListIndex root);
+                                Node* end_offset, RootIndex root);
 
   Node* RelationalComparison(Operation op, Node* left, Node* right,
                              Node* context,
@@ -2771,17 +2789,28 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   TNode<BoolT> IsRuntimeCallStatsEnabled();
 
-  // TypedArray/ArrayBuffer helpers
+  // JSArrayBuffer helpers
+  TNode<Uint32T> LoadJSArrayBufferBitField(TNode<JSArrayBuffer> array_buffer);
+  TNode<RawPtrT> LoadJSArrayBufferBackingStore(
+      TNode<JSArrayBuffer> array_buffer);
   Node* IsDetachedBuffer(Node* buffer);
   void ThrowIfArrayBufferIsDetached(SloppyTNode<Context> context,
                                     TNode<JSArrayBuffer> array_buffer,
                                     const char* method_name);
+
+  // JSArrayBufferView helpers
+  TNode<JSArrayBuffer> LoadJSArrayBufferViewBuffer(
+      TNode<JSArrayBufferView> array_buffer_view);
+  TNode<UintPtrT> LoadJSArrayBufferViewByteLength(
+      TNode<JSArrayBufferView> array_buffer_view);
+  TNode<UintPtrT> LoadJSArrayBufferViewByteOffset(
+      TNode<JSArrayBufferView> array_buffer_view);
   void ThrowIfArrayBufferViewBufferIsDetached(
       SloppyTNode<Context> context, TNode<JSArrayBufferView> array_buffer_view,
       const char* method_name);
-  TNode<JSArrayBuffer> LoadArrayBufferViewBuffer(
-      TNode<JSArrayBufferView> array_buffer_view);
-  TNode<RawPtrT> LoadArrayBufferBackingStore(TNode<JSArrayBuffer> array_buffer);
+
+  // JSTypedArray helpers
+  TNode<Smi> LoadJSTypedArrayLength(TNode<JSTypedArray> typed_array);
 
   TNode<IntPtrT> ElementOffsetFromIndex(Node* index, ElementsKind kind,
                                         ParameterMode mode, int base_size = 0);
@@ -2961,11 +2990,11 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* EmitKeyedSloppyArguments(Node* receiver, Node* key, Node* value,
                                  Label* bailout);
 
-  TNode<String> AllocateSlicedString(Heap::RootListIndex map_root_index,
+  TNode<String> AllocateSlicedString(RootIndex map_root_index,
                                      TNode<Uint32T> length,
                                      TNode<String> parent, TNode<Smi> offset);
 
-  TNode<String> AllocateConsString(Heap::RootListIndex map_root_index,
+  TNode<String> AllocateConsString(RootIndex map_root_index,
                                    TNode<Uint32T> length, TNode<String> first,
                                    TNode<String> second, AllocationFlags flags);
 

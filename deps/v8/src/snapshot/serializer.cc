@@ -111,8 +111,7 @@ template <class AllocatorT>
 void Serializer<AllocatorT>::VisitRootPointers(Root root,
                                                const char* description,
                                                Object** start, Object** end) {
-  // Builtins and bytecode handlers are serialized in a separate pass by the
-  // BuiltinSerializer.
+  // Builtins are serialized in a separate pass by the BuiltinSerializer.
   if (root == Root::kBuiltins || root == Root::kDispatchTable) return;
 
   for (Object** current = start; current < end; current++) {
@@ -233,9 +232,7 @@ bool Serializer<AllocatorT>::SerializeBuiltinReference(
 template <class AllocatorT>
 bool Serializer<AllocatorT>::ObjectIsBytecodeHandler(HeapObject* obj) const {
   if (!obj->IsCode()) return false;
-  Code* code = Code::cast(obj);
-  if (isolate()->heap()->IsDeserializeLazyHandler(code)) return false;
-  return (code->kind() == Code::BYTECODE_HANDLER);
+  return (Code::cast(obj)->kind() == Code::BYTECODE_HANDLER);
 }
 
 template <class AllocatorT>
@@ -251,7 +248,7 @@ void Serializer<AllocatorT>::PutRoot(
 
   // Assert that the first 32 root array items are a conscious choice. They are
   // chosen so that the most common ones can be encoded more efficiently.
-  STATIC_ASSERT(Heap::kArgumentsMarkerRootIndex ==
+  STATIC_ASSERT(static_cast<int>(RootIndex::kArgumentsMarker) ==
                 kNumberOfRootArrayConstants - 1);
 
   if (how_to_code == kPlain && where_to_point == kStartOfObject &&
@@ -437,9 +434,9 @@ void Serializer<AllocatorT>::ObjectSerializer::SerializeJSTypedArray() {
       // Explicitly serialize the backing store now.
       JSArrayBuffer* buffer = JSArrayBuffer::cast(typed_array->buffer());
       CHECK_LE(buffer->byte_length(), Smi::kMaxValue);
-      CHECK(typed_array->byte_offset()->IsSmi());
+      CHECK_LE(typed_array->byte_offset(), Smi::kMaxValue);
       int32_t byte_length = static_cast<int32_t>(buffer->byte_length());
-      int32_t byte_offset = NumberToInt32(typed_array->byte_offset());
+      int32_t byte_offset = static_cast<int32_t>(typed_array->byte_offset());
 
       // We need to calculate the backing store from the external pointer
       // because the ArrayBuffer may already have been serialized.
@@ -743,7 +740,7 @@ void Serializer<AllocatorT>::ObjectSerializer::VisitPointers(
       // Repeats are not subject to the write barrier so we can only use
       // immortal immovable root members. They are never in new space.
       if (current != start && root_index != RootIndexMap::kInvalidRootIndex &&
-          Heap::RootIsImmortalImmovable(root_index) &&
+          Heap::RootIsImmortalImmovable(static_cast<RootIndex>(root_index)) &&
           *current == current[-1]) {
         DCHECK_EQ(reference_type, HeapObjectReferenceType::STRONG);
         DCHECK(!Heap::InNewSpace(current_contents));

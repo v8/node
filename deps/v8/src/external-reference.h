@@ -27,8 +27,6 @@ class StatsCounter;
   V(builtins_address, "builtins")                                              \
   V(handle_scope_implementer_address,                                          \
     "Isolate::handle_scope_implementer_address")                               \
-  V(pending_microtask_count_address,                                           \
-    "Isolate::pending_microtask_count_address()")                              \
   V(interpreter_dispatch_counters, "Interpreter::dispatch_counters")           \
   V(interpreter_dispatch_table_address, "Interpreter::dispatch_table_address") \
   V(date_cache_stamp, "date_cache_stamp")                                      \
@@ -84,6 +82,7 @@ class StatsCounter;
   V(address_of_uint32_bias, "uint32_bias")                                    \
   V(bytecode_size_table_address, "Bytecodes::bytecode_size_table_address")    \
   V(check_object_type, "check_object_type")                                   \
+  V(compute_integer_hash, "ComputeSeededHash")                                \
   V(compute_output_frames_function, "Deoptimizer::ComputeOutputFrames()")     \
   V(copy_fast_number_jsarray_elements_to_typed_array,                         \
     "copy_fast_number_jsarray_elements_to_typed_array")                       \
@@ -269,7 +268,7 @@ class ExternalReference {
 
   static ExternalReference page_flags(Page* page);
 
-  static ExternalReference ForDeoptEntry(Address entry);
+  static ExternalReference FromRawAddress(Address address);
 
 #define DECL_EXTERNAL_REFERENCE(name, desc) static ExternalReference name();
   EXTERNAL_REFERENCE_LIST(DECL_EXTERNAL_REFERENCE)

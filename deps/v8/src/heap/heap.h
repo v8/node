@@ -309,55 +309,6 @@ struct CommentStatistic {
 
 class Heap {
  public:
-  // Declare all the root indices.  This defines the root list order.
-  // clang-format off
-  enum RootListIndex {
-#define DECL(type, name, camel_name) k##camel_name##RootIndex,
-    STRONG_ROOT_LIST(DECL)
-#undef DECL
-
-#define DECL(name, str) k##name##RootIndex,
-    INTERNALIZED_STRING_LIST(DECL)
-#undef DECL
-
-#define DECL(name) k##name##RootIndex,
-    PRIVATE_SYMBOL_LIST(DECL)
-#undef DECL
-
-#define DECL(name, description) k##name##RootIndex,
-    PUBLIC_SYMBOL_LIST(DECL)
-    WELL_KNOWN_SYMBOL_LIST(DECL)
-#undef DECL
-
-#define DECL(accessor_name, AccessorName, ...) \
-    k##AccessorName##AccessorRootIndex,
-    ACCESSOR_INFO_LIST(DECL)
-#undef DECL
-
-#define DECL(NAME, Name, name) k##Name##MapRootIndex,
-    STRUCT_LIST(DECL)
-#undef DECL
-
-#define DECL(NAME, Name, Size, name) k##Name##Size##MapRootIndex,
-   ALLOCATION_SITE_LIST(DECL)
-#undef DECL
-
-#define DECL(NAME, Name, Size, name) k##Name##Size##MapRootIndex,
-    DATA_HANDLER_LIST(DECL)
-#undef DECL
-
-    kStringTableRootIndex,
-
-#define DECL(type, name, camel_name) k##camel_name##RootIndex,
-    SMI_ROOT_LIST(DECL)
-#undef DECL
-
-    kRootListLength,
-    kStrongRootListLength = kStringTableRootIndex,
-    kSmiRootsStart = kStringTableRootIndex + 1
-  };
-  // clang-format on
-
   enum FindMementoMode { kForRuntime, kForGC };
 
   enum HeapState {
@@ -404,7 +355,6 @@ class Heap {
 
   static const int kNoGCFlags = 0;
   static const int kReduceMemoryFootprintMask = 1;
-  static const int kFinalizeIncrementalMarkingMask = 4;
 
   // The roots that have an index less than this are always in old space.
   static const int kOldSpaceRoots = 0x20;
@@ -414,13 +364,18 @@ class Heap {
 
   static const int kMinPromotedPercentForFastPromotionMode = 90;
 
-  STATIC_ASSERT(kUndefinedValueRootIndex ==
+  STATIC_ASSERT(static_cast<int>(RootIndex::kUndefinedValue) ==
                 Internals::kUndefinedValueRootIndex);
-  STATIC_ASSERT(kTheHoleValueRootIndex == Internals::kTheHoleValueRootIndex);
-  STATIC_ASSERT(kNullValueRootIndex == Internals::kNullValueRootIndex);
-  STATIC_ASSERT(kTrueValueRootIndex == Internals::kTrueValueRootIndex);
-  STATIC_ASSERT(kFalseValueRootIndex == Internals::kFalseValueRootIndex);
-  STATIC_ASSERT(kempty_stringRootIndex == Internals::kEmptyStringRootIndex);
+  STATIC_ASSERT(static_cast<int>(RootIndex::kTheHoleValue) ==
+                Internals::kTheHoleValueRootIndex);
+  STATIC_ASSERT(static_cast<int>(RootIndex::kNullValue) ==
+                Internals::kNullValueRootIndex);
+  STATIC_ASSERT(static_cast<int>(RootIndex::kTrueValue) ==
+                Internals::kTrueValueRootIndex);
+  STATIC_ASSERT(static_cast<int>(RootIndex::kFalseValue) ==
+                Internals::kFalseValueRootIndex);
+  STATIC_ASSERT(static_cast<int>(RootIndex::kempty_string) ==
+                Internals::kEmptyStringRootIndex);
 
   // Calculates the maximum amount of filler that could be required by the
   // given alignment.
@@ -431,14 +386,14 @@ class Heap {
 
   void FatalProcessOutOfMemory(const char* location);
 
-  V8_EXPORT_PRIVATE static bool RootIsImmortalImmovable(int root_index);
+  V8_EXPORT_PRIVATE static bool RootIsImmortalImmovable(RootIndex root_index);
 
   // Checks whether the space is valid.
   static bool IsValidAllocationSpace(AllocationSpace space);
 
   // Generated code can embed direct references to non-writable roots if
   // they are in new space.
-  static bool RootCanBeWrittenAfterInitialization(RootListIndex root_index);
+  static bool RootCanBeWrittenAfterInitialization(RootIndex root_index);
 
   // Zapping is needed for verify heap, and always done in debug builds.
   static inline bool ShouldZapGarbage() {
@@ -826,21 +781,18 @@ class Heap {
   ACCESSOR_INFO_LIST(ACCESSOR_INFO_ACCESSOR)
 #undef ACCESSOR_INFO_ACCESSOR
 
-  Object* root(RootListIndex index) { return roots_[index]; }
-  Handle<Object> root_handle(RootListIndex index) {
+  Object* root(RootIndex index) { return roots_[index]; }
+  Handle<Object> root_handle(RootIndex index) {
     return Handle<Object>(&roots_[index]);
   }
+
   template <typename T>
-  bool IsRootHandle(Handle<T> handle, RootListIndex* index) const {
-    Object** const handle_location = bit_cast<Object**>(handle.address());
-    if (handle_location >= &roots_[kRootListLength]) return false;
-    if (handle_location < &roots_[0]) return false;
-    *index = static_cast<RootListIndex>(handle_location - &roots_[0]);
-    return true;
+  bool IsRootHandle(Handle<T> handle, RootIndex* index) const {
+    return roots_.IsRootHandle(handle, index);
   }
 
   // Generated code can embed this address to get access to the roots.
-  Object** roots_array_start() { return roots_; }
+  Object** roots_array_start() { return roots_.roots_; }
 
   ExternalReferenceTable* external_reference_table() {
     DCHECK(external_reference_table_.is_initialized());
@@ -868,23 +820,23 @@ class Heap {
   void SetRootCodeStubs(SimpleNumberDictionary* value);
 
   void SetRootMaterializedObjects(FixedArray* objects) {
-    roots_[kMaterializedObjectsRootIndex] = objects;
+    roots_[RootIndex::kMaterializedObjects] = objects;
   }
 
   void SetRootScriptList(Object* value) {
-    roots_[kScriptListRootIndex] = value;
+    roots_[RootIndex::kScriptList] = value;
   }
 
   void SetRootStringTable(StringTable* value) {
-    roots_[kStringTableRootIndex] = value;
+    roots_[RootIndex::kStringTable] = value;
   }
 
   void SetRootNoScriptSharedFunctionInfos(Object* value) {
-    roots_[kNoScriptSharedFunctionInfosRootIndex] = value;
+    roots_[RootIndex::kNoScriptSharedFunctionInfos] = value;
   }
 
   void SetMessageListeners(TemplateList* value) {
-    roots_[kMessageListenersRootIndex] = value;
+    roots_[RootIndex::kMessageListeners] = value;
   }
 
   // Set the stack limit in the roots_ array.  Some architectures generate
@@ -897,7 +849,7 @@ class Heap {
   void ClearStackLimits();
 
   // Generated code can treat direct references to this root as constant.
-  bool RootCanBeTreatedAsConstant(RootListIndex root_index);
+  bool RootCanBeTreatedAsConstant(RootIndex root_index);
 
   Map* MapForFixedTypedArray(ExternalArrayType array_type);
   Map* MapForFixedTypedArray(ElementsKind elements_kind);
@@ -905,11 +857,6 @@ class Heap {
 
   void RegisterStrongRoots(Object** start, Object** end);
   void UnregisterStrongRoots(Object** start);
-
-  bool IsDeserializeLazyHandler(Code* code);
-  void SetDeserializeLazyHandler(Code* code);
-  void SetDeserializeLazyHandlerWide(Code* code);
-  void SetDeserializeLazyHandlerExtraWide(Code* code);
 
   void SetBuiltinsConstantsTable(FixedArray* cache);
 
@@ -1091,10 +1038,13 @@ class Heap {
   // Embedder heap tracer support. =============================================
   // ===========================================================================
 
-  LocalEmbedderHeapTracer* local_embedder_heap_tracer() {
+  LocalEmbedderHeapTracer* local_embedder_heap_tracer() const {
     return local_embedder_heap_tracer_;
   }
+
   void SetEmbedderHeapTracer(EmbedderHeapTracer* tracer);
+  EmbedderHeapTracer* GetEmbedderHeapTracer() const;
+
   void TracePossibleWrapper(JSObject* js_object);
   void RegisterExternallyReferencedObject(Object** object);
   void SetEmbedderStackStateForNextFinalizaton(
@@ -1115,6 +1065,9 @@ class Heap {
   // Finalizes an external string by deleting the associated external
   // data and clearing the resource pointer.
   inline void FinalizeExternalString(String* string);
+
+  static String* UpdateNewSpaceReferenceInExternalStringTableEntry(
+      Heap* heap, Object** pointer);
 
   // ===========================================================================
   // Methods checking/returning the space of a given object/address. ===========
@@ -1545,18 +1498,18 @@ class Heap {
   struct StringTypeTable {
     InstanceType type;
     int size;
-    RootListIndex index;
+    RootIndex index;
   };
 
   struct ConstantStringTable {
     const char* contents;
-    RootListIndex index;
+    RootIndex index;
   };
 
   struct StructTable {
     InstanceType type;
     int size;
-    RootListIndex index;
+    RootIndex index;
   };
 
   struct GCCallbackTuple {
@@ -1591,12 +1544,7 @@ class Heap {
 
   static const int kInitialFeedbackCapacity = 256;
 
-  static const int kMaxScavengerTasks = 8;
-
   Heap();
-
-  static String* UpdateNewSpaceReferenceInExternalStringTableEntry(
-      Heap* heap, Object** pointer);
 
   // Selects the proper allocation space based on the pretenuring decision.
   static AllocationSpace SelectSpace(PretenureFlag pretenure) {
@@ -1629,10 +1577,6 @@ class Heap {
 
   inline bool ShouldReduceMemory() const {
     return (current_gc_flags_ & kReduceMemoryFootprintMask) != 0;
-  }
-
-  inline bool ShouldFinalizeIncrementalMarking() const {
-    return (current_gc_flags_ & kFinalizeIncrementalMarkingMask) != 0;
   }
 
   int NumberOfScavengeTasks();
@@ -1986,13 +1930,13 @@ class Heap {
   // more expedient to get at the isolate directly from within Heap methods.
   Isolate* isolate_;
 
-  Object* roots_[kRootListLength];
+  RootsTable roots_;
 
   // This table is accessed from builtin code compiled into the snapshot, and
   // thus its offset from roots_ must remain static. This is verified in
   // Isolate::Init() using runtime checks.
   static constexpr int kRootsExternalReferenceTableOffset =
-      kRootListLength * kPointerSize;
+      static_cast<int>(RootIndex::kRootListLength) * kPointerSize;
   ExternalReferenceTable external_reference_table_;
 
   // As external references above, builtins are accessed through an offset from
@@ -2181,7 +2125,6 @@ class Heap {
   ObjectStats* dead_object_stats_;
 
   ScavengeJob* scavenge_job_;
-  base::Semaphore parallel_scavenge_semaphore_;
 
   AllocationObserver* idle_scavenge_observer_;
 
@@ -2296,6 +2239,7 @@ class Heap {
   friend class Page;
   friend class PagedSpace;
   friend class Scavenger;
+  friend class ScavengerCollector;
   friend class Space;
   friend class StoreBuffer;
   friend class Sweeper;

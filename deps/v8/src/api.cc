@@ -879,9 +879,9 @@ class ExtensionResource : public String::ExternalOneByteStringResource {
   ExtensionResource() : data_(nullptr), length_(0) {}
   ExtensionResource(const char* data, size_t length)
       : data_(data), length_(length) {}
-  const char* data() const { return data_; }
-  size_t length() const { return length_; }
-  virtual void Dispose() {}
+  const char* data() const override { return data_; }
+  size_t length() const override { return length_; }
+  void Dispose() override {}
 
  private:
   const char* data_;
@@ -1773,15 +1773,15 @@ static i::Handle<i::InterceptorInfo> CreateInterceptorInfo(
       isolate->factory()->NewStruct(i::INTERCEPTOR_INFO_TYPE, i::TENURED));
   obj->set_flags(0);
 
-  if (getter != 0) SET_FIELD_WRAPPED(isolate, obj, set_getter, getter);
-  if (setter != 0) SET_FIELD_WRAPPED(isolate, obj, set_setter, setter);
-  if (query != 0) SET_FIELD_WRAPPED(isolate, obj, set_query, query);
-  if (descriptor != 0)
+  if (getter != nullptr) SET_FIELD_WRAPPED(isolate, obj, set_getter, getter);
+  if (setter != nullptr) SET_FIELD_WRAPPED(isolate, obj, set_setter, setter);
+  if (query != nullptr) SET_FIELD_WRAPPED(isolate, obj, set_query, query);
+  if (descriptor != nullptr)
     SET_FIELD_WRAPPED(isolate, obj, set_descriptor, descriptor);
-  if (remover != 0) SET_FIELD_WRAPPED(isolate, obj, set_deleter, remover);
-  if (enumerator != 0)
+  if (remover != nullptr) SET_FIELD_WRAPPED(isolate, obj, set_deleter, remover);
+  if (enumerator != nullptr)
     SET_FIELD_WRAPPED(isolate, obj, set_enumerator, enumerator);
-  if (definer != 0) SET_FIELD_WRAPPED(isolate, obj, set_definer, definer);
+  if (definer != nullptr) SET_FIELD_WRAPPED(isolate, obj, set_definer, definer);
   obj->set_can_intercept_symbols(
       !(static_cast<int>(flags) &
         static_cast<int>(PropertyHandlerFlags::kOnlyInterceptStrings)));
@@ -7413,7 +7413,7 @@ class AsyncCompilationResolver : public i::wasm::CompilationResultResolver {
             reinterpret_cast<i::Isolate*>(isolate)->global_handles()->Create(
                 *Utils::OpenHandle(*promise))) {}
 
-  ~AsyncCompilationResolver() {
+  ~AsyncCompilationResolver() override {
     i::GlobalHandles::Destroy(i::Handle<i::Object>::cast(promise_).location());
   }
 
@@ -7450,9 +7450,6 @@ void WasmModuleObjectBuilderStreaming::Finish() {
 }
 
 void WasmModuleObjectBuilderStreaming::Abort(MaybeLocal<Value> exception) {
-}
-
-WasmModuleObjectBuilderStreaming::~WasmModuleObjectBuilderStreaming() {
 }
 
 // static
@@ -7567,6 +7564,7 @@ Local<ArrayBuffer> v8::ArrayBuffer::New(Isolate* isolate, void* data,
                                         ArrayBufferCreationMode mode) {
   // Embedders must guarantee that the external backing store is valid.
   CHECK(byte_length == 0 || data != nullptr);
+  CHECK_LE(byte_length, i::JSArrayBuffer::kMaxByteLength);
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
   LOG_API(i_isolate, ArrayBuffer, New);
   ENTER_V8_NO_SCRIPT_NO_EXCEPTION(i_isolate);
@@ -7598,9 +7596,8 @@ Local<ArrayBuffer> v8::ArrayBufferView::Buffer() {
 
 size_t v8::ArrayBufferView::CopyContents(void* dest, size_t byte_length) {
   i::Handle<i::JSArrayBufferView> self = Utils::OpenHandle(this);
-  size_t byte_offset = i::NumberToSize(self->byte_offset());
-  size_t bytes_to_copy =
-      i::Min(byte_length, i::NumberToSize(self->byte_length()));
+  size_t byte_offset = self->byte_offset();
+  size_t bytes_to_copy = i::Min(byte_length, self->byte_length());
   if (bytes_to_copy) {
     i::DisallowHeapAllocation no_gc;
     i::Isolate* isolate = self->GetIsolate();
@@ -7631,13 +7628,13 @@ bool v8::ArrayBufferView::HasBuffer() const {
 
 size_t v8::ArrayBufferView::ByteOffset() {
   i::Handle<i::JSArrayBufferView> obj = Utils::OpenHandle(this);
-  return static_cast<size_t>(obj->byte_offset()->Number());
+  return obj->WasNeutered() ? 0 : obj->byte_offset();
 }
 
 
 size_t v8::ArrayBufferView::ByteLength() {
   i::Handle<i::JSArrayBufferView> obj = Utils::OpenHandle(this);
-  return static_cast<size_t>(obj->byte_length()->Number());
+  return obj->WasNeutered() ? 0 : obj->byte_length();
 }
 
 
@@ -7822,8 +7819,8 @@ Local<Symbol> v8::Symbol::New(Isolate* isolate, Local<String> name) {
 Local<Symbol> v8::Symbol::For(Isolate* isolate, Local<String> name) {
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
   i::Handle<i::String> i_name = Utils::OpenHandle(*name);
-  return Utils::ToLocal(i_isolate->SymbolFor(
-      i::Heap::kPublicSymbolTableRootIndex, i_name, false));
+  return Utils::ToLocal(
+      i_isolate->SymbolFor(i::RootIndex::kPublicSymbolTable, i_name, false));
 }
 
 
@@ -7831,7 +7828,7 @@ Local<Symbol> v8::Symbol::ForApi(Isolate* isolate, Local<String> name) {
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
   i::Handle<i::String> i_name = Utils::OpenHandle(*name);
   return Utils::ToLocal(
-      i_isolate->SymbolFor(i::Heap::kApiSymbolTableRootIndex, i_name, false));
+      i_isolate->SymbolFor(i::RootIndex::kApiSymbolTable, i_name, false));
 }
 
 #define WELL_KNOWN_SYMBOLS(V)                 \
@@ -7872,8 +7869,8 @@ Local<Private> v8::Private::New(Isolate* isolate, Local<String> name) {
 Local<Private> v8::Private::ForApi(Isolate* isolate, Local<String> name) {
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
   i::Handle<i::String> i_name = Utils::OpenHandle(*name);
-  Local<Symbol> result = Utils::ToLocal(i_isolate->SymbolFor(
-      i::Heap::kApiPrivateSymbolTableRootIndex, i_name, true));
+  Local<Symbol> result = Utils::ToLocal(
+      i_isolate->SymbolFor(i::RootIndex::kApiPrivateSymbolTable, i_name, true));
   return v8::Local<Private>(reinterpret_cast<Private*>(*result));
 }
 
@@ -8095,6 +8092,11 @@ void Isolate::RemoveGCEpilogueCallback(GCCallback callback) {
 void Isolate::SetEmbedderHeapTracer(EmbedderHeapTracer* tracer) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   isolate->heap()->SetEmbedderHeapTracer(tracer);
+}
+
+EmbedderHeapTracer* Isolate::GetEmbedderHeapTracer() {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
+  return isolate->heap()->GetEmbedderHeapTracer();
 }
 
 void Isolate::SetGetExternallyAllocatedMemoryInBytesCallback(
@@ -9744,7 +9746,7 @@ debug::PostponeInterruptsScope::PostponeInterruptsScope(v8::Isolate* isolate)
           new i::PostponeInterruptsScope(reinterpret_cast<i::Isolate*>(isolate),
                                          i::StackGuard::API_INTERRUPT)) {}
 
-debug::PostponeInterruptsScope::~PostponeInterruptsScope() {}
+debug::PostponeInterruptsScope::~PostponeInterruptsScope() = default;
 
 Local<String> CpuProfileNode::GetFunctionName() const {
   const i::ProfileNode* node = reinterpret_cast<const i::ProfileNode*>(this);
@@ -9866,6 +9868,47 @@ size_t debug::TypeProfile::ScriptCount() const { return type_profile_->size(); }
 debug::TypeProfile::ScriptData debug::TypeProfile::GetScriptData(
     size_t i) const {
   return ScriptData(i, type_profile_);
+}
+
+v8::MaybeLocal<v8::Value> debug::WeakMap::Get(v8::Local<v8::Context> context,
+                                              v8::Local<v8::Value> key) {
+  PREPARE_FOR_EXECUTION(context, WeakMap, Get, Value);
+  auto self = Utils::OpenHandle(this);
+  Local<Value> result;
+  i::Handle<i::Object> argv[] = {Utils::OpenHandle(*key)};
+  has_pending_exception =
+      !ToLocal<Value>(i::Execution::Call(isolate, isolate->weakmap_get(), self,
+                                         arraysize(argv), argv),
+                      &result);
+  RETURN_ON_FAILED_EXECUTION(Value);
+  RETURN_ESCAPED(result);
+}
+
+v8::MaybeLocal<debug::WeakMap> debug::WeakMap::Set(
+    v8::Local<v8::Context> context, v8::Local<v8::Value> key,
+    v8::Local<v8::Value> value) {
+  PREPARE_FOR_EXECUTION(context, WeakMap, Set, WeakMap);
+  auto self = Utils::OpenHandle(this);
+  i::Handle<i::Object> result;
+  i::Handle<i::Object> argv[] = {Utils::OpenHandle(*key),
+                                 Utils::OpenHandle(*value)};
+  has_pending_exception = !i::Execution::Call(isolate, isolate->weakmap_set(),
+                                              self, arraysize(argv), argv)
+                               .ToHandle(&result);
+  RETURN_ON_FAILED_EXECUTION(WeakMap);
+  RETURN_ESCAPED(Local<WeakMap>::Cast(Utils::ToLocal(result)));
+}
+
+Local<debug::WeakMap> debug::WeakMap::New(v8::Isolate* isolate) {
+  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
+  LOG_API(i_isolate, WeakMap, New);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(i_isolate);
+  i::Handle<i::JSWeakMap> obj = i_isolate->factory()->NewJSWeakMap();
+  return ToApiHandle<debug::WeakMap>(obj);
+}
+
+debug::WeakMap* debug::WeakMap::Cast(v8::Value* value) {
+  return static_cast<debug::WeakMap*>(value);
 }
 
 const char* CpuProfileNode::GetFunctionNameStr() const {

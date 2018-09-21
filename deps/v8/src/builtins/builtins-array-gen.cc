@@ -212,7 +212,7 @@ Node* ArrayBuiltinsAssembler::FindProcessor(Node* k_value, Node* k) {
         context(), original_array, length, method_name);
     // In the Spec and our current implementation, the length check is already
     // performed in TypedArraySpeciesCreate.
-    CSA_ASSERT(this, SmiLessThanOrEqual(CAST(len_), LoadTypedArrayLength(a)));
+    CSA_ASSERT(this, SmiLessThanOrEqual(CAST(len_), LoadJSTypedArrayLength(a)));
     fast_typed_array_target_ =
         Word32Equal(LoadInstanceType(LoadElements(original_array)),
                     LoadInstanceType(LoadElements(a)));
@@ -530,10 +530,11 @@ Node* ArrayBuiltinsAssembler::FindProcessor(Node* k_value, Node* k) {
     TNode<JSTypedArray> typed_array = CAST(receiver_);
     o_ = typed_array;
 
-    TNode<JSArrayBuffer> array_buffer = LoadArrayBufferViewBuffer(typed_array);
+    TNode<JSArrayBuffer> array_buffer =
+        LoadJSArrayBufferViewBuffer(typed_array);
     ThrowIfArrayBufferIsDetached(context_, array_buffer, name_);
 
-    len_ = LoadTypedArrayLength(typed_array);
+    len_ = LoadJSTypedArrayLength(typed_array);
 
     Label throw_not_callable(this, Label::kDeferred);
     Label distinguish_types(this);
@@ -964,8 +965,7 @@ TF_BUILTIN(ArrayPrototypePop, CodeStubAssembler) {
 
     // 3) Check that the elements backing store isn't copy-on-write.
     Node* elements = LoadElements(array_receiver);
-    GotoIf(WordEqual(LoadMap(elements),
-                     LoadRoot(Heap::kFixedCOWArrayMapRootIndex)),
+    GotoIf(WordEqual(LoadMap(elements), LoadRoot(RootIndex::kFixedCOWArrayMap)),
            &runtime);
 
     Node* new_length = IntPtrSub(length, IntPtrConstant(1));
@@ -1540,8 +1540,7 @@ TF_BUILTIN(ArrayPrototypeShift, CodeStubAssembler) {
 
     // 3) Check that the elements backing store isn't copy-on-write.
     Node* elements = LoadElements(array_receiver);
-    GotoIf(WordEqual(LoadMap(elements),
-                     LoadRoot(Heap::kFixedCOWArrayMapRootIndex)),
+    GotoIf(WordEqual(LoadMap(elements), LoadRoot(RootIndex::kFixedCOWArrayMap)),
            &runtime);
 
     Node* new_length = IntPtrSub(length, IntPtrConstant(1));
@@ -3661,7 +3660,7 @@ TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
     // [[ArrayIteratorNextIndex]] anymore, since a JSTypedArray's
     // length cannot change anymore, so this {iterator} will never
     // produce values again anyways.
-    TNode<Smi> length = LoadTypedArrayLength(CAST(array));
+    TNode<Smi> length = LoadJSTypedArrayLength(CAST(array));
     GotoIfNot(SmiBelow(CAST(index), length), &allocate_iterator_result);
     StoreObjectFieldNoWriteBarrier(iterator, JSArrayIterator::kNextIndexOffset,
                                    SmiInc(CAST(index)));
@@ -3707,8 +3706,6 @@ TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
     Return(result);
   }
 }
-
-namespace {
 
 class ArrayFlattenAssembler : public CodeStubAssembler {
  public:
@@ -3849,8 +3846,6 @@ class ArrayFlattenAssembler : public CodeStubAssembler {
     return var_target_index.value();
   }
 };
-
-}  // namespace
 
 // https://tc39.github.io/proposal-flatMap/#sec-FlattenIntoArray
 TF_BUILTIN(FlattenIntoArray, ArrayFlattenAssembler) {

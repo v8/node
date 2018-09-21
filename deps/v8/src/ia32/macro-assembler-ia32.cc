@@ -51,7 +51,7 @@ MacroAssembler::MacroAssembler(Isolate* isolate,
 #endif  // V8_EMBEDDED_BUILTINS
 }
 
-void TurboAssembler::LoadRoot(Register destination, Heap::RootListIndex index) {
+void TurboAssembler::LoadRoot(Register destination, RootIndex index) {
   // TODO(jgruber, v8:6666): Support loads through the root register once it
   // exists.
   if (isolate()->heap()->RootCanBeTreatedAsConstant(index)) {
@@ -67,22 +67,20 @@ void TurboAssembler::LoadRoot(Register destination, Heap::RootListIndex index) {
   }
   ExternalReference roots_array_start =
       ExternalReference::roots_array_start(isolate());
-  mov(destination, Immediate(index));
+  mov(destination, Immediate(static_cast<int>(index)));
   mov(destination,
       StaticArray(destination, times_pointer_size, roots_array_start));
 }
 
-void MacroAssembler::CompareRoot(Register with,
-                                 Register scratch,
-                                 Heap::RootListIndex index) {
+void MacroAssembler::CompareRoot(Register with, Register scratch,
+                                 RootIndex index) {
   ExternalReference roots_array_start =
       ExternalReference::roots_array_start(isolate());
-  mov(scratch, Immediate(index));
+  mov(scratch, Immediate(static_cast<int>(index)));
   cmp(with, StaticArray(scratch, times_pointer_size, roots_array_start));
 }
 
-
-void MacroAssembler::CompareRoot(Register with, Heap::RootListIndex index) {
+void MacroAssembler::CompareRoot(Register with, RootIndex index) {
   DCHECK(isolate()->heap()->RootCanBeTreatedAsConstant(index));
   Handle<Object> object = isolate()->heap()->root_handle(index);
   if (object->IsHeapObject()) {
@@ -92,7 +90,7 @@ void MacroAssembler::CompareRoot(Register with, Heap::RootListIndex index) {
   }
 }
 
-void MacroAssembler::CompareRoot(Operand with, Heap::RootListIndex index) {
+void MacroAssembler::CompareRoot(Operand with, RootIndex index) {
   DCHECK(isolate()->heap()->RootCanBeTreatedAsConstant(index));
   Handle<Object> object = isolate()->heap()->root_handle(index);
   if (object->IsHeapObject()) {
@@ -102,7 +100,7 @@ void MacroAssembler::CompareRoot(Operand with, Heap::RootListIndex index) {
   }
 }
 
-void MacroAssembler::PushRoot(Heap::RootListIndex index) {
+void MacroAssembler::PushRoot(RootIndex index) {
   DCHECK(isolate()->heap()->RootCanBeTreatedAsConstant(index));
   Handle<Object> object = isolate()->heap()->root_handle(index);
   if (object->IsHeapObject()) {
@@ -114,11 +112,12 @@ void MacroAssembler::PushRoot(Heap::RootListIndex index) {
 
 void TurboAssembler::LoadFromConstantsTable(Register destination,
                                             int constant_index) {
+  DCHECK(!is_ebx_addressable_);
   DCHECK(isolate()->heap()->RootCanBeTreatedAsConstant(
-      Heap::kBuiltinsConstantsTableRootIndex));
+      RootIndex::kBuiltinsConstantsTable));
   // TODO(jgruber): LoadRoot should be a register-relative load once we have
   // the kRootRegister.
-  LoadRoot(destination, Heap::kBuiltinsConstantsTableRootIndex);
+  LoadRoot(destination, RootIndex::kBuiltinsConstantsTable);
   mov(destination,
       FieldOperand(destination,
                    FixedArray::kHeaderSize + constant_index * kPointerSize));
@@ -126,6 +125,7 @@ void TurboAssembler::LoadFromConstantsTable(Register destination,
 
 void TurboAssembler::LoadRootRegisterOffset(Register destination,
                                             intptr_t offset) {
+  DCHECK(!is_ebx_addressable_);
   DCHECK(is_int32(offset));
   // TODO(jgruber): Register-relative load once kRootRegister exists.
   mov(destination, Immediate(ExternalReference::roots_array_start(isolate())));
@@ -135,6 +135,7 @@ void TurboAssembler::LoadRootRegisterOffset(Register destination,
 }
 
 void TurboAssembler::LoadRootRelative(Register destination, int32_t offset) {
+  DCHECK(!is_ebx_addressable_);
   // TODO(jgruber): Register-relative load once kRootRegister exists.
   LoadRootRegisterOffset(destination, offset);
   mov(destination, Operand(destination, 0));
@@ -729,6 +730,9 @@ void MacroAssembler::EnterExitFramePrologue(StackFrame::Type frame_type) {
   DCHECK_EQ(-3 * kPointerSize, ExitFrameConstants::kCodeOffset);
   push(Immediate(CodeObject()));  // Accessed from ExitFrame::code_slot.
 
+  STATIC_ASSERT(edx == kRuntimeCallFunctionRegister);
+  STATIC_ASSERT(esi == kContextRegister);
+
   // Save the frame pointer and the context in top.
   ExternalReference c_entry_fp_address =
       ExternalReference::Create(IsolateAddressId::kCEntryFPAddress, isolate());
@@ -738,7 +742,7 @@ void MacroAssembler::EnterExitFramePrologue(StackFrame::Type frame_type) {
       ExternalReference::Create(IsolateAddressId::kCFunctionAddress, isolate());
   mov(StaticVariable(c_entry_fp_address), ebp);
   mov(StaticVariable(context_address), esi);
-  mov(StaticVariable(c_function_address), ebx);
+  mov(StaticVariable(c_function_address), edx);
 }
 
 
@@ -1031,6 +1035,9 @@ void MacroAssembler::InvokePrologue(const ParameterCount& expected,
                                     bool* definitely_mismatches,
                                     InvokeFlag flag,
                                     Label::Distance done_near) {
+  DCHECK_IMPLIES(expected.is_reg(), expected.reg() == ecx);
+  DCHECK_IMPLIES(actual.is_reg(), actual.reg() == eax);
+
   bool definitely_matches = false;
   *definitely_mismatches = false;
   Label invoke;
@@ -1049,7 +1056,7 @@ void MacroAssembler::InvokePrologue(const ParameterCount& expected,
         definitely_matches = true;
       } else {
         *definitely_mismatches = true;
-        mov(ebx, expected.immediate());
+        mov(ecx, expected.immediate());
       }
     }
   } else {
@@ -1060,14 +1067,14 @@ void MacroAssembler::InvokePrologue(const ParameterCount& expected,
       mov(eax, actual.immediate());
       cmp(expected.reg(), actual.immediate());
       j(equal, &invoke);
-      DCHECK(expected.reg() == ebx);
+      DCHECK(expected.reg() == ecx);
     } else if (expected.reg() != actual.reg()) {
       // Both expected and actual are in (different) registers. This
       // is the case when we invoke functions using call and apply.
       cmp(expected.reg(), actual.reg());
       j(equal, &invoke);
       DCHECK(actual.reg() == eax);
-      DCHECK(expected.reg() == ebx);
+      DCHECK(expected.reg() == ecx);
     } else {
       definitely_matches = true;
       Move(eax, actual.reg());
@@ -1075,9 +1082,6 @@ void MacroAssembler::InvokePrologue(const ParameterCount& expected,
   }
 
   if (!definitely_matches) {
-    // TODO(v8:6666): All call-sites should be updated to pass in ecx as the
-    // expected register to avoid this useless move.
-    MoveForRootRegisterRefactoring(ecx, ebx);
     Handle<Code> adaptor = BUILTIN_CODE(isolate(), ArgumentsAdaptorTrampoline);
     if (flag == CALL_FUNCTION) {
       Call(adaptor, RelocInfo::CODE_TARGET);
@@ -1149,6 +1153,8 @@ void MacroAssembler::InvokeFunctionCode(Register function, Register new_target,
   DCHECK(flag == JUMP_FUNCTION || has_frame());
   DCHECK(function == edi);
   DCHECK_IMPLIES(new_target.is_valid(), new_target == edx);
+  DCHECK_IMPLIES(expected.is_reg(), expected.reg() == ecx);
+  DCHECK_IMPLIES(actual.is_reg(), actual.reg() == eax);
 
   // On function call, call into the debugger if necessary.
   CheckDebugHook(function, new_target, expected, actual);
@@ -1186,26 +1192,13 @@ void MacroAssembler::InvokeFunction(Register fun, Register new_target,
   DCHECK(flag == JUMP_FUNCTION || has_frame());
 
   DCHECK(fun == edi);
-  mov(ebx, FieldOperand(edi, JSFunction::kSharedFunctionInfoOffset));
+  mov(ecx, FieldOperand(edi, JSFunction::kSharedFunctionInfoOffset));
   mov(esi, FieldOperand(edi, JSFunction::kContextOffset));
-  movzx_w(ebx,
-          FieldOperand(ebx, SharedFunctionInfo::kFormalParameterCountOffset));
+  movzx_w(ecx,
+          FieldOperand(ecx, SharedFunctionInfo::kFormalParameterCountOffset));
 
-  ParameterCount expected(ebx);
+  ParameterCount expected(ecx);
   InvokeFunctionCode(edi, new_target, expected, actual, flag);
-}
-
-void MacroAssembler::InvokeFunction(Register fun,
-                                    const ParameterCount& expected,
-                                    const ParameterCount& actual,
-                                    InvokeFlag flag) {
-  // You can't call a function without a valid frame.
-  DCHECK(flag == JUMP_FUNCTION || has_frame());
-
-  DCHECK(fun == edi);
-  mov(esi, FieldOperand(edi, JSFunction::kContextOffset));
-
-  InvokeFunctionCode(edi, no_reg, expected, actual, flag);
 }
 
 void MacroAssembler::LoadGlobalProxy(Register dst) {
@@ -1725,14 +1718,16 @@ void TurboAssembler::CallCFunction(Register function, int num_arguments) {
 
 void TurboAssembler::Call(Handle<Code> code_object, RelocInfo::Mode rmode) {
   if (FLAG_embedded_builtins) {
-    // TODO(jgruber): Figure out which register we can clobber here.
     // TODO(jgruber): Pc-relative builtin-to-builtin calls.
-    Register scratch = kOffHeapTrampolineRegister;
     if (root_array_available_ && options().isolate_independent_code) {
-      IndirectLoadConstant(scratch, code_object);
-      lea(scratch, FieldOperand(scratch, Code::kHeaderSize));
-      call(scratch);
-      return;
+      // TODO(jgruber): There's no scratch register on ia32. Any call that
+      // requires loading a code object from the builtins constant table must:
+      // 1) spill two scratch registers, 2) load the target into scratch1, 3)
+      // store the target into a virtual register on the isolate using scratch2,
+      // 4) restore both scratch registers, and finally 5) call through the
+      // virtual register. All affected call sites should vanish once all
+      // builtins are embedded on ia32.
+      UNREACHABLE();
     } else if (options().inline_offheap_trampolines) {
       int builtin_index = Builtins::kNoBuiltinId;
       if (isolate()->builtins()->IsBuiltinHandle(code_object, &builtin_index) &&
@@ -1753,14 +1748,16 @@ void TurboAssembler::Call(Handle<Code> code_object, RelocInfo::Mode rmode) {
 
 void TurboAssembler::Jump(Handle<Code> code_object, RelocInfo::Mode rmode) {
   if (FLAG_embedded_builtins) {
-    // TODO(jgruber): Figure out which register we can clobber here.
     // TODO(jgruber): Pc-relative builtin-to-builtin calls.
-    Register scratch = kOffHeapTrampolineRegister;
     if (root_array_available_ && options().isolate_independent_code) {
-      IndirectLoadConstant(scratch, code_object);
-      lea(scratch, FieldOperand(scratch, Code::kHeaderSize));
-      jmp(scratch);
-      return;
+      // TODO(jgruber): There's no scratch register on ia32. Any call that
+      // requires loading a code object from the builtins constant table must:
+      // 1) spill two scratch registers, 2) load the target into scratch1, 3)
+      // store the target into a virtual register on the isolate using scratch2,
+      // 4) restore both scratch registers, and finally 5) call through the
+      // virtual register. All affected call sites should vanish once all
+      // builtins are embedded on ia32.
+      UNREACHABLE();
     } else if (options().inline_offheap_trampolines) {
       int builtin_index = Builtins::kNoBuiltinId;
       if (isolate()->builtins()->IsBuiltinHandle(code_object, &builtin_index) &&

@@ -209,10 +209,11 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
 // Update bootstrapper.cc whenever adding a new feature flag.
 
 // Features that are still work in progress (behind individual flags).
-#define HARMONY_INPROGRESS_BASE(V)                                    \
-  V(harmony_do_expressions, "harmony do-expressions")                 \
-  V(harmony_class_fields, "harmony fields in class literals")         \
-  V(harmony_await_optimization, "harmony await taking 1 tick")
+#define HARMONY_INPROGRESS_BASE(V)                             \
+  V(harmony_do_expressions, "harmony do-expressions")          \
+  V(harmony_class_fields, "harmony fields in class literals")  \
+  V(harmony_await_optimization, "harmony await taking 1 tick") \
+  V(harmony_regexp_sequence, "RegExp Unicode sequence properties")
 
 #ifdef V8_INTL_SUPPORT
 #define HARMONY_INPROGRESS(V)      \
@@ -526,7 +527,7 @@ DEFINE_BOOL(untrusted_code_mitigations, V8_DEFAULT_UNTRUSTED_CODE_MITIGATIONS,
 #undef V8_DEFAULT_UNTRUSTED_CODE_MITIGATIONS
 
 DEFINE_BOOL(branch_load_poisoning, false, "Mask loads with branch conditions.")
-DEFINE_IMPLICATION(future, branch_load_poisoning)
+DEFINE_IMPLICATION(untrusted_code_mitigations, branch_load_poisoning)
 
 // Flags to help platform porters
 DEFINE_BOOL(minimal, false,
@@ -1098,10 +1099,6 @@ DEFINE_BOOL(print_embedded_builtin_candidates, false,
             "Prints builtins that are not yet embedded but could be.")
 DEFINE_BOOL(lazy_deserialization, true,
             "Deserialize code lazily from the snapshot.")
-DEFINE_BOOL(lazy_handler_deserialization, true,
-            "Deserialize bytecode handlers lazily from the snapshot.")
-DEFINE_IMPLICATION(lazy_handler_deserialization, lazy_deserialization)
-DEFINE_IMPLICATION(future, lazy_handler_deserialization)
 DEFINE_BOOL(trace_lazy_deserialization, false, "Trace lazy deserialization.")
 DEFINE_BOOL(profile_deserialization, false,
             "Print the time it takes to deserialize the snapshot.")

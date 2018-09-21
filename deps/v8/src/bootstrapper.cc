@@ -160,7 +160,7 @@ class Genesis {
           GlobalContextType context_type);
   Genesis(Isolate* isolate, MaybeHandle<JSGlobalProxy> maybe_global_proxy,
           v8::Local<v8::ObjectTemplate> global_proxy_template);
-  ~Genesis() { }
+  ~Genesis() = default;
 
   Isolate* isolate() const { return isolate_; }
   Factory* factory() const { return isolate_->factory(); }
@@ -3138,7 +3138,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     SimpleInstallFunction(isolate_, atomics_object, "wake",
                           Builtins::kAtomicsWake, 3, true);
     SimpleInstallFunction(isolate_, atomics_object, "notify",
-                          Builtins::kAtomicsWake, 3, true);
+                          Builtins::kAtomicsNotify, 3, true);
   }
 
   {  // -- T y p e d A r r a y
@@ -3485,8 +3485,9 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 
     SimpleInstallFunction(isolate_, prototype, "delete",
                           Builtins::kWeakMapPrototypeDelete, 1, true);
-    SimpleInstallFunction(isolate_, prototype, "get", Builtins::kWeakMapGet, 1,
-                          true);
+    Handle<JSFunction> weakmap_get = SimpleInstallFunction(
+        isolate_, prototype, "get", Builtins::kWeakMapGet, 1, true);
+    native_context()->set_weakmap_get(*weakmap_get);
     SimpleInstallFunction(isolate_, prototype, "has", Builtins::kWeakMapHas, 1,
                           true);
     Handle<JSFunction> weakmap_set = SimpleInstallFunction(
@@ -4766,6 +4767,8 @@ void Genesis::InitializeGlobal_harmony_intl_relative_time_format() {
 }
 
 #endif  // V8_INTL_SUPPORT
+
+void Genesis::InitializeGlobal_harmony_regexp_sequence() {}
 
 Handle<JSFunction> Genesis::CreateArrayBuffer(
     Handle<String> name, ArrayBufferKind array_buffer_kind) {

@@ -456,6 +456,7 @@ InstructionOperand OperandForDeopt(Isolate* isolate, OperandGenerator* g,
     case IrOpcode::kNumberConstant:
     case IrOpcode::kFloat32Constant:
     case IrOpcode::kFloat64Constant:
+    case IrOpcode::kDelayedStringConstant:
       return g->UseImmediate(input);
     case IrOpcode::kHeapConstant: {
       if (!CanBeTaggedPointer(rep)) {
@@ -470,9 +471,9 @@ InstructionOperand OperandForDeopt(Isolate* isolate, OperandGenerator* g,
       }
 
       Handle<HeapObject> constant = HeapConstantOf(input->op());
-      Heap::RootListIndex root_index;
+      RootIndex root_index;
       if (isolate->heap()->IsRootHandle(constant, &root_index) &&
-          root_index == Heap::kOptimizedOutRootIndex) {
+          root_index == RootIndex::kOptimizedOut) {
         // For an optimized-out object we return an invalid instruction
         // operand, so that we take the fast path for optimized-out values.
         return InstructionOperand();
@@ -1294,6 +1295,8 @@ void InstructionSelector::VisitNode(Node* node) {
       if (!IsSmiDouble(value)) MarkAsReference(node);
       return VisitConstant(node);
     }
+    case IrOpcode::kDelayedStringConstant:
+      return MarkAsReference(node), VisitConstant(node);
     case IrOpcode::kCall:
       return VisitCall(node);
     case IrOpcode::kCallWithCallerSavedRegisters:
@@ -2776,7 +2779,7 @@ void InstructionSelector::VisitTailCall(Node* node) {
   buffer.instruction_args.push_back(g.TempImmediate(optional_padding_slot));
 
   int first_unused_stack_slot =
-      (V8_TARGET_ARCH_STORES_RETURN_ADDRESS_ON_STACK ? 1 : 0) +
+      (V8_TARGET_ARCH_STORES_RETURN_ADDRESS_ON_STACK ? true : false) +
       stack_param_delta;
   buffer.instruction_args.push_back(g.TempImmediate(first_unused_stack_slot));
 

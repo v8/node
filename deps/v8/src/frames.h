@@ -42,9 +42,7 @@ class InnerPointerToCodeCache {
     Flush();
   }
 
-  void Flush() {
-    memset(&cache_[0], 0, sizeof(cache_));
-  }
+  void Flush() { memset(static_cast<void*>(&cache_[0]), 0, sizeof(cache_)); }
 
   InnerPointerToCodeCacheEntry* GetCacheEntry(Address inner_pointer);
 
@@ -261,7 +259,7 @@ class StackFrame {
   }
 
   // Get the id of this stack frame.
-  Id id() const { return static_cast<Id>(OffsetFrom(caller_sp())); }
+  Id id() const { return static_cast<Id>(caller_sp()); }
 
   // Get the top handler from the current stack iterator.
   inline StackHandler* top_handler() const;
@@ -300,7 +298,7 @@ class StackFrame {
 
  protected:
   inline explicit StackFrame(StackFrameIteratorBase* iterator);
-  virtual ~StackFrame() { }
+  virtual ~StackFrame() = default;
 
   // Compute the stack pointer for the calling frame.
   virtual Address GetCallerStackPointer() const = 0;

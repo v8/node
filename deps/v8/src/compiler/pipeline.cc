@@ -137,9 +137,9 @@ class PipelineData {
     javascript_ = new (graph_zone_) JSOperatorBuilder(graph_zone_);
     jsgraph_ = new (graph_zone_)
         JSGraph(isolate_, graph_, common_, javascript_, simplified_, machine_);
-    js_heap_broker_ = new (codegen_zone_) JSHeapBroker(isolate_, codegen_zone_);
+    js_heap_broker_ = new (info_->zone()) JSHeapBroker(isolate_, info_->zone());
     dependencies_ =
-        new (codegen_zone_) CompilationDependencies(isolate_, codegen_zone_);
+        new (info_->zone()) CompilationDependencies(isolate_, info_->zone());
   }
 
   // For WebAssembly compile entry point.
@@ -218,8 +218,11 @@ class PipelineData {
         assembler_options_(AssemblerOptions::Default(isolate)) {}
 
   ~PipelineData() {
-    delete code_generator_;  // Must happen before zones are destroyed.
+    // Must happen before zones are destroyed.
+    delete code_generator_;
     code_generator_ = nullptr;
+    DeleteTyper();
+
     DeleteRegisterAllocationZone();
     DeleteInstructionZone();
     DeleteCodegenZone();
@@ -308,6 +311,17 @@ class PipelineData {
   CodeTracer* GetCodeTracer() const {
     return wasm_engine_ == nullptr ? isolate_->GetCodeTracer()
                                    : wasm_engine_->GetCodeTracer();
+  }
+
+  Typer* CreateTyper(Typer::Flags flags) {
+    CHECK_NULL(typer_);
+    typer_ = new Typer(isolate(), js_heap_broker(), flags, graph());
+    return typer_;
+  }
+
+  void DeleteTyper() {
+    delete typer_;
+    typer_ = nullptr;
   }
 
   void DeleteGraphZone() {
@@ -433,6 +447,7 @@ class PipelineData {
   base::Optional<OsrHelper> osr_helper_;
   MaybeHandle<Code> code_;
   CodeGenerator* code_generator_ = nullptr;
+  Typer* typer_ = nullptr;
 
   // All objects in the following group of fields are allocated in graph_zone_.
   // They are all set to nullptr when the graph_zone_ is destroyed.
@@ -1185,6 +1200,7 @@ struct InliningPhase {
 
   void Run(PipelineData* data, Zone* temp_zone) {
     Isolate* isolate = data->isolate();
+    OptimizedCompilationInfo* info = data->info();
     GraphReducer graph_reducer(temp_zone, data->graph(),
                                data->jsgraph()->Dead());
     DeadCodeElimination dead_code_elimination(&graph_reducer, data->graph(),
@@ -1213,9 +1229,12 @@ struct InliningPhase {
     if (data->info()->is_bailout_on_uninitialized()) {
       flags |= JSNativeContextSpecialization::kBailoutOnUninitialized;
     }
+    // Passing the OptimizedCompilationInfo's shared zone here as
+    // JSNativeContextSpecialization allocates out-of-heap objects
+    // that need to live until code generation.
     JSNativeContextSpecialization native_context_specialization(
         &graph_reducer, data->jsgraph(), data->js_heap_broker(), flags,
-        data->native_context(), data->dependencies(), temp_zone);
+        data->native_context(), data->dependencies(), temp_zone, info->zone());
     JSInliningHeuristic inlining(
         &graph_reducer, data->info()->is_inlining_enabled()
                             ? JSInliningHeuristic::kGeneralInlining
@@ -1278,10 +1297,16 @@ struct UntyperPhase {
   }
 };
 
-struct CopyMetadataForConcurrentCompilePhase {
-  static const char* phase_name() {
-    return "copy metadata for concurrent compile";
+struct SerializeStandardObjectsPhase {
+  static const char* phase_name() { return "serialize standard objects"; }
+
+  void Run(PipelineData* data, Zone* temp_zone) {
+    data->js_heap_broker()->SerializeStandardObjects();
   }
+};
+
+struct CopyMetadataForConcurrentCompilePhase {
+  static const char* phase_name() { return "serialize metadata"; }
 
   void Run(PipelineData* data, Zone* temp_zone) {
     GraphReducer graph_reducer(temp_zone, data->graph(),
@@ -1303,7 +1328,7 @@ struct TypedLoweringPhase {
                                               data->common(), temp_zone);
     JSCreateLowering create_lowering(&graph_reducer, data->dependencies(),
                                      data->jsgraph(), data->js_heap_broker(),
-                                     data->native_context(), temp_zone);
+                                     temp_zone);
     JSTypedLowering typed_lowering(&graph_reducer, data->jsgraph(),
                                    data->js_heap_broker(), temp_zone);
     ConstantFoldingReducer constant_folding_reducer(
@@ -1997,7 +2022,7 @@ bool PipelineImpl::CreateGraph() {
     data->node_origins()->AddDecorator();
   }
 
-  data->js_heap_broker()->SerializeStandardObjects();
+  Run<SerializeStandardObjectsPhase>();
 
   Run<GraphBuilderPhase>();
   RunPrintAndVerify(GraphBuilderPhase::phase_name(), true);
@@ -2027,8 +2052,8 @@ bool PipelineImpl::CreateGraph() {
     // Type the graph and keep the Typer running on newly created nodes within
     // this scope; the Typer is automatically unlinked from the Graph once we
     // leave this scope below.
-    Typer typer(isolate(), data->js_heap_broker(), flags, data->graph());
-    Run<TyperPhase>(&typer);
+
+    Run<TyperPhase>(data->CreateTyper(flags));
     RunPrintAndVerify(TyperPhase::phase_name());
 
     // Do some hacky things to prepare for the optimization phase.
@@ -2037,11 +2062,11 @@ bool PipelineImpl::CreateGraph() {
 
     if (FLAG_concurrent_compiler_frontend) {
       Run<CopyMetadataForConcurrentCompilePhase>();
+    } else {
+      Run<TypedLoweringPhase>();
+      RunPrintAndVerify(TypedLoweringPhase::phase_name());
+      data->DeleteTyper();
     }
-
-    // Lower JSOperators where we can determine types.
-    Run<TypedLoweringPhase>();
-    RunPrintAndVerify(TypedLoweringPhase::phase_name());
   }
 
   data->EndPhaseKind();
@@ -2053,6 +2078,12 @@ bool PipelineImpl::OptimizeGraph(Linkage* linkage) {
   PipelineData* data = this->data_;
 
   data->BeginPhaseKind("lowering");
+
+  if (FLAG_concurrent_compiler_frontend) {
+    Run<TypedLoweringPhase>();
+    RunPrintAndVerify(TypedLoweringPhase::phase_name());
+    data->DeleteTyper();
+  }
 
   if (data->info()->is_loop_peeling_enabled()) {
     Run<LoopPeelingPhase>();

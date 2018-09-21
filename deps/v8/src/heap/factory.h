@@ -107,14 +107,13 @@ class V8_EXPORT_PRIVATE Factory {
   // Allocates a fixed array-like object with given map and initialized with
   // undefined values.
   template <typename T = FixedArray>
-  Handle<T> NewFixedArrayWithMap(Heap::RootListIndex map_root_index, int length,
+  Handle<T> NewFixedArrayWithMap(RootIndex map_root_index, int length,
                                  PretenureFlag pretenure = NOT_TENURED);
 
   // Allocates a weak fixed array-like object with given map and initialized
   // with undefined values.
   template <typename T = WeakFixedArray>
-  Handle<T> NewWeakFixedArrayWithMap(Heap::RootListIndex map_root_index,
-                                     int length,
+  Handle<T> NewWeakFixedArrayWithMap(RootIndex map_root_index, int length,
                                      PretenureFlag pretenure = NOT_TENURED);
 
   // Allocates a fixed array initialized with undefined values.
@@ -962,6 +961,7 @@ class V8_EXPORT_PRIVATE Factory {
     // Downcast to the privately inherited sub-class using c-style casts to
     // avoid undefined behavior (as static_cast cannot cast across private
     // bases).
+    // NOLINTNEXTLINE (google-readability-casting)
     return (Isolate*)this;  // NOLINT(readability/casting)
   }
 
@@ -976,7 +976,7 @@ class V8_EXPORT_PRIVATE Factory {
   HeapObject* AllocateRawArray(int size, PretenureFlag pretenure);
   HeapObject* AllocateRawFixedArray(int length, PretenureFlag pretenure);
   HeapObject* AllocateRawWeakArrayList(int length, PretenureFlag pretenure);
-  Handle<FixedArray> NewFixedArrayWithFiller(Heap::RootListIndex map_root_index,
+  Handle<FixedArray> NewFixedArrayWithFiller(RootIndex map_root_index,
                                              int length, Object* filler,
                                              PretenureFlag pretenure);
 

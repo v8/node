@@ -488,7 +488,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   // buffer is too small, a fatal error occurs. No deallocation of the buffer is
   // done upon destruction of the assembler.
   Assembler(const AssemblerOptions& options, void* buffer, int buffer_size);
-  virtual ~Assembler() {}
+  ~Assembler() override = default;
 
   // GetCode emits any pending (non-emitted) code and fills the descriptor
   // desc. GetCode() is idempotent; it returns the same result if no other
@@ -688,6 +688,8 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
   // the embedded object gets already recorded correctly when emitting the dummy
   // move.
   void movp_heap_number(Register dst, double value);
+
+  void movp_string(Register dst, const StringConstantBase* str);
 
   // Loads a 64-bit immediate into a register.
   void movq(Register dst, int64_t value,

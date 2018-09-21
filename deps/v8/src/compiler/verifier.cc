@@ -617,10 +617,6 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
       // Type is Boolean.
       CheckTypeIs(node, Type::Boolean());
       break;
-    case IrOpcode::kJSToInteger:
-      // Type is OrderedNumber.
-      CheckTypeIs(node, Type::OrderedNumber());
-      break;
     case IrOpcode::kJSToLength:
       CheckTypeIs(node, Type::Range(0, kMaxSafeInteger, zone));
       break;
@@ -1250,6 +1246,9 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
       CheckValueInputIs(node, 0, TypeCache::Get().kStringLengthType);
       CheckValueInputIs(node, 1, Type::String());
       CheckValueInputIs(node, 2, Type::String());
+      CheckTypeIs(node, Type::String());
+      break;
+    case IrOpcode::kDelayedStringConstant:
       CheckTypeIs(node, Type::String());
       break;
     case IrOpcode::kAllocate:

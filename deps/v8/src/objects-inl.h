@@ -1857,7 +1857,7 @@ uint32_t StringTableShape::HashForObject(Isolate* isolate, Object* object) {
 }
 
 int StringTableShape::GetMapRootIndex() {
-  return Heap::kStringTableMapRootIndex;
+  return static_cast<int>(RootIndex::kStringTableMap);
 }
 
 bool NumberDictionary::requires_slow_elements() {
@@ -1930,7 +1930,7 @@ int FreeSpace::Size() { return size(); }
 
 FreeSpace* FreeSpace::next() {
   DCHECK(map() == Heap::FromWritableHeapObject(this)->root(
-                      Heap::kFreeSpaceMapRootIndex) ||
+                      RootIndex::kFreeSpaceMap) ||
          (!Heap::FromWritableHeapObject(this)->deserialization_complete() &&
           map() == nullptr));
   DCHECK_LE(kNextOffset + kPointerSize, relaxed_read_size());
@@ -1940,7 +1940,7 @@ FreeSpace* FreeSpace::next() {
 
 void FreeSpace::set_next(FreeSpace* next) {
   DCHECK(map() == Heap::FromWritableHeapObject(this)->root(
-                      Heap::kFreeSpaceMapRootIndex) ||
+                      RootIndex::kFreeSpaceMap) ||
          (!Heap::FromWritableHeapObject(this)->deserialization_complete() &&
           map() == nullptr));
   DCHECK_LE(kNextOffset + kPointerSize, relaxed_read_size());
@@ -2299,11 +2299,11 @@ bool Foreign::IsNormalized(Object* value) {
 }
 
 Address Foreign::foreign_address() {
-  return AddressFrom<Address>(READ_INTPTR_FIELD(this, kForeignAddressOffset));
+  return READ_UINTPTR_FIELD(this, kForeignAddressOffset);
 }
 
 void Foreign::set_foreign_address(Address value) {
-  WRITE_INTPTR_FIELD(this, kForeignAddressOffset, OffsetFrom(value));
+  WRITE_UINTPTR_FIELD(this, kForeignAddressOffset, value);
 }
 
 template <class Derived>
@@ -2757,13 +2757,13 @@ Object* GlobalDictionaryShape::Unwrap(Object* object) {
 }
 
 int GlobalDictionaryShape::GetMapRootIndex() {
-  return Heap::kGlobalDictionaryMapRootIndex;
+  return static_cast<int>(RootIndex::kGlobalDictionaryMap);
 }
 
 Name* NameDictionary::NameAt(int entry) { return Name::cast(KeyAt(entry)); }
 
 int NameDictionaryShape::GetMapRootIndex() {
-  return Heap::kNameDictionaryMapRootIndex;
+  return static_cast<int>(RootIndex::kNameDictionaryMap);
 }
 
 PropertyCell* GlobalDictionary::CellAt(int entry) {
@@ -2800,14 +2800,14 @@ bool NumberDictionaryBaseShape::IsMatch(uint32_t key, Object* other) {
 }
 
 uint32_t NumberDictionaryBaseShape::Hash(Isolate* isolate, uint32_t key) {
-  return ComputeIntegerHash(key, isolate->heap()->HashSeed());
+  return ComputeSeededHash(key, isolate->heap()->HashSeed());
 }
 
 uint32_t NumberDictionaryBaseShape::HashForObject(Isolate* isolate,
                                                   Object* other) {
   DCHECK(other->IsNumber());
-  return ComputeIntegerHash(static_cast<uint32_t>(other->Number()),
-                            isolate->heap()->HashSeed());
+  return ComputeSeededHash(static_cast<uint32_t>(other->Number()),
+                           isolate->heap()->HashSeed());
 }
 
 Handle<Object> NumberDictionaryBaseShape::AsHandle(Isolate* isolate,
@@ -2816,11 +2816,11 @@ Handle<Object> NumberDictionaryBaseShape::AsHandle(Isolate* isolate,
 }
 
 int NumberDictionaryShape::GetMapRootIndex() {
-  return Heap::kNumberDictionaryMapRootIndex;
+  return static_cast<int>(RootIndex::kNumberDictionaryMap);
 }
 
 int SimpleNumberDictionaryShape::GetMapRootIndex() {
-  return Heap::kSimpleNumberDictionaryMapRootIndex;
+  return static_cast<int>(RootIndex::kSimpleNumberDictionaryMap);
 }
 
 bool NameDictionaryShape::IsMatch(Handle<Name> key, Object* other) {
@@ -2887,18 +2887,18 @@ uint32_t ObjectHashTableShape::HashForObject(Isolate* isolate, Object* other) {
 Object* Object::GetSimpleHash(Object* object) {
   DisallowHeapAllocation no_gc;
   if (object->IsSmi()) {
-    uint32_t hash = ComputeIntegerHash(Smi::ToInt(object));
+    uint32_t hash = ComputeUnseededHash(Smi::ToInt(object));
     return Smi::FromInt(hash & Smi::kMaxValue);
   }
   if (object->IsHeapNumber()) {
     double num = HeapNumber::cast(object)->value();
     if (std::isnan(num)) return Smi::FromInt(Smi::kMaxValue);
-    // Use ComputeIntegerHash for all values in Signed32 range, including -0,
+    // Use ComputeUnseededHash for all values in Signed32 range, including -0,
     // which is considered equal to 0 because collections use SameValueZero.
     uint32_t hash;
     // Check range before conversion to avoid undefined behavior.
     if (num >= kMinInt && num <= kMaxInt && FastI2D(FastD2I(num)) == num) {
-      hash = ComputeIntegerHash(FastD2I(num));
+      hash = ComputeUnseededHash(FastD2I(num));
     } else {
       hash = ComputeLongHash(double_to_uint64(num));
     }

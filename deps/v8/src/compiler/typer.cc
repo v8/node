@@ -1114,10 +1114,6 @@ Type Typer::Visitor::TypeToBoolean(Node* node) {
   return TypeUnaryOp(node, ToBoolean);
 }
 
-Type Typer::Visitor::TypeJSToInteger(Node* node) {
-  return TypeUnaryOp(node, ToInteger);
-}
-
 Type Typer::Visitor::TypeJSToLength(Node* node) {
   return TypeUnaryOp(node, ToLength);
 }
@@ -1723,7 +1719,6 @@ Type Typer::Visitor::TypeJSCallRuntime(Node* node) {
     case Runtime::kInlineIsSmi:
       return TypeUnaryOp(node, ObjectIsSmi);
     case Runtime::kInlineIsArray:
-    case Runtime::kInlineIsDate:
     case Runtime::kInlineIsTypedArray:
     case Runtime::kInlineIsRegExp:
       return Type::Boolean();
@@ -1731,8 +1726,6 @@ Type Typer::Visitor::TypeJSCallRuntime(Node* node) {
       return Type::OtherObject();
     case Runtime::kInlineStringCharFromCode:
       return Type::String();
-    case Runtime::kInlineToInteger:
-      return TypeUnaryOp(node, ToInteger);
     case Runtime::kInlineToLength:
       return TypeUnaryOp(node, ToLength);
     case Runtime::kInlineToNumber:
@@ -2191,6 +2184,10 @@ Type Typer::Visitor::TypeNewArgumentsElements(Node* node) {
 }
 
 Type Typer::Visitor::TypeNewConsString(Node* node) { return Type::String(); }
+
+Type Typer::Visitor::TypeDelayedStringConstant(Node* node) {
+  return Type::String();
+}
 
 Type Typer::Visitor::TypeFindOrderedHashMapEntry(Node* node) {
   return Type::Range(-1.0, FixedArray::kMaxLength, zone());

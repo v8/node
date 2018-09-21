@@ -117,7 +117,6 @@
   V(JSOrdinaryHasInstance)
 
 #define JS_CONVERSION_UNOP_LIST(V) \
-  V(JSToInteger)                   \
   V(JSToLength)                    \
   V(JSToName)                      \
   V(JSToNumber)                    \
@@ -430,6 +429,7 @@
   V(NewSmiOrObjectElements)             \
   V(NewArgumentsElements)               \
   V(NewConsString)                      \
+  V(DelayedStringConstant)              \
   V(EnsureWritableFastElements)         \
   V(MaybeGrowFastElements)              \
   V(TransitionElementsKind)             \

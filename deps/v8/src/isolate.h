@@ -528,7 +528,6 @@ typedef std::vector<HeapObject*> DebugObjectCache;
   V(const intptr_t*, api_external_references, nullptr)                        \
   V(AddressToIndexHashMap*, external_reference_map, nullptr)                  \
   V(HeapObjectToIndexHashMap*, root_index_map, nullptr)                       \
-  V(int, pending_microtask_count, 0)                                          \
   V(CompilationStatistics*, turbo_statistics, nullptr)                        \
   V(CodeTracer*, code_tracer, nullptr)                                        \
   V(uint32_t, per_isolate_assert_data, 0xFFFFFFFFu)                           \
@@ -666,6 +665,8 @@ class Isolate : private HiddenFactory {
   void ReleaseSharedPtrs();
 
   void ClearSerializerData();
+
+  bool LogObjectRelocation();
 
   // Find the PerThread for this particular (isolate, thread) combination
   // If one does not yet exist, return null.
@@ -1093,6 +1094,7 @@ class Isolate : private HiddenFactory {
   v8::internal::Factory* factory() {
     // Upcast to the privately inherited base-class using c-style casts to avoid
     // undefined behavior (as static_cast cannot cast across private bases).
+    // NOLINTNEXTLINE (google-readability-casting)
     return (v8::internal::Factory*)this;  // NOLINT(readability/casting)
   }
 
@@ -1368,8 +1370,8 @@ class Isolate : private HiddenFactory {
   void RunMicrotasks();
   bool IsRunningMicrotasks() const { return is_running_microtasks_; }
 
-  Handle<Symbol> SymbolFor(Heap::RootListIndex dictionary_index,
-                           Handle<String> name, bool private_symbol);
+  Handle<Symbol> SymbolFor(RootIndex dictionary_index, Handle<String> name,
+                           bool private_symbol);
 
   void SetUseCounterCallback(v8::Isolate::UseCounterCallback callback);
   void CountUsage(v8::Isolate::UseCounterFeature feature);
@@ -1390,10 +1392,6 @@ class Isolate : private HiddenFactory {
 
   Address promise_hook_or_async_event_delegate_address() {
     return reinterpret_cast<Address>(&promise_hook_or_async_event_delegate_);
-  }
-
-  Address pending_microtask_count_address() {
-    return reinterpret_cast<Address>(&pending_microtask_count_);
   }
 
   Address handle_scope_implementer_address() {
@@ -1555,8 +1553,7 @@ class Isolate : private HiddenFactory {
 
   class ThreadDataTable {
    public:
-    ThreadDataTable();
-    ~ThreadDataTable();
+    ThreadDataTable() = default;
 
     PerIsolateThreadData* Lookup(ThreadId thread_id);
     void Insert(PerIsolateThreadData* data);
@@ -2033,7 +2030,7 @@ class PostponeInterruptsScope : public InterruptsScope {
                           int intercept_mask = StackGuard::ALL_INTERRUPTS)
       : InterruptsScope(isolate, intercept_mask,
                         InterruptsScope::kPostponeInterrupts) {}
-  virtual ~PostponeInterruptsScope() = default;
+  ~PostponeInterruptsScope() override = default;
 };
 
 // Support for overriding PostponeInterruptsScope. Interrupt is not ignored if
@@ -2045,7 +2042,7 @@ class SafeForInterruptsScope : public InterruptsScope {
                          int intercept_mask = StackGuard::ALL_INTERRUPTS)
       : InterruptsScope(isolate, intercept_mask,
                         InterruptsScope::kRunInterrupts) {}
-  virtual ~SafeForInterruptsScope() = default;
+  ~SafeForInterruptsScope() override = default;
 };
 
 class StackTraceFailureMessage {

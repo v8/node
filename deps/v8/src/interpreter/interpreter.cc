@@ -7,6 +7,7 @@
 #include <fstream>
 #include <memory>
 
+#include "builtins-generated/bytecodes-builtins-list.h"
 #include "src/ast/prettyprinter.h"
 #include "src/bootstrapper.h"
 #include "src/compiler.h"
@@ -59,45 +60,39 @@ Interpreter::Interpreter(Isolate* isolate) : isolate_(isolate) {
   }
 }
 
+namespace {
+
+int BuiltinIndexFromBytecode(Bytecode bytecode, OperandScale operand_scale) {
+  int index = BytecodeOperands::OperandScaleAsIndex(operand_scale) *
+                  kNumberOfBytecodeHandlers +
+              static_cast<int>(bytecode);
+  int offset = kBytecodeToBuiltinsMapping[index];
+  return offset >= 0 ? Builtins::kFirstBytecodeHandler + offset
+                     : Builtins::kIllegalHandler;
+}
+
+}  // namespace
+
 Code* Interpreter::GetAndMaybeDeserializeBytecodeHandler(
     Bytecode bytecode, OperandScale operand_scale) {
-#ifdef V8_EMBEDDED_BYTECODE_HANDLERS
-  return GetBytecodeHandler(bytecode, operand_scale);
-#else
-  Code* code = GetBytecodeHandler(bytecode, operand_scale);
+  int builtin_index = BuiltinIndexFromBytecode(bytecode, operand_scale);
+  Builtins* builtins = isolate_->builtins();
+  Code* code = builtins->builtin(builtin_index);
 
   // Already deserialized? Then just return the handler.
-  if (!isolate_->heap()->IsDeserializeLazyHandler(code)) return code;
+  if (!Builtins::IsLazyDeserializer(code)) return code;
 
-  DCHECK(FLAG_lazy_handler_deserialization);
+  DCHECK(FLAG_lazy_deserialization);
   DCHECK(Bytecodes::BytecodeHasHandler(bytecode, operand_scale));
-  code = Snapshot::DeserializeHandler(isolate_, bytecode, operand_scale);
+  code = Snapshot::DeserializeBuiltin(isolate_, builtin_index);
 
   DCHECK(code->IsCode());
   DCHECK_EQ(code->kind(), Code::BYTECODE_HANDLER);
-  DCHECK(!isolate_->heap()->IsDeserializeLazyHandler(code));
+  DCHECK(!Builtins::IsLazyDeserializer(code));
 
   SetBytecodeHandler(bytecode, operand_scale, code);
 
   return code;
-#endif  // V8_EMBEDDED_BYTECODE_HANDLERS
-}
-
-Code* Interpreter::GetBytecodeHandler(Bytecode bytecode,
-                                      OperandScale operand_scale) {
-#ifdef V8_EMBEDDED_BYTECODE_HANDLERS
-  size_t index = GetDispatchTableIndex(bytecode, operand_scale);
-  Address pc = dispatch_table_[index];
-  Code* builtin = InstructionStream::TryLookupCode(isolate_, pc);
-  DCHECK(builtin->IsCode());
-  return builtin;
-#else
-  DCHECK(IsDispatchTableInitialized());
-  DCHECK(Bytecodes::BytecodeHasHandler(bytecode, operand_scale));
-  size_t index = GetDispatchTableIndex(bytecode, operand_scale);
-  Address code_entry = dispatch_table_[index];
-  return Code::GetCodeFromTargetAddress(code_entry);
-#endif
 }
 
 void Interpreter::SetBytecodeHandler(Bytecode bytecode,
@@ -252,11 +247,11 @@ void Interpreter::ForEachBytecode(
 }
 
 void Interpreter::InitializeDispatchTable() {
-#ifdef V8_EMBEDDED_BYTECODE_HANDLERS
   Builtins* builtins = isolate_->builtins();
   Code* illegal = builtins->builtin(Builtins::kIllegalHandler);
   int builtin_id = Builtins::kFirstBytecodeHandler;
-  ForEachBytecode([&](Bytecode bytecode, OperandScale operand_scale) {
+  ForEachBytecode([=, &builtin_id](Bytecode bytecode,
+                                   OperandScale operand_scale) {
     Code* handler = illegal;
     if (Bytecodes::BytecodeHasHandler(bytecode, operand_scale)) {
 #ifdef DEBUG
@@ -270,7 +265,16 @@ void Interpreter::InitializeDispatchTable() {
     SetBytecodeHandler(bytecode, operand_scale, handler);
   });
   DCHECK(builtin_id == Builtins::builtin_count);
-#endif  // V8_EMBEDDED_BYTECODE_HANDLERS
+  DCHECK(IsDispatchTableInitialized());
+
+#if defined(V8_USE_SNAPSHOT) && !defined(V8_USE_SNAPSHOT_WITH_UNWINDING_INFO)
+  if (!isolate_->serializer_enabled() && FLAG_perf_prof_unwinding_info) {
+    StdoutStream{}
+        << "Warning: The --perf-prof-unwinding-info flag can be passed at "
+           "mksnapshot time to get better results."
+        << std::endl;
+  }
+#endif
 }
 
 bool Interpreter::IsDispatchTableInitialized() const {

@@ -98,7 +98,7 @@ class StatsCounterBase {
   const char* name_;
   int* ptr_;
 
-  StatsCounterBase() {}
+  StatsCounterBase() = default;
   StatsCounterBase(Counters* counters, const char* name)
       : counters_(counters), name_(name), ptr_(nullptr) {}
 
@@ -161,7 +161,7 @@ class StatsCounter : public StatsCounterBase {
  private:
   friend class Counters;
 
-  StatsCounter() {}
+  StatsCounter() = default;
   StatsCounter(Counters* counters, const char* name)
       : StatsCounterBase(counters, name), lookup_done_(false) {}
 
@@ -227,7 +227,7 @@ class Histogram {
   }
 
  protected:
-  Histogram() {}
+  Histogram() = default;
   Histogram(const char* name, int min, int max, int num_buckets,
             Counters* counters)
       : name_(name),
@@ -277,7 +277,7 @@ class TimedHistogram : public Histogram {
   friend class Counters;
   HistogramTimerResolution resolution_;
 
-  TimedHistogram() {}
+  TimedHistogram() = default;
   TimedHistogram(const char* name, int min, int max,
                  HistogramTimerResolution resolution, int num_buckets,
                  Counters* counters)
@@ -393,7 +393,7 @@ class HistogramTimer : public TimedHistogram {
 
   base::ElapsedTimer timer_;
 
-  HistogramTimer() {}
+  HistogramTimer() = default;
 };
 
 // Helper class for scoping a HistogramTimer.
@@ -487,7 +487,7 @@ class AggregatableHistogramTimer : public Histogram {
  private:
   friend class Counters;
 
-  AggregatableHistogramTimer() {}
+  AggregatableHistogramTimer() = default;
   AggregatableHistogramTimer(const char* name, int min, int max,
                              int num_buckets, Counters* counters)
       : Histogram(name, min, max, num_buckets, counters) {}
@@ -750,6 +750,9 @@ class RuntimeCallTimer final {
   V(Map_Has)                                               \
   V(Map_New)                                               \
   V(Map_Set)                                               \
+  V(WeakMap_Get)                                           \
+  V(WeakMap_Set)                                           \
+  V(WeakMap_New)                                           \
   V(Message_GetEndColumn)                                  \
   V(Message_GetLineNumber)                                 \
   V(Message_GetSourceLine)                                 \
@@ -872,9 +875,13 @@ class RuntimeCallTimer final {
   V(CompileBackgroundScript)                   \
   V(CompileBackgroundRewriteReturnResult)      \
   V(CompileBackgroundScopeAnalysis)            \
+  V(CompileBackgroundUnoptimizedCompileJob)    \
   V(CompileDeserialize)                        \
   V(CompileEval)                               \
   V(CompileAnalyse)                            \
+  V(CompileEnqueueOnDispatcher)                \
+  V(CompileFinalizeUnoptimizedCompileJob)      \
+  V(CompileFinishNowOnDispatcher)              \
   V(CompileFunction)                           \
   V(CompileGetFromOptimizedCodeMap)            \
   V(CompileIgnition)                           \
@@ -883,6 +890,7 @@ class RuntimeCallTimer final {
   V(CompileScopeAnalysis)                      \
   V(CompileScript)                             \
   V(CompileSerialize)                          \
+  V(CompileUnoptimizedCompileJob)              \
   V(CompileWaitForDispatcher)                  \
   V(DeoptimizeCode)                            \
   V(FunctionCallback)                          \

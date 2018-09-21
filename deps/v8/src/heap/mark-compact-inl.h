@@ -26,30 +26,11 @@ MarkingVisitor<fixed_array_mode, retaining_path_mode,
 template <FixedArrayVisitationMode fixed_array_mode,
           TraceRetainingPathMode retaining_path_mode, typename MarkingState>
 int MarkingVisitor<fixed_array_mode, retaining_path_mode,
-                   MarkingState>::VisitAllocationSite(Map* map,
-                                                      AllocationSite* object) {
-  int size = AllocationSite::BodyDescriptorWeak::SizeOf(map, object);
-  AllocationSite::BodyDescriptorWeak::IterateBody(map, object, size, this);
-  return size;
-}
-
-template <FixedArrayVisitationMode fixed_array_mode,
-          TraceRetainingPathMode retaining_path_mode, typename MarkingState>
-int MarkingVisitor<fixed_array_mode, retaining_path_mode,
                    MarkingState>::VisitBytecodeArray(Map* map,
                                                      BytecodeArray* array) {
   int size = BytecodeArray::BodyDescriptor::SizeOf(map, array);
   BytecodeArray::BodyDescriptor::IterateBody(map, array, size, this);
   array->MakeOlder();
-  return size;
-}
-
-template <FixedArrayVisitationMode fixed_array_mode,
-          TraceRetainingPathMode retaining_path_mode, typename MarkingState>
-int MarkingVisitor<fixed_array_mode, retaining_path_mode, MarkingState>::
-    VisitCodeDataContainer(Map* map, CodeDataContainer* object) {
-  int size = CodeDataContainer::BodyDescriptorWeak::SizeOf(map, object);
-  CodeDataContainer::BodyDescriptorWeak::IterateBody(map, object, size, this);
   return size;
 }
 
@@ -65,15 +46,48 @@ int MarkingVisitor<fixed_array_mode, retaining_path_mode,
 
 template <FixedArrayVisitationMode fixed_array_mode,
           TraceRetainingPathMode retaining_path_mode, typename MarkingState>
-int MarkingVisitor<fixed_array_mode, retaining_path_mode,
-                   MarkingState>::VisitJSApiObject(Map* map, JSObject* object) {
+template <typename T>
+V8_INLINE int
+MarkingVisitor<fixed_array_mode, retaining_path_mode,
+               MarkingState>::VisitEmbedderTracingSubclass(Map* map,
+                                                           T* object) {
   if (heap_->local_embedder_heap_tracer()->InUse()) {
-    DCHECK(object->IsJSObject());
     heap_->TracePossibleWrapper(object);
   }
-  int size = JSObject::BodyDescriptor::SizeOf(map, object);
-  JSObject::BodyDescriptor::IterateBody(map, object, size, this);
+  int size = T::BodyDescriptor::SizeOf(map, object);
+  T::BodyDescriptor::IterateBody(map, object, size, this);
   return size;
+}
+
+template <FixedArrayVisitationMode fixed_array_mode,
+          TraceRetainingPathMode retaining_path_mode, typename MarkingState>
+int MarkingVisitor<fixed_array_mode, retaining_path_mode,
+                   MarkingState>::VisitJSApiObject(Map* map, JSObject* object) {
+  return VisitEmbedderTracingSubclass(map, object);
+}
+
+template <FixedArrayVisitationMode fixed_array_mode,
+          TraceRetainingPathMode retaining_path_mode, typename MarkingState>
+int MarkingVisitor<fixed_array_mode, retaining_path_mode,
+                   MarkingState>::VisitJSArrayBuffer(Map* map,
+                                                     JSArrayBuffer* object) {
+  return VisitEmbedderTracingSubclass(map, object);
+}
+
+template <FixedArrayVisitationMode fixed_array_mode,
+          TraceRetainingPathMode retaining_path_mode, typename MarkingState>
+int MarkingVisitor<fixed_array_mode, retaining_path_mode,
+                   MarkingState>::VisitJSDataView(Map* map,
+                                                  JSDataView* object) {
+  return VisitEmbedderTracingSubclass(map, object);
+}
+
+template <FixedArrayVisitationMode fixed_array_mode,
+          TraceRetainingPathMode retaining_path_mode, typename MarkingState>
+int MarkingVisitor<fixed_array_mode, retaining_path_mode,
+                   MarkingState>::VisitJSTypedArray(Map* map,
+                                                    JSTypedArray* object) {
+  return VisitEmbedderTracingSubclass(map, object);
 }
 
 template <FixedArrayVisitationMode fixed_array_mode,
@@ -125,16 +139,6 @@ int MarkingVisitor<fixed_array_mode, retaining_path_mode,
   } else {
     Map::BodyDescriptor::IterateBody(map, object, size, this);
   }
-  return size;
-}
-
-template <FixedArrayVisitationMode fixed_array_mode,
-          TraceRetainingPathMode retaining_path_mode, typename MarkingState>
-int MarkingVisitor<fixed_array_mode, retaining_path_mode,
-                   MarkingState>::VisitNativeContext(Map* map,
-                                                     Context* context) {
-  int size = Context::BodyDescriptorWeak::SizeOf(map, context);
-  Context::BodyDescriptorWeak::IterateBody(map, context, size, this);
   return size;
 }
 

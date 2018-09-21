@@ -559,6 +559,7 @@ TEST(LogAll) {
   SETUP_FLAGS();
   i::FLAG_log_all = true;
   i::FLAG_turbo_inlining = false;
+  i::FLAG_enable_one_shot_optimization = false;
   v8::Isolate::CreateParams create_params;
   create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
   v8::Isolate* isolate = v8::Isolate::New(create_params);
@@ -584,9 +585,9 @@ TEST(LogAll) {
     CHECK(logger.ContainsLine({"api,v8::Script::Run"}));
     CHECK(logger.ContainsLine({"code-creation,LazyCompile,", "testAddFn"}));
     if (i::FLAG_opt && !i::FLAG_always_opt) {
-      CHECK(logger.ContainsLine({"code-deopt,", "eager"}));
+      CHECK(logger.ContainsLine({"code-deopt,", "not a Smi"}));
       if (i::FLAG_enable_one_shot_optimization)
-        CHECK(logger.ContainsLine({"code-deopt,", "soft"}));
+        CHECK(logger.ContainsLine({"code-deopt,", "DeoptimizeNow"}));
       CHECK(logger.ContainsLine({"timer-event-start", "V8.DeoptimizeCode"}));
       CHECK(logger.ContainsLine({"timer-event-end", "V8.DeoptimizeCode"}));
     }

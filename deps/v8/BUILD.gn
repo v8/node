@@ -1402,8 +1402,6 @@ v8_source_set("v8_initializers") {
     "src/interpreter/interpreter-generator.h",
     "src/interpreter/interpreter-intrinsics-generator.cc",
     "src/interpreter/interpreter-intrinsics-generator.h",
-    "src/interpreter/setup-interpreter-internal.cc",
-    "src/interpreter/setup-interpreter.h",
   ]
 
   if (use_jumbo_build == true) {
@@ -2360,6 +2358,8 @@ v8_source_set("v8_base") {
     "src/regexp/jsregexp-inl.h",
     "src/regexp/jsregexp.cc",
     "src/regexp/jsregexp.h",
+    "src/regexp/property-sequences.cc",
+    "src/regexp/property-sequences.h",
     "src/regexp/regexp-ast.cc",
     "src/regexp/regexp-ast.h",
     "src/regexp/regexp-macro-assembler-irregexp-inl.h",
@@ -2432,8 +2432,6 @@ v8_source_set("v8_base") {
     "src/snapshot/builtin-serializer-allocator.h",
     "src/snapshot/builtin-serializer.cc",
     "src/snapshot/builtin-serializer.h",
-    "src/snapshot/builtin-snapshot-utils.cc",
-    "src/snapshot/builtin-snapshot-utils.h",
     "src/snapshot/code-serializer.cc",
     "src/snapshot/code-serializer.h",
     "src/snapshot/default-deserializer-allocator.cc",
@@ -2476,6 +2474,8 @@ v8_source_set("v8_base") {
     "src/string-builder.cc",
     "src/string-case.cc",
     "src/string-case.h",
+    "src/string-constants.cc",
+    "src/string-constants.h",
     "src/string-hasher-inl.h",
     "src/string-hasher.h",
     "src/string-search.h",
@@ -3304,10 +3304,6 @@ if (current_toolchain == v8_generator_toolchain) {
       "src/interpreter/bytecodes.cc",
       "src/interpreter/bytecodes.h",
     ]
-
-    if (v8_enable_embedded_builtins) {
-      defines = [ "V8_EMBEDDED_BUILTINS" ]
-    }
 
     configs = [ ":internal_config" ]
 

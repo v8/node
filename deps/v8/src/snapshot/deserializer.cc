@@ -69,8 +69,7 @@ template <class AllocatorT>
 void Deserializer<AllocatorT>::VisitRootPointers(Root root,
                                                  const char* description,
                                                  Object** start, Object** end) {
-  // Builtins and bytecode handlers are deserialized in a separate pass by the
-  // BuiltinDeserializer.
+  // Builtins are deserialized in a separate pass by the BuiltinDeserializer.
   if (root == Root::kBuiltins || root == Root::kDispatchTable) return;
 
   // The space must be new space.  Any other space would cause ReadChunk to try
@@ -218,8 +217,8 @@ HeapObject* Deserializer<AllocatorT>::PostProcessNewObject(HeapObject* obj,
     isolate_->heap()->RegisterExternalString(String::cast(obj));
   } else if (obj->IsJSTypedArray()) {
     JSTypedArray* typed_array = JSTypedArray::cast(obj);
-    CHECK(typed_array->byte_offset()->IsSmi());
-    int32_t byte_offset = NumberToInt32(typed_array->byte_offset());
+    CHECK_LE(typed_array->byte_offset(), Smi::kMaxValue);
+    int32_t byte_offset = static_cast<int32_t>(typed_array->byte_offset());
     if (byte_offset > 0) {
       FixedTypedArrayBase* elements =
           FixedTypedArrayBase::cast(typed_array->elements());
@@ -673,7 +672,7 @@ bool Deserializer<AllocatorT>::ReadData(MaybeObject** current,
       SIXTEEN_CASES(kRootArrayConstants)
       SIXTEEN_CASES(kRootArrayConstants + 16) {
         int id = data & kRootArrayConstantsMask;
-        Heap::RootListIndex root_index = static_cast<Heap::RootListIndex>(id);
+        RootIndex root_index = static_cast<RootIndex>(id);
         MaybeObject* object =
             MaybeObject::FromObject(isolate->heap()->root(root_index));
         DCHECK(!Heap::InNewSpace(object));
@@ -807,7 +806,7 @@ MaybeObject** Deserializer<AllocatorT>::ReadDataCase(
       new_object = GetBackReferencedObject(data & kSpaceMask);
     } else if (where == kRootArray) {
       int id = source_.GetInt();
-      Heap::RootListIndex root_index = static_cast<Heap::RootListIndex>(id);
+      RootIndex root_index = static_cast<RootIndex>(id);
       new_object = isolate->heap()->root(root_index);
       emit_write_barrier = Heap::InNewSpace(new_object);
       hot_objects_.Add(HeapObject::cast(new_object));

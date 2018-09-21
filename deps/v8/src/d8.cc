@@ -280,6 +280,14 @@ static Local<Value> Throw(Isolate* isolate, const char* message) {
           .ToLocalChecked());
 }
 
+static Local<Value> GetValue(v8::Isolate* isolate, Local<Context> context,
+                             Local<v8::Object> object, const char* property) {
+  Local<String> v8_str =
+      String::NewFromUtf8(isolate, property, NewStringType::kNormal)
+          .ToLocalChecked();
+  return object->Get(context, v8_str).ToLocalChecked();
+}
+
 Worker* GetWorkerFromInternalField(Isolate* isolate, Local<Object> object) {
   if (object->InternalFieldCount() != 1) {
     Throw(isolate, "this is not a Worker");
@@ -397,14 +405,6 @@ class TraceConfigParser {
     }
     return platform::tracing::TraceRecordMode::RECORD_UNTIL_FULL;
   }
-
-  static Local<Value> GetValue(v8::Isolate* isolate, Local<Context> context,
-                               Local<v8::Object> object, const char* property) {
-    Local<String> v8_str =
-        String::NewFromUtf8(isolate, property, NewStringType::kNormal)
-            .ToLocalChecked();
-    return object->Get(context, v8_str).ToLocalChecked();
-  }
 };
 
 }  // namespace
@@ -469,7 +469,7 @@ class DummySourceStream : public v8::ScriptCompiler::ExternalSourceStream {
                       source_length_);
   }
 
-  virtual size_t GetMoreData(const uint8_t** src) {
+  size_t GetMoreData(const uint8_t** src) override {
     if (done_) {
       return 0;
     }
@@ -1441,6 +1441,39 @@ void Shell::WorkerNew(const v8::FunctionCallbackInfo<v8::Value>& args) {
     return;
   }
 
+  // d8 honors `options={type: string}`, which means the first argument is
+  // not a filename but string of script to be run.
+  bool load_from_file = true;
+  if (args.Length() > 1 && args[1]->IsObject()) {
+    Local<Object> object = args[1].As<Object>();
+    Local<Context> context = isolate->GetCurrentContext();
+    Local<Value> value = GetValue(args.GetIsolate(), context, object, "type");
+    if (value->IsString()) {
+      Local<String> worker_type = value->ToString(context).ToLocalChecked();
+      String::Utf8Value str(isolate, worker_type);
+      if (strcmp("string", *str) == 0) {
+        load_from_file = false;
+      } else if (strcmp("classic", *str) == 0) {
+        load_from_file = true;
+      } else {
+        Throw(args.GetIsolate(), "Unsupported worker type");
+        return;
+      }
+    }
+  }
+
+  Local<Value> source;
+  if (load_from_file) {
+    String::Utf8Value filename(args.GetIsolate(), args[0]);
+    source = ReadFile(args.GetIsolate(), *filename);
+    if (source.IsEmpty()) {
+      Throw(args.GetIsolate(), "Error loading worker script");
+      return;
+    }
+  } else {
+    source = args[0];
+  }
+
   if (!args.IsConstructCall()) {
     Throw(args.GetIsolate(), "Worker must be constructed with new");
     return;
@@ -1464,7 +1497,7 @@ void Shell::WorkerNew(const v8::FunctionCallbackInfo<v8::Value>& args) {
     args.Holder()->SetAlignedPointerInInternalField(0, worker);
     workers_.push_back(worker);
 
-    String::Utf8Value script(args.GetIsolate(), args[0]);
+    String::Utf8Value script(args.GetIsolate(), source);
     if (!*script) {
       Throw(args.GetIsolate(), "Can't get worker script");
       return;
@@ -2332,7 +2365,7 @@ class InspectorFrontend final : public v8_inspector::V8Inspector::Channel {
     isolate_ = context->GetIsolate();
     context_.Reset(isolate_, context);
   }
-  virtual ~InspectorFrontend() = default;
+  ~InspectorFrontend() override = default;
 
  private:
   void sendResponse(

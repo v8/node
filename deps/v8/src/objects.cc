@@ -3160,6 +3160,12 @@ VisitorId Map::GetVisitorId(Map* map) {
     case JS_ARRAY_BUFFER_TYPE:
       return kVisitJSArrayBuffer;
 
+    case JS_DATA_VIEW_TYPE:
+      return kVisitJSDataView;
+
+    case JS_TYPED_ARRAY_TYPE:
+      return kVisitJSTypedArray;
+
     case SMALL_ORDERED_HASH_MAP_TYPE:
       return kVisitSmallOrderedHashMap;
 
@@ -3197,8 +3203,6 @@ VisitorId Map::GetVisitorId(Map* map) {
     case JS_GLOBAL_PROXY_TYPE:
     case JS_GLOBAL_OBJECT_TYPE:
     case JS_MESSAGE_OBJECT_TYPE:
-    case JS_TYPED_ARRAY_TYPE:
-    case JS_DATA_VIEW_TYPE:
     case JS_SET_TYPE:
     case JS_MAP_TYPE:
     case JS_SET_KEY_VALUE_ITERATOR_TYPE:
@@ -3360,7 +3364,7 @@ bool JSObject::IsUnmodifiedApiObject(Object** o) {
   HeapObject* heap_object = HeapObject::cast(object);
   if (!object->IsJSObject()) return false;
   JSObject* js_object = JSObject::cast(object);
-  if (!js_object->IsApiWrapper()) return false;
+  if (!js_object->IsDroppableApiWrapper()) return false;
   Object* maybe_constructor = js_object->map()->GetConstructor();
   if (!maybe_constructor->IsJSFunction()) return false;
   JSFunction* constructor = JSFunction::cast(maybe_constructor);
@@ -8628,7 +8632,7 @@ Maybe<bool> JSObject::PreventExtensionsWithTransition(
   // typed array elements. Freeze works only if there are no actual elements.
   if (object->HasFixedTypedArrayElements()) {
     if (attrs == FROZEN &&
-        JSArrayBufferView::cast(*object)->byte_length()->Number() > 0) {
+        JSArrayBufferView::cast(*object)->byte_length() > 0) {
       isolate->Throw(*isolate->factory()->NewTypeError(
           MessageTemplate::kCannotFreezeArrayBufferView));
       return Nothing<bool>();
@@ -10567,7 +10571,7 @@ Handle<DescriptorArray> DescriptorArray::Allocate(Isolate* isolate,
   // Allocate the array of keys.
   Handle<WeakFixedArray> result =
       factory->NewWeakFixedArrayWithMap<DescriptorArray>(
-          Heap::kDescriptorArrayMapRootIndex, LengthFor(size), pretenure);
+          RootIndex::kDescriptorArrayMap, LengthFor(size), pretenure);
   result->Set(kDescriptorLengthIndex,
               MaybeObject::FromObject(Smi::FromInt(number_of_descriptors)));
   result->Set(kEnumCacheIndex, MaybeObject::FromObject(
@@ -11470,7 +11474,7 @@ class StringComparator {
   };
 
  public:
-  inline StringComparator() {}
+  inline StringComparator() = default;
 
   template<typename Chars1, typename Chars2>
   static inline bool Equals(State* state_1, State* state_2, int to_check) {
@@ -16004,6 +16008,18 @@ bool FixedArrayBase::IsCowArray() const {
 }
 
 bool JSObject::IsApiWrapper() {
+  // These object types can carry information relevant for embedders. The
+  // *_API_* types are generated through templates which can have embedder
+  // fields. The other types have their embedder fields added at compile time.
+  auto instance_type = map()->instance_type();
+  return instance_type == JS_API_OBJECT_TYPE ||
+         instance_type == JS_ARRAY_BUFFER_TYPE ||
+         instance_type == JS_DATA_VIEW_TYPE ||
+         instance_type == JS_SPECIAL_API_OBJECT_TYPE ||
+         instance_type == JS_TYPED_ARRAY_TYPE;
+}
+
+bool JSObject::IsDroppableApiWrapper() {
   auto instance_type = map()->instance_type();
   return instance_type == JS_API_OBJECT_TYPE ||
          instance_type == JS_SPECIAL_API_OBJECT_TYPE;
@@ -16624,8 +16640,7 @@ Handle<Derived> HashTable<Derived, Shape>::NewInternal(
     Isolate* isolate, int capacity, PretenureFlag pretenure) {
   Factory* factory = isolate->factory();
   int length = EntryToIndex(capacity);
-  Heap::RootListIndex map_root_index =
-      static_cast<Heap::RootListIndex>(Shape::GetMapRootIndex());
+  RootIndex map_root_index = static_cast<RootIndex>(Shape::GetMapRootIndex());
   Handle<FixedArray> array =
       factory->NewFixedArrayWithMap(map_root_index, length, pretenure);
   Handle<Derived> table = Handle<Derived>::cast(array);
@@ -17134,7 +17149,7 @@ class StringTableNoAllocateKey : public StringTableKey {
     set_hash_field(string->hash_field());
   }
 
-  ~StringTableNoAllocateKey() {
+  ~StringTableNoAllocateKey() override {
     if (one_byte_) {
       if (one_byte_content_ != one_byte_buffer_) delete[] one_byte_content_;
     } else {
@@ -18061,8 +18076,7 @@ Handle<Derived> ObjectHashTableBase<Derived, Shape>::Put(Isolate* isolate,
     if (capacity > ObjectHashTable::kMaxCapacity) {
       for (size_t i = 0; i < 2; ++i) {
         isolate->heap()->CollectAllGarbage(
-            Heap::kFinalizeIncrementalMarkingMask,
-            GarbageCollectionReason::kFullHashtable);
+            Heap::kNoGCFlags, GarbageCollectionReason::kFullHashtable);
       }
       table->Rehash(isolate);
     }
