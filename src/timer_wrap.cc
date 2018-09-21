@@ -63,12 +63,16 @@ class TimerWrap : public HandleWrap {
 
     env->SetProtoMethod(constructor, "start", Start);
 
-    target->Set(timerString, constructor->GetFunction());
+    target->Set(timerString,
+                constructor->GetFunction(env->context()).ToLocalChecked());
 
-    target->Set(env->context(),
-                FIXED_ONE_BYTE_STRING(env->isolate(), "setupTimers"),
-                env->NewFunctionTemplate(SetupTimers)
-                   ->GetFunction(env->context()).ToLocalChecked()).FromJust();
+    target
+        ->Set(env->context(),
+              FIXED_ONE_BYTE_STRING(env->isolate(), "setupTimers"),
+              env->NewFunctionTemplate(SetupTimers)
+                  ->GetFunction(env->context())
+                  .ToLocalChecked())
+        .FromJust();
   }
 
   size_t self_size() const override { return sizeof(*this); }
@@ -85,9 +89,9 @@ class TimerWrap : public HandleWrap {
     auto toggle_ref_cb = [] (const FunctionCallbackInfo<Value>& args) {
       Environment::GetCurrent(args)->ToggleImmediateRef(args[0]->IsTrue());
     };
-    auto toggle_ref_function =
-        env->NewFunctionTemplate(toggle_ref_cb)->GetFunction(env->context())
-        .ToLocalChecked();
+    auto toggle_ref_function = env->NewFunctionTemplate(toggle_ref_cb)
+                                   ->GetFunction(env->context())
+                                   .ToLocalChecked();
     auto result = Array::New(env->isolate(), 2);
     result->Set(env->context(), 0,
                 env->immediate_info()->fields().GetJSArray()).FromJust();

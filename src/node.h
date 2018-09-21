@@ -357,9 +357,10 @@ inline void NODE_SET_METHOD(v8::Local<v8::Object> recv,
                             v8::FunctionCallback callback) {
   v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::HandleScope handle_scope(isolate);
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
   v8::Local<v8::FunctionTemplate> t = v8::FunctionTemplate::New(isolate,
                                                                 callback);
-  v8::Local<v8::Function> fn = t->GetFunction();
+  v8::Local<v8::Function> fn = t->GetFunction(context).ToLocalChecked();
   v8::Local<v8::String> fn_name = v8::String::NewFromUtf8(isolate, name);
   fn->SetName(fn_name);
   recv->Set(fn_name, fn);

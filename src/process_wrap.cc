@@ -68,7 +68,8 @@ class ProcessWrap : public HandleWrap {
     env->SetProtoMethod(constructor, "unref", HandleWrap::Unref);
     env->SetProtoMethod(constructor, "hasRef", HandleWrap::HasRef);
 
-    target->Set(processString, constructor->GetFunction());
+    target->Set(processString,
+                constructor->GetFunction(env->context()).ToLocalChecked());
   }
 
   size_t self_size() const override { return sizeof(*this); }

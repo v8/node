@@ -58,7 +58,8 @@ void StatWatcher::Initialize(Environment* env, Local<Object> target) {
   env->SetProtoMethod(t, "unref", HandleWrap::Unref);
   env->SetProtoMethod(t, "hasRef", HandleWrap::HasRef);
 
-  target->Set(statWatcherString, t->GetFunction());
+  target->Set(statWatcherString,
+              t->GetFunction(env->context()).ToLocalChecked());
 }
 
 
