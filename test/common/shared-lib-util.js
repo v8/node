@@ -17,11 +17,11 @@ function addLibraryPath(env) {
 
   env.LD_LIBRARY_PATH =
     (env.LD_LIBRARY_PATH ? env.LD_LIBRARY_PATH + path.delimiter : '') +
-    path.join(kExecPath, 'lib.target');
+    kExecPath;
   // For AIX.
   env.LIBPATH =
     (env.LIBPATH ? env.LIBPATH + path.delimiter : '') +
-    path.join(kExecPath, 'lib.target');
+    kExecPath
   // For Mac OSX.
   env.DYLD_LIBRARY_PATH =
     (env.DYLD_LIBRARY_PATH ? env.DYLD_LIBRARY_PATH + path.delimiter : '') +
@@ -37,7 +37,7 @@ function getSharedLibPath() {
   } else if (common.isOSX) {
     return path.join(kExecPath, `libnode.${kShlibSuffix}`);
   } else {
-    return path.join(kExecPath, 'lib.target', `libnode.${kShlibSuffix}`);
+    return path.join(kExecPath, `libnode.${kShlibSuffix}`);
   }
 }
 
