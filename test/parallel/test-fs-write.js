@@ -59,7 +59,7 @@ common.allowGlobals(externalizeString, isOneByteString, x);
 }
 
 {
-  const expected = '中文 1';  // Must be a unique string.
+  const expected = '中文 eins uno';  // Must be a unique string.
   externalizeString(expected);
   assert.strictEqual(isOneByteString(expected), false);
   const fd = fs.openSync(fn, 'w');
@@ -69,7 +69,7 @@ common.allowGlobals(externalizeString, isOneByteString, x);
 }
 
 {
-  const expected = '中文 2';  // Must be a unique string.
+  const expected = '中文 zwei duo';  // Must be a unique string.
   externalizeString(expected);
   assert.strictEqual(isOneByteString(expected), false);
   const fd = fs.openSync(fn, 'w');
