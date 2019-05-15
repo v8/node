@@ -1,3 +1,19 @@
+message/async_error_eval_esm.js: SKIP
+message/async_error_nexttick_main.js: SKIP
+message/console.js: SKIP
+message/esm_display_syntax_error.mjs: SKIP
+message/esm_display_syntax_error_import.mjs: SKIP
+message/esm_display_syntax_error_import_module.mjs: SKIP
+message/esm_display_syntax_error_module.mjs: SKIP
+message/eval_messages.js: SKIP
+message/stdin_messages.js: SKIP
+message/undefined_reference_in_new_context.js: SKIP
+message/vm_display_runtime_error.js: SKIP
+message/vm_display_syntax_error.js: SKIP
+message/vm_dont_display_runtime_error.js: SKIP
+message/vm_dont_display_syntax_error.js: SKIP
+pseudo-tty/console_colors: SKIP
+
 [$mode==debug]
 async-hooks/test-callback-error: SLOW
 async-hooks/test-emit-init: SLOW
