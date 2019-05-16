@@ -11,6 +11,9 @@ test-net-connect-options-port: PASS,FLAKY
 test-worker-prof: PASS,FLAKY
 # https://github.com/nodejs/node/issues/27553
 test-tls-enable-trace-cli: PASS,FLAKY
+# https://chromium-review.googlesource.com/c/v8/v8/+/1593307
+test-v8-flags: SKIP
+test-vm-basic: SKIP
 
 [$system==win32]
 test-http2-pipe: PASS,FLAKY
