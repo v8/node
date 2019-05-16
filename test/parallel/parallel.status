@@ -5,6 +5,18 @@ prefix parallel
 # sample-test                        : PASS,FLAKY
 
 [true] # This section applies to all platforms
+<<<<<<< HEAD
+=======
+# https://github.com/nodejs/node/issues/24593
+test-fs-stat-bigint: PASS,FLAKY
+# https://github.com/nodejs/node/issues/23207
+test-net-connect-options-port: PASS,FLAKY
+# https://github.com/nodejs/node/issues/26401
+test-worker-prof: PASS,FLAKY
+# https://chromium-review.googlesource.com/c/v8/v8/+/1593307
+test-v8-flags: SKIP
+test-vm-basic: SKIP
+>>>>>>> Disable SyntaxError tests in preparation for CL
 
 [$system==win32]
 # https://github.com/nodejs/node/issues/20750
