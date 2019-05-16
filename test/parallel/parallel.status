@@ -9,6 +9,9 @@ prefix parallel
 test-net-connect-options-port: PASS,FLAKY
 # https://github.com/nodejs/node/issues/26401
 test-worker-prof: PASS,FLAKY
+# https://chromium-review.googlesource.com/c/v8/v8/+/1593307
+test-v8-flags: SKIP
+test-vm-basic: SKIP
 
 [$system==win32]
 test-http2-pipe: PASS,FLAKY
