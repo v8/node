@@ -16,6 +16,7 @@ test-domain-error-types: SKIP
 # https://chromium-review.googlesource.com/c/v8/v8/+/1593307
 test-v8-flags: SKIP
 test-vm-basic: SKIP
+test-http-pipeline-requests-connection-leak: SKIP
 
 [$system==win32]
 # https://github.com/nodejs/node/issues/20750
