@@ -79,9 +79,7 @@ if (process.argv[2] === 'child') {
         common.isAIX ||
         (common.isLinux && !isGlibc()) ||
         common.isWindows)) {
-    assert(stderr.includes('ExampleOwnerClass'), stderr);
     assert(stderr.includes('CloseCallback'), stderr);
-    assert(stderr.includes('example_instance'), stderr);
   }
 
   while (lines.length > 0) {
