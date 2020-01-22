@@ -232,3 +232,4 @@ const deserializerTypeError =
     /^TypeError: buffer must be a TypedArray or a DataView$/,
   );
 }
+
