@@ -23,8 +23,7 @@ const objects = [
   undefined,
   null,
   42,
-  circular,
-  wasmModule
+  circular
 ];
 
 const hostObject = new (internalBinding('js_stream').JSStream)();
@@ -238,7 +237,12 @@ const deserializerTypeError =
 }
 
 {
-  const deserializedWasmModule = v8.deserialize(v8.serialize(wasmModule));
-  const instance = new WebAssembly.Instance(deserializedWasmModule);
-  assert.strictEqual(instance.exports.add(10, 20), 30);
+  // V8 is removing support for serializing wasm modules via the value
+  // serializer. Once this is complete (https://crrev.com/c/2013110), we can
+  // re-add this test:
+  //assert.throws(
+  //  () => v8.serialize(wasmModule), {
+  //    constructor: Error,
+  //    message: '#<Module> could not be cloned.'
+  //  });
 }
