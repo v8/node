@@ -112,13 +112,19 @@ class NodeArrayBufferAllocator : public ArrayBufferAllocator {
   void* Allocate(size_t size) override;  // Defined in src/node.cc
   void* AllocateUninitialized(size_t size) override;
   void Free(void* data, size_t size) override;
-  virtual void* Reallocate(void* data, size_t old_size, size_t size);
+  // This function is temporarily renamed to ReallocateBuffer to avoid
+  // conflict with the new V8 API function called Reallocate.
+  // Once the V8 with the new API is rolled in Node, this should be renamed
+  // back to Reallocate with the override attribute.
+  virtual void* ReallocateBuffer(void* data, size_t old_size, size_t size) {
+    return static_cast<void*>(
+       UncheckedRealloc<char>(static_cast<char*>(data), size));
+  }
   virtual void RegisterPointer(void* data, size_t size) {
     total_mem_usage_.fetch_add(size, std::memory_order_relaxed);
   }
   virtual void UnregisterPointer(void* data, size_t size) {
     total_mem_usage_.fetch_sub(size, std::memory_order_relaxed);
-  }
 
   NodeArrayBufferAllocator* GetImpl() final { return this; }
   inline uint64_t total_mem_usage() const {
@@ -136,7 +142,7 @@ class DebuggingArrayBufferAllocator final : public NodeArrayBufferAllocator {
   void* Allocate(size_t size) override;
   void* AllocateUninitialized(size_t size) override;
   void Free(void* data, size_t size) override;
-  void* Reallocate(void* data, size_t old_size, size_t size) override;
+  void* ReallocateBuffer(void* data, size_t old_size, size_t size) override;
   void RegisterPointer(void* data, size_t size) override;
   void UnregisterPointer(void* data, size_t size) override;
 
