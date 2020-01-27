@@ -1091,7 +1091,8 @@ char* Environment::Reallocate(char* data, size_t old_size, size_t size) {
   // if reallocate directly.
   if (isolate_data()->uses_node_allocator()) {
     return static_cast<char*>(
-        isolate_data()->node_allocator()->Reallocate(data, old_size, size));
+        isolate_data()->node_allocator()->ReallocateBuffer(
+            data, old_size, size));
   }
   // Generic allocators do not provide a reallocation method; we need to
   // allocate a new chunk of memory and copy the data over.
