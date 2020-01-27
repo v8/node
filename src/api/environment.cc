@@ -117,11 +117,11 @@ void DebuggingArrayBufferAllocator::Free(void* data, size_t size) {
   NodeArrayBufferAllocator::Free(data, size);
 }
 
-void* DebuggingArrayBufferAllocator::Reallocate(void* data,
+void* DebuggingArrayBufferAllocator::ReallocateBuffer(void* data,
                                                 size_t old_size,
                                                 size_t size) {
   Mutex::ScopedLock lock(mutex_);
-  void* ret = NodeArrayBufferAllocator::Reallocate(data, old_size, size);
+  void* ret = NodeArrayBufferAllocator::ReallocateBuffer(data, old_size, size);
   if (ret == nullptr) {
     if (size == 0)  // i.e. equivalent to free().
       UnregisterPointerInternal(data, old_size);
