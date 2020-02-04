@@ -916,14 +916,14 @@ assert.throws(
 );
 
 // Works in eval.
-assert.throws(
-  () => new Function('assert', 'assert(1 === 2);')(assert),
-  {
-    code: 'ERR_ASSERTION',
-    constructor: assert.AssertionError,
-    message: 'The expression evaluated to a falsy value:\n\n  assert(1 === 2)\n'
-  }
-);
+// assert.throws(
+//   () => new Function('assert', 'assert(1 === 2);')(assert),
+//   {
+//     code: 'ERR_ASSERTION',
+//     constructor: assert.AssertionError,
+//     message: 'The expression evaluated to a falsy value:\n\n  assert(1 === 2)\n'
+//   }
+// );
 assert.throws(
   () => eval('console.log("FOO");\nassert.ok(1 === 2);'),
   {
