@@ -233,3 +233,16 @@ const deserializerTypeError =
   );
 }
 
+<<<<<<< HEAD
+=======
+{
+  // V8 is removing support for serializing wasm modules via the value
+  // serializer. Once this is complete (https://crrev.com/c/2013110), we can
+  // re-add this test:
+  // assert.throws(
+  //  () => v8.serialize(wasmModule), {
+  //    constructor: Error,
+  //    message: '#<Module> could not be cloned.'
+  //  });
+}
+>>>>>>> d8876bf649... [rebase] Run JS lint and add Call*OnForegroundThread functions
