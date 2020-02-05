@@ -3,7 +3,7 @@
 'use strict';
 
 const common = require('../common');
-const fixtures = require('../common/fixtures');
+// const fixtures = require('../common/fixtures');
 const { internalBinding } = require('internal/test/binding');
 const assert = require('assert');
 const v8 = require('v8');
@@ -12,7 +12,7 @@ const os = require('os');
 const circular = {};
 circular.circular = circular;
 
-const wasmModule = new WebAssembly.Module(fixtures.readSync('simple.wasm'));
+// const wasmModule = new WebAssembly.Module(fixtures.readSync('simple.wasm'));
 
 const objects = [
   { foo: 'bar' },
@@ -240,7 +240,7 @@ const deserializerTypeError =
   // V8 is removing support for serializing wasm modules via the value
   // serializer. Once this is complete (https://crrev.com/c/2013110), we can
   // re-add this test:
-  //assert.throws(
+  // assert.throws(
   //  () => v8.serialize(wasmModule), {
   //    constructor: Error,
   //    message: '#<Module> could not be cloned.'
