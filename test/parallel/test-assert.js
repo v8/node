@@ -921,7 +921,8 @@ assert.throws(
 //   {
 //     code: 'ERR_ASSERTION',
 //     constructor: assert.AssertionError,
-//     message: 'The expression evaluated to a falsy value:\n\n  assert(1 === 2)\n'
+//     message: 'The expression evaluated to a
+//        falsy value:\n\n  assert(1 === 2)\n'
 //   }
 // );
 assert.throws(

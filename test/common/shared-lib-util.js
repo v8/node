@@ -21,7 +21,7 @@ function addLibraryPath(env) {
   // For AIX.
   env.LIBPATH =
     (env.LIBPATH ? env.LIBPATH + path.delimiter : '') +
-    kExecPath
+    kExecPath;
   // For Mac OSX.
   env.DYLD_LIBRARY_PATH =
     (env.DYLD_LIBRARY_PATH ? env.DYLD_LIBRARY_PATH + path.delimiter : '') +
