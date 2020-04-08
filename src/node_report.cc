@@ -539,6 +539,7 @@ static void PrintResourceUsage(JSONWriter* writer) {
       (uv_hrtime() - node::per_process::node_start_time) / (NANOS_PER_SEC);
   if (uptime == 0) uptime = 1;  // avoid division by zero.
 
+#ifndef __FUCHSIA__
   // Process and current thread usage statistics
   uv_rusage_t rusage;
   writer->json_objectstart("resourceUsage");
@@ -563,6 +564,7 @@ static void PrintResourceUsage(JSONWriter* writer) {
     writer->json_objectend();
   }
   writer->json_objectend();
+#endif
 #ifdef RUSAGE_THREAD
   struct rusage stats;
   if (getrusage(RUSAGE_THREAD, &stats) == 0) {

@@ -346,6 +346,7 @@ static void GetUserInfo(const FunctionCallbackInfo<Value>& args) {
   args.GetReturnValue().Set(entry);
 }
 
+#ifndef __FUCHSIA__
 
 static void SetPriority(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
@@ -385,7 +386,7 @@ static void GetPriority(const FunctionCallbackInfo<Value>& args) {
 
   args.GetReturnValue().Set(priority);
 }
-
+#endif // !__FUCHSIA__
 
 void Initialize(Local<Object> target,
                 Local<Value> unused,
@@ -403,8 +404,10 @@ void Initialize(Local<Object> target,
   env->SetMethod(target, "getInterfaceAddresses", GetInterfaceAddresses);
   env->SetMethod(target, "getHomeDirectory", GetHomeDirectory);
   env->SetMethod(target, "getUserInfo", GetUserInfo);
+#ifndef __FUCHSIA__
   env->SetMethod(target, "setPriority", SetPriority);
   env->SetMethod(target, "getPriority", GetPriority);
+#endif
   target->Set(env->context(),
               FIXED_ONE_BYTE_STRING(env->isolate(), "isBigEndian"),
               Boolean::New(env->isolate(), IsBigEndian())).Check();
