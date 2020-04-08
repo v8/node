@@ -34,7 +34,7 @@
 # include <stdint.h>
 #endif
 
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(__FUCHSIA__)
 # include <sys/time.h>
 # include <sys/resource.h>  /* setrlimit() */
 #endif
