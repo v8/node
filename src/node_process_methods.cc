@@ -494,3 +494,4 @@ static void InitializeProcessMethods(Local<Object> target,
 
 NODE_MODULE_CONTEXT_AWARE_INTERNAL(process_methods,
                                    node::InitializeProcessMethods)
+
