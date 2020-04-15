@@ -69,7 +69,7 @@
 # include "uv/posix.h"
 #elif defined(__HAIKU__)
 # include "uv/posix.h"
-#elif defined(__FUCHSIA__)
+#elif defined(__Fuchsia__)
 # include "uv/posix.h"
 # include <zircon/types.h>
 #endif
@@ -129,7 +129,7 @@ typedef struct uv_buf_t {
 typedef int uv_file;
 typedef int uv_os_sock_t;
 typedef int uv_os_fd_t;
-#ifdef __FUCHSIA__
+#ifdef __Fuchsia__
 typedef zx_handle_t uv_pid_t;
 #else
 typedef pid_t uv_pid_t;

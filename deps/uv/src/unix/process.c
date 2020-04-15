@@ -33,7 +33,7 @@
 #include <fcntl.h>
 #include <poll.h>
 
-#ifdef __FUCHSIA__
+#ifdef __Fuchsia__
 # include <lib/fdio/spawn.h>
 # include <zircon/syscalls.h>
 #endif
@@ -50,7 +50,7 @@ extern char **environ;
 #endif
 
 uv_pid_t uv__waitpid(uv_pid_t pid, int *status, int options) {
-#ifdef __FUCHSIA__
+#ifdef __Fuchsia__
   // TODO(victor): ignoring options for now
   assert(options == 0);
 
@@ -515,7 +515,7 @@ int uv_spawn(uv_loop_t* loop,
   /* Acquire write lock to prevent opening new fds in worker threads */
   uv_rwlock_wrlock(&loop->cloexec_lock);
 
-#ifdef __FUCHSIA__
+#ifdef __Fuchsia__
   const char *executable_path;
   if (*options->file == 0) {
     executable_path = "/pkg/uv_tests_bin";

@@ -41,7 +41,7 @@
 #include <sys/time.h>
 #include <pthread.h>
 
-#ifdef __FUCHSIA__
+#ifdef __Fuchsia__
 # include <lib/fdio/spawn.h>
 # include <zircon/syscalls.h>
 #endif
@@ -100,7 +100,7 @@ int process_start(char* name, char* part, process_info_t* p, int is_helper) {
 
   n = 0;
 
-#ifndef __FUCHSIA__
+#ifndef __Fuchsia__
   const char* arg;
   arg = getenv("UV_USE_VALGRIND");
 
@@ -145,7 +145,7 @@ int process_start(char* name, char* part, process_info_t* p, int is_helper) {
   p->terminated = 0;
   p->status = 0;
 
-#ifdef __FUCHSIA__
+#ifdef __Fuchsia__
   zx_status_t status;
   
   status = fdio_spawn(ZX_HANDLE_INVALID, FDIO_SPAWN_CLONE_ALL, executable_path, args, &p->pid);
@@ -349,7 +349,7 @@ int process_wait(process_info_t* vec, int n, int timeout) {
     /* Timeout. Kill all the children. */
     for (i = 0; i < n; i++) {
       p = (process_info_t*)(vec + i * sizeof(process_info_t));
-#ifdef __FUCHSIA__
+#ifdef __Fuchsia__
       assert(0 && "kill not supported!");
 #else
       kill(p->pid, SIGTERM);
@@ -443,7 +443,7 @@ char* process_get_name(process_info_t *p) {
 
 /* Terminate process `p`. */
 int process_terminate(process_info_t *p) {
-#ifdef __FUCHSIA__
+#ifdef __Fuchsia__
   assert(0 && "kill not supported");
   return -1;
 #else

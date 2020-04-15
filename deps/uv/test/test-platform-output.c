@@ -66,7 +66,7 @@ TEST_IMPL(platform_output) {
   printf("uv_uptime: %f\n", uptime);
 #endif
 
-#ifndef __FUCHSIA__
+#ifndef __Fuchsia__
   uv_rusage_t rusage;
   err = uv_getrusage(&rusage);
   ASSERT(err == 0);

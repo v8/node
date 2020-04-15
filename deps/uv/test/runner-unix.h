@@ -25,13 +25,13 @@
 #include <sys/types.h>
 #include <stdio.h> /* FILE */
 
-#ifdef __FUCHSIA__
+#ifdef __Fuchsia__
 #include <zircon/types.h>
 #endif
 
 typedef struct {
   FILE* stdout_file;
-#ifdef __FUCHSIA__
+#ifdef __Fuchsia__
   zx_handle_t pid;
 #else
   pid_t pid;

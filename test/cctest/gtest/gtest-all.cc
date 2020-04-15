@@ -8472,8 +8472,7 @@ int FuchsiaDeathTest::Wait() {
   GTEST_DEATH_TEST_CHECK_(status_zx == ZX_OK);
   // Register to wait for the socket to be readable or closed.
   status_zx = stderr_socket_.wait_async(
-      port_, kSocketKey, ZX_SOCKET_READABLE | ZX_SOCKET_PEER_CLOSED,
-      ZX_WAIT_ASYNC_REPEATING);
+      port_, kSocketKey, ZX_SOCKET_READABLE | ZX_SOCKET_PEER_CLOSED, 0);
   GTEST_DEATH_TEST_CHECK_(status_zx == ZX_OK);
 
   bool process_terminated = false;
@@ -8574,7 +8573,7 @@ DeathTest::TestRole FuchsiaDeathTest::AssumeRole() {
   zx_status_t status;
   zx_handle_t child_pipe_handle;
   int child_pipe_fd;
-  status = fdio_pipe_half2(&child_pipe_fd, &child_pipe_handle);
+  status = fdio_pipe_half(&child_pipe_fd, &child_pipe_handle);
   GTEST_DEATH_TEST_CHECK_(status != ZX_OK);
   set_read_fd(child_pipe_fd);
 
@@ -8617,9 +8616,6 @@ DeathTest::TestRole FuchsiaDeathTest::AssumeRole() {
   // Create an exception port and attach it to the |child_job|, to allow
   // us to suppress the system default exception handler from firing.
   status = zx::port::create(0, &port_);
-  GTEST_DEATH_TEST_CHECK_(status == ZX_OK);
-  status = zx_task_bind_exception_port(
-      child_job, port_.get(), 0 /* key */, 0 /*options */);
   GTEST_DEATH_TEST_CHECK_(status == ZX_OK);
 
   // Spawn the child process.

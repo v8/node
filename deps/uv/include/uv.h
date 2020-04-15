@@ -1175,7 +1175,7 @@ typedef struct {
    uint64_t ru_nivcsw;    /* involuntary context switches */
 } uv_rusage_t;
 
-#ifndef __FUCHSIA__
+#ifndef __Fuchsia__
 UV_EXTERN int uv_getrusage(uv_rusage_t* rusage);
 #endif
 
@@ -1193,7 +1193,7 @@ UV_EXTERN uv_pid_t uv_os_getppid(void);
 #define UV_PRIORITY_HIGH -14
 #define UV_PRIORITY_HIGHEST -20
 
-#ifndef __FUCHSIA__
+#ifndef __Fuchsia__
 UV_EXTERN int uv_os_getpriority(uv_pid_t pid, int* priority);
 UV_EXTERN int uv_os_setpriority(uv_pid_t pid, int priority);
 #endif

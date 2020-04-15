@@ -89,7 +89,7 @@ static void Chdir(const FunctionCallbackInfo<Value>& args) {
   }
 }
 
-#ifndef __FUCHSIA__
+#ifndef __Fuchsia__
 // CPUUsage use libuv's uv_getrusage() this-process resource usage accessor,
 // to access ru_utime (user CPU time used) and ru_stime (system CPU time used),
 // which are uv_timeval_t structs (long tv_sec, long tv_usec).
@@ -297,7 +297,7 @@ void GetActiveHandles(const FunctionCallbackInfo<Value>& args) {
       Array::New(env->isolate(), handle_v.data(), handle_v.size()));
 }
 
-#ifndef __FUCHSIA__
+#ifndef __Fuchsia__
 static void ResourceUsage(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
 
@@ -470,7 +470,7 @@ static void InitializeProcessMethods(Local<Object> target,
   env->SetMethod(target, "_rawDebug", RawDebug);
   env->SetMethod(target, "memoryUsage", MemoryUsage);
   
-  #ifndef __FUCHSIA__
+  #ifndef __Fuchsia__
   env->SetMethod(target, "cpuUsage", CPUUsage);
   env->SetMethod(target, "resourceUsage", ResourceUsage);
   #endif
