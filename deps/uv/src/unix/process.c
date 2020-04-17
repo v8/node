@@ -274,6 +274,7 @@ static void uv__process_close_stream(uv_stdio_container_t* container) {
 }
 
 
+#ifndef __Fuchsia__
 static void uv__write_int(int fd, int val) {
   ssize_t n;
 
@@ -286,9 +287,10 @@ static void uv__write_int(int fd, int val) {
 
   assert(n == sizeof(val));
 }
+#endif
 
 
-#if !(defined(__APPLE__) && (TARGET_OS_TV || TARGET_OS_WATCH))
+#if !(defined(__APPLE__) && (TARGET_OS_TV || TARGET_OS_WATCH)) && !defined(__Fuchsia__)
 /* execvp is marked __WATCHOS_PROHIBITED __TVOS_PROHIBITED, so must be
  * avoided. Since this isn't called on those targets, the function
  * doesn't even need to be defined for them.
@@ -518,7 +520,8 @@ int uv_spawn(uv_loop_t* loop,
 #ifdef __Fuchsia__
   const char *executable_path;
   if (*options->file == 0) {
-    executable_path = "/pkg/uv_tests_bin";
+    // TODO(victor): This is not necessarilly the name of the process!!
+    executable_path = "/pkg/uv_tests";
   } else {
     executable_path = options->file;
   }
