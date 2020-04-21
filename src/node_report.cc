@@ -11,7 +11,9 @@
 #ifdef _WIN32
 #include <Windows.h>
 #else  // !_WIN32
+#ifndef __Fuchsia__
 #include <sys/resource.h>
+#endif
 #include <cxxabi.h>
 #include <dlfcn.h>
 #endif
@@ -612,7 +614,7 @@ static void PrintSystemInformation(JSONWriter* writer) {
 
   writer->json_objectend();
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__Fuchsia__)
   static struct {
     const char* description;
     int id;
@@ -659,7 +661,7 @@ static void PrintSystemInformation(JSONWriter* writer) {
     }
   }
   writer->json_objectend();
-#endif  // _WIN32
+#endif  // _WIN32 && __Fuchsia__
 
   PrintLoadedLibraries(writer);
 }

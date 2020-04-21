@@ -25,7 +25,9 @@
 typedef int mode_t;
 #else
 #include <pthread.h>
+#if !defined(__Fuchsia__)
 #include <sys/resource.h>  // getrlimit, setrlimit
+#endif
 #include <termios.h>  // tcgetattr, tcsetattr
 #endif
 

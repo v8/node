@@ -100,7 +100,9 @@
 #define STDIN_FILENO 0
 #else
 #include <pthread.h>
+#ifndef __Fuchsia__
 #include <sys/resource.h>  // getrlimit, setrlimit
+#endif
 #include <termios.h>       // tcgetattr, tcsetattr
 #include <unistd.h>        // STDIN_FILENO, STDERR_FILENO
 #endif
@@ -608,6 +610,7 @@ inline void PlatformInit() {
   V8::EnableWebAssemblyTrapHandler(false);
 #endif  // NODE_USE_V8_WASM_TRAP_HANDLER
 
+#ifndef __Fuchsia__
   // Raise the open file descriptor limit.
   struct rlimit lim;
   if (getrlimit(RLIMIT_NOFILE, &lim) == 0 && lim.rlim_cur != lim.rlim_max) {
@@ -628,6 +631,7 @@ inline void PlatformInit() {
       }
     } while (min + 1 < max);
   }
+#endif  // __Fuchsia__
 #endif  // __POSIX__
 #ifdef _WIN32
   for (int fd = 0; fd <= 2; ++fd) {
