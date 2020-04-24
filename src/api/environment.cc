@@ -205,6 +205,7 @@ void FreeArrayBufferAllocator(ArrayBufferAllocator* allocator) {
 }
 
 void SetIsolateCreateParamsForNode(Isolate::CreateParams* params) {
+#ifndef __Fuchsia__
   const uint64_t constrained_memory = uv_get_constrained_memory();
   const uint64_t total_memory = constrained_memory > 0 ?
       std::min(uv_get_total_memory(), constrained_memory) :
@@ -215,6 +216,7 @@ void SetIsolateCreateParamsForNode(Isolate::CreateParams* params) {
     // heap based on the actual physical memory.
     params->constraints.ConfigureDefaults(total_memory, 0);
   }
+#endif
 }
 
 void SetIsolateErrorHandlers(v8::Isolate* isolate, const IsolateSettings& s) {
