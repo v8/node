@@ -20,6 +20,8 @@ test-zlib-unused-weak: SKIP
 test-finalization-group-error: SKIP
 test-finalization-group-regular-gc: SKIP
 test-finalization-group: SKIP
+# Skip flaky test
+test-code-cache: SKIP
 
 [$system==win32]
 
