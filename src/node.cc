@@ -105,7 +105,9 @@
 #define STDIN_FILENO 0
 #else
 #include <pthread.h>
+#ifndef __Fuchsia__
 #include <sys/resource.h>  // getrlimit, setrlimit
+#endif
 #include <termios.h>       // tcgetattr, tcsetattr
 #include <unistd.h>        // STDIN_FILENO, STDERR_FILENO
 #endif
@@ -544,7 +546,7 @@ void TrapWebAssemblyOrContinue(int signo, siginfo_t* info, void* ucontext) {
 #endif  // defined(_WIN32)
 #endif  // NODE_USE_V8_WASM_TRAP_HANDLER
 
-#ifdef __POSIX__
+#if defined(__POSIX__) && !defined(__Fuchsia__)
 void RegisterSignalHandler(int signal,
                            sigaction_cb handler,
                            bool reset_handler) {
@@ -588,6 +590,10 @@ inline void PlatformInit() {
   // Make sure file descriptors 0-2 are valid before we start logging anything.
   for (auto& s : stdio) {
     const int fd = &s - stdio;
+#ifdef __Fuchsia__
+    // In fuchsia stdin is not readily available.
+    if (fd == 0) continue;
+#endif
     if (fstat(fd, &s.stat) == 0)
       continue;
     // Anything but EBADF means something is seriously wrong.  We don't
@@ -605,7 +611,7 @@ inline void PlatformInit() {
 #endif  // HAVE_INSPECTOR
 
   // TODO(addaleax): NODE_SHARED_MODE does not really make sense here.
-#ifndef NODE_SHARED_MODE
+#if !defined(NODE_SHARED_MODE) && !defined(__Fuchsia__)
   // Restore signal dispositions, the parent process may have changed them.
   struct sigaction act;
   memset(&act, 0, sizeof(act));
@@ -627,6 +633,10 @@ inline void PlatformInit() {
   for (auto& s : stdio) {
     const int fd = &s - stdio;
     int err;
+#ifdef __Fuchsia__
+    // In fuchsia stdin is not readily available.
+    if (fd == 0) continue;
+#endif
 
     do
       s.flags = fcntl(fd, F_GETFL);
@@ -642,6 +652,7 @@ inline void PlatformInit() {
     CHECK_EQ(err, 0);
   }
 
+#ifndef __Fuchsia__
   RegisterSignalHandler(SIGINT, SignalExit, true);
   RegisterSignalHandler(SIGTERM, SignalExit, true);
 
@@ -688,6 +699,7 @@ inline void PlatformInit() {
       }
     } while (min + 1 < max);
   }
+#endif  // __Fuchsia__
 #endif  // __POSIX__
 #ifdef _WIN32
   for (int fd = 0; fd <= 2; ++fd) {
@@ -711,6 +723,11 @@ void ResetStdio() {
 #ifdef __POSIX__
   for (auto& s : stdio) {
     const int fd = &s - stdio;
+
+#ifdef __Fuchsia__
+    // In fuchsia stdin is not readily available.
+    if (fd == 0) continue;
+#endif
 
     struct stat tmp;
     if (-1 == fstat(fd, &tmp)) {
