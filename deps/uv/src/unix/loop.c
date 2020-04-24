@@ -30,7 +30,7 @@
 int uv_loop_init(uv_loop_t* loop) {
   void* saved_data;
   int err;
-
+  
 
   saved_data = loop->data;
   memset(loop, 0, sizeof(*loop));
