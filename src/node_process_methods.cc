@@ -493,11 +493,11 @@ class FastHrtime : public BaseObject {
   }
 
   static void FastNumber(v8::ApiObject receiver) {
-    NumperImpl(FromV8ApiObject(receiver));
+    NumberImpl(FromV8ApiObject(receiver));
   }
 
   static void SlowNumber(const FunctionCallbackInfo<Value>& args) {
-    NumperImpl(FromJSObject<FastHrtime>(args.Holder()));
+    NumberImpl(FromJSObject<FastHrtime>(args.Holder()));
   }
 
   static void BigIntImpl(FastHrtime* receiver) {
