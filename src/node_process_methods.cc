@@ -469,7 +469,6 @@ class FastHrtime : public BaseObject {
   SET_MEMORY_INFO_NAME(FastHrtime)
   SET_SELF_SIZE(FastHrtime)
 
-  template <typename T>
   static FastHrtime* FromV8ApiObject(v8::ApiObject api_object) {
     v8::Object* v8_object = reinterpret_cast<v8::Object*>(&api_object);
     return static_cast<FastHrtime*>(
