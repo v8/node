@@ -469,6 +469,13 @@ class FastHrtime : public BaseObject {
   SET_MEMORY_INFO_NAME(FastHrtime)
   SET_SELF_SIZE(FastHrtime)
 
+  template <typename T>
+  static FastHrtime* FromV8ApiObject(v8::ApiObject api_object) {
+    v8::Object* v8_object = reinterpret_cast<v8::Object*>(&api_object);
+    return static_cast<FastHrtime*>(
+        v8_object->GetAlignedPointerFromInternalField(BaseObject::kSlot));
+  }
+
   // This is the legacy version of hrtime before BigInt was introduced in
   // JavaScript.
   // The value returned by uv_hrtime() is a 64-bit int representing nanoseconds,
@@ -478,10 +485,7 @@ class FastHrtime : public BaseObject {
   // broken into the upper/lower 32 bits to be converted back in JS,
   // because there is no Uint64Array in JS.
   // The third entry contains the remaining nanosecond part of the value.
-  static void FastNumber(v8::ApiObject receiver_value) {
-    v8::Object* receiver_obj = reinterpret_cast<v8::Object*>(&receiver_value);
-    FastHrtime* receiver = static_cast<FastHrtime*>(
-        receiver_obj->GetAlignedPointerFromInternalField(BaseObject::kSlot));
+  static void NumberImpl(FastHrtime* receiver) {
     uint64_t t = uv_hrtime();
     uint32_t* fields = static_cast<uint32_t*>(receiver->backing_store_->Data());
     fields[0] = (t / NANOS_PER_SEC) >> 32;
@@ -489,21 +493,26 @@ class FastHrtime : public BaseObject {
     fields[2] = t % NANOS_PER_SEC;
   }
 
-  static void SlowNumber(const FunctionCallbackInfo<Value>& args) {
-    FastNumber(FromJSObject<FastHrtime>(args.Holder()));
+  static void FastNumber(v8::ApiObject receiver) {
+    NumperImpl(FromV8ApiObject(receiver));
   }
 
-  static void FastBigInt(v8::ApiObject receiver_value) {
-    v8::Object* receiver_obj = reinterpret_cast<v8::Object*>(&receiver_value);
-    FastHrtime* receiver = static_cast<FastHrtime*>(
-        receiver_obj->GetAlignedPointerFromInternalField(BaseObject::kSlot));
+  static void SlowNumber(const FunctionCallbackInfo<Value>& args) {
+    NumperImpl(FromJSObject<FastHrtime>(args.Holder()));
+  }
+
+  static void BigIntImpl(FastHrtime* receiver) {
     uint64_t t = uv_hrtime();
     uint64_t* fields = static_cast<uint64_t*>(receiver->backing_store_->Data());
     fields[0] = t;
   }
 
+  static void FastBigInt(v8::ApiObject receiver) {
+    BigIntImpl(FromV8ApiObject(receiver));
+  }
+
   static void SlowBigInt(const FunctionCallbackInfo<Value>& args) {
-    FastBigInt(FromJSObject<FastHrtime>(args.Holder()));
+    BigIntImpl(FromJSObject<FastHrtime>(args.Holder()));
   }
 
   v8::Global<ArrayBuffer> array_buffer_;
