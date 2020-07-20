@@ -478,7 +478,10 @@ class FastHrtime : public BaseObject {
   // broken into the upper/lower 32 bits to be converted back in JS,
   // because there is no Uint64Array in JS.
   // The third entry contains the remaining nanosecond part of the value.
-  static void FastNumber(FastHrtime* receiver) {
+  static void FastNumber(v8::ApiObject receiver_value) {
+    v8::Object* receiver_obj = reinterpret_cast<v8::Object*>(&receiver_value);
+    FastHrtime* receiver = static_cast<FastHrtime*>(
+        receiver_obj->GetAlignedPointerFromInternalField(BaseObject::kSlot));
     uint64_t t = uv_hrtime();
     uint32_t* fields = static_cast<uint32_t*>(receiver->backing_store_->Data());
     fields[0] = (t / NANOS_PER_SEC) >> 32;
@@ -490,7 +493,10 @@ class FastHrtime : public BaseObject {
     FastNumber(FromJSObject<FastHrtime>(args.Holder()));
   }
 
-  static void FastBigInt(FastHrtime* receiver) {
+  static void FastBigInt(v8::ApiObject receiver_value) {
+    v8::Object* receiver_obj = reinterpret_cast<v8::Object*>(&receiver_value);
+    FastHrtime* receiver = static_cast<FastHrtime*>(
+        receiver_obj->GetAlignedPointerFromInternalField(BaseObject::kSlot));
     uint64_t t = uv_hrtime();
     uint64_t* fields = static_cast<uint64_t*>(receiver->backing_store_->Data());
     fields[0] = t;
@@ -543,17 +549,6 @@ static void InitializeProcessMethods(Local<Object> target,
 }
 
 }  // namespace node
-
-namespace v8 {
-template <>
-class WrapperTraits<node::FastHrtime> {
- public:
-  static const void* GetTypeInfo() {
-    static const int tag = 0;
-    return reinterpret_cast<const void*>(&tag);
-  }
-};
-}  // namespace v8
 
 NODE_MODULE_CONTEXT_AWARE_INTERNAL(process_methods,
                                    node::InitializeProcessMethods)
