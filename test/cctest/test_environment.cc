@@ -74,7 +74,7 @@ class RedirectStdErr {
     fflush(stderr);
     fgetpos(stderr, &pos_);
     fd_ = dup(fileno(stderr));
-    freopen(filename_, "w", stderr);
+    (void)freopen(filename_, "w", stderr);
   }
 
   ~RedirectStdErr() {
