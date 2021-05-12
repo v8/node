@@ -5,3 +5,7 @@ prefix inspector-cli
 # sample-test                        : PASS,FLAKY
 
 [true] # This section applies to all platforms
+
+# Tests failing with https://crrev.com/c/2874662
+test-inspector-cli-address: SKIP
+test-inspector-cli-pid: SKIP
