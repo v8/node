@@ -39,6 +39,9 @@ test-fs-read-stream-concurrent-reads: PASS, FLAKY
 # Temporarily skip for https://crrev.com/c/2960211
 test-fs-read: SKIP
 
+# Temporarily skip for https://crrev.com/c/2974772
+test-util-inspect: SKIP
+
 [$system==win32]
 
 # Until V8 provides a better way to check for flag mismatch without
