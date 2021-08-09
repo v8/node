@@ -28,7 +28,9 @@
 typedef int mode_t;
 #else
 #include <pthread.h>
+#if !defined(__Fuchsia__)
 #include <sys/resource.h>  // getrlimit, setrlimit
+#endif
 #include <termios.h>  // tcgetattr, tcsetattr
 #endif
 
@@ -99,6 +101,7 @@ inline Local<ArrayBuffer> get_fields_array_buffer(
   return arr->Buffer();
 }
 
+#ifndef __Fuchsia__
 // CPUUsage use libuv's uv_getrusage() this-process resource usage accessor,
 // to access ru_utime (user CPU time used) and ru_stime (system CPU time used),
 // which are uv_timeval_t structs (long tv_sec, long tv_usec).
@@ -121,6 +124,7 @@ static void CPUUsage(const FunctionCallbackInfo<Value>& args) {
   fields[0] = MICROS_PER_SEC * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
   fields[1] = MICROS_PER_SEC * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
 }
+#endif
 
 static void Cwd(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
@@ -151,7 +155,7 @@ static void Kill(const FunctionCallbackInfo<Value>& args) {
   int sig;
   if (!args[1]->Int32Value(context).To(&sig)) return;
 
-  uv_pid_t own_pid = uv_os_getpid();
+  int own_pid = uv_os_getpid();
   if (sig > 0 &&
       (pid == 0 || pid == -1 || pid == own_pid || pid == -own_pid) &&
       !HasSignalJSHandler(sig)) {
@@ -272,6 +276,7 @@ void GetActiveHandles(const FunctionCallbackInfo<Value>& args) {
       Array::New(env->isolate(), handle_v.data(), handle_v.size()));
 }
 
+#ifndef __Fuchsia__
 static void ResourceUsage(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
 
@@ -300,6 +305,7 @@ static void ResourceUsage(const FunctionCallbackInfo<Value>& args) {
   fields[14] = static_cast<double>(rusage.ru_nvcsw);
   fields[15] = static_cast<double>(rusage.ru_nivcsw);
 }
+#endif
 
 #ifdef __POSIX__
 static void DebugProcess(const FunctionCallbackInfo<Value>& args) {
@@ -543,8 +549,11 @@ static void Initialize(Local<Object> target,
   env->SetMethod(target, "_rawDebug", RawDebug);
   env->SetMethod(target, "memoryUsage", MemoryUsage);
   env->SetMethod(target, "rss", Rss);
+  
+  #ifndef __Fuchsia__
   env->SetMethod(target, "cpuUsage", CPUUsage);
   env->SetMethod(target, "resourceUsage", ResourceUsage);
+  #endif
 
   env->SetMethod(target, "_getActiveRequests", GetActiveRequests);
   env->SetMethod(target, "_getActiveHandles", GetActiveHandles);
@@ -570,8 +579,10 @@ void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(RawDebug);
   registry->Register(MemoryUsage);
   registry->Register(Rss);
+#ifndef __Fuchsia__
   registry->Register(CPUUsage);
   registry->Register(ResourceUsage);
+#endif
 
   registry->Register(GetActiveRequests);
   registry->Register(GetActiveHandles);
