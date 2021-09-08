@@ -13,7 +13,7 @@
 
 Node.js is an open-source, cross-platform, JavaScript runtime environment. It
 executes JavaScript code outside of a browser. For more information on using
-Node.js, see the [Node.js Website][https://nodejs.org/en/].
+Node.js, see the [Node.js Website](https://nodejs.org/en/).
 
 This is the official [V8](https://github.com/v8/v8/wiki) fork of [Node.js](https://github.com/nodejs/node).
 
