@@ -45,6 +45,8 @@ test-util-inspect: SKIP
 # Temporarily skip for crrev.com/c/3106647
 test-repl: SKIP
 
+test-v8-stats: SKIP
+
 [$system==win32]
 
 # Until V8 provides a better way to check for flag mismatch without
