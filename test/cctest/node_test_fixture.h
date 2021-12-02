@@ -100,7 +100,6 @@ class NodeZeroIsolateTestFixture : public ::testing::Test {
   }
 
   void SetUp() override {
-    printf("SetUp\n");
     allocator = ArrayBufferUniquePtr(node::CreateArrayBufferAllocator(),
                                      &node::FreeArrayBufferAllocator);
   }
