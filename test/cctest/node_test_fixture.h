@@ -92,7 +92,6 @@ class NodeZeroIsolateTestFixture : public ::testing::Test {
   }
 
   static void TearDownTestCase() {
-    platform->Shutdown();
     while (uv_loop_alive(&current_loop)) {
       uv_run(&current_loop, UV_RUN_ONCE);
     }
