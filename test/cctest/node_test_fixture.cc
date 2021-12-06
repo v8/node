@@ -22,7 +22,8 @@ void NodeTestEnvironment::SetUp() {
 #ifdef V8_VIRTUAL_MEMORY_CAGE
   ASSERT_TRUE(v8::V8::InitializeVirtualMemoryCage());
 #endif
-  cppgc::InitializeProcess(NodeZeroIsolateTestFixture::platform->GetPageAllocator());
+  cppgc::InitializeProcess(
+      NodeZeroIsolateTestFixture::platform->GetPageAllocator());
   v8::V8::Initialize();
 }
 
