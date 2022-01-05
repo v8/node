@@ -196,6 +196,7 @@ void FreeArrayBufferAllocator(ArrayBufferAllocator* allocator) {
 }
 
 void SetIsolateCreateParamsForNode(Isolate::CreateParams* params) {
+#ifndef __Fuchsia__
   const uint64_t constrained_memory = uv_get_constrained_memory();
   const uint64_t total_memory = constrained_memory > 0 ?
       std::min(uv_get_total_memory(), constrained_memory) :
@@ -212,6 +213,8 @@ void SetIsolateCreateParamsForNode(Isolate::CreateParams* params) {
 
 #ifdef NODE_ENABLE_VTUNE_PROFILING
   params->code_event_handler = vTune::GetVtuneCodeEventHandler();
+#endif
+
 #endif
 }
 
