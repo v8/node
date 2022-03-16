@@ -47,9 +47,6 @@ test-trace-events-v8: SKIP
 # Temporarily skip for https://crrev.com/c/2974772
 test-util-inspect: SKIP
 
-# Temporarily skip for crrev.com/c/3106647
-test-repl: SKIP
-
 # Skip a test which prevents updating the ValueSerialiser format
 test-v8-serdes: SKIP
 
