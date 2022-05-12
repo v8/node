@@ -459,6 +459,7 @@ void ContextifyContext::PropertySetterCallback(
   }
 
   USE(ctx->sandbox()->Set(context, property, value));
+  args.GetReturnValue().Set(true);
 }
 
 // static
