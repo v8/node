@@ -29,6 +29,8 @@ int main(int argc, char* argv[]) {
 
   v8::V8::SetFlagsFromString("--random_seed=42");
   v8::V8::SetFlagsFromString("--harmony-import-assertions");
+  // Do not freeze flags so we can later reset the random seed.
+  v8::V8::SetFlagsFromString("--no-freeze-flags-after-init");
 
   if (argc < 2) {
     std::cerr << "Usage: " << argv[0] << " <path/to/output.cc>\n";
