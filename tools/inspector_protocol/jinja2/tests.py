@@ -10,9 +10,7 @@
 """
 import operator
 import re
-# Commenting for PY2 compatibility.
-# from collections.abc import Mapping
-from collections import Mapping
+from collections.abc import Mapping
 from jinja2.runtime import Undefined
 from jinja2._compat import text_type, string_types, integer_types
 import decimal
