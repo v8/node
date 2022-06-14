@@ -577,7 +577,7 @@ static void Initialize(Local<Object> target,
   env->SetMethod(target, "_rawDebug", RawDebug);
   env->SetMethod(target, "memoryUsage", MemoryUsage);
   env->SetMethod(target, "rss", Rss);
-  
+ 
   #ifndef __Fuchsia__
   env->SetMethod(target, "cpuUsage", CPUUsage);
   env->SetMethod(target, "resourceUsage", ResourceUsage);

@@ -384,7 +384,7 @@ static void GetPriority(const FunctionCallbackInfo<Value>& args) {
 
   args.GetReturnValue().Set(priority);
 }
-#endif // !__Fuchsia__
+#endif  // !__Fuchsia__
 
 void Initialize(Local<Object> target,
                 Local<Value> unused,
