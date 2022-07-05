@@ -94,3 +94,7 @@ test-http-server-unconsume: PASS, FLAKY
 test-http-upgrade-advertise: PASS, FLAKY
 test-tls-client-mindhsize: PASS, FLAKY
 test-tls-write-error: PASS, FLAKY
+# https://github.com/nodejs/node/issues/43676
+parallel/test-repl-pretty-stack: SKIP
+parallel/test-repl-pretty-custom-stack: SKIP
+
