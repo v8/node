@@ -28,6 +28,8 @@ test-tick-processor-arguments: SKIP
 test-child-process-stdio-overlapped: SKIP
 # https://github.com/nodejs/node/issues/42458
 test-repl-mode: SKIP
+# Temporarily disabled to land https://crrev.com/c/3799431
+test-repl: SKIP
 
 # Temporarily skip for https://crrev.com/c/2974772
 test-util-inspect: SKIP
