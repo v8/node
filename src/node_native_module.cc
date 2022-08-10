@@ -284,13 +284,13 @@ MaybeLocal<Function> NativeModuleLoader::LookupAndCompile(
                      has_cache ? "with" : "without");
 
   MaybeLocal<Function> maybe_fun =
-      ScriptCompiler::CompileFunctionInContext(context,
-                                               &script_source,
-                                               parameters->size(),
-                                               parameters->data(),
-                                               0,
-                                               nullptr,
-                                               options);
+      ScriptCompiler::CompileFunction(context,
+                                      &script_source,
+                                      parameters->size(),
+                                      parameters->data(),
+                                      0,
+                                      nullptr,
+                                      options);
 
   // This could fail when there are early errors in the native modules,
   // e.g. the syntax errors
