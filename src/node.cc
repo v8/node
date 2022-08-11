@@ -636,7 +636,6 @@ static void PlatformInit(ProcessInitializationFlags::Flags flags) {
       } while (min + 1 < max);
     }
   }
-#endif  // __Fuchsia__
 #endif  // __POSIX__
 #ifdef _WIN32
   if (!(flags & ProcessInitializationFlags::kNoStdioInitialization)) {
