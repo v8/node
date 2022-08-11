@@ -39,6 +39,9 @@ test-v8-serdes: SKIP
 
 test-v8-stats: SKIP
 
+# Node is built without embedded snapshot.
+test-snapshot-basic: SKIP
+
 # https://github.com/nodejs/node/issues/43676
 test-repl-pretty-stack: SKIP
 test-repl-pretty-custom-stack: SKIP
