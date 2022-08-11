@@ -41,6 +41,14 @@ test-v8-stats: SKIP
 
 # Node is built without embedded snapshot.
 test-snapshot-basic: SKIP
+test-snapshot-api: SKIP
+test-snapshot-cjs-main: SKIP
+test-snapshot-eval: SKIP
+test-snapshot-gzip: SKIP
+test-snapshot-incompatible: SKIP
+test-snapshot-umd: SKIP
+test-snapshot-warning: SKIP
+test-snapshot-typescript: SKIP
 
 # https://github.com/nodejs/node/issues/43676
 test-repl-pretty-stack: SKIP
