@@ -10,6 +10,11 @@ zlib-binding/test: SKIP
 # Async-cleaup-hook fails.
 async-cleanup-hook/test: SKIP
 
+# Legacy openssl provider seems to not be available per default without setting
+# up the environment (OPENSSL_MODULES).
+openssl-providers/test-legacy-provider-config: SKIP
+openssl-providers/test-legacy-provider-option: SKIP
+
 # [$arch==arm]
 # https://github.com/nodejs/node/issues/30786
 # openssl-binding/test: PASS,FLAKY
