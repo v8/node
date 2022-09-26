@@ -15,11 +15,10 @@ async-cleanup-hook/test: SKIP
 openssl-providers/test-legacy-provider-config: SKIP
 openssl-providers/test-legacy-provider-option: SKIP
 
-# [$arch==arm]
-# https://github.com/nodejs/node/issues/30786
-# openssl-binding/test: PASS,FLAKY
-# https://bugs.chromium.org/p/v8/issues/detail?id=11550
+# Skipping due to ABI issues. See https://crbug.com/v8/13330
+# For arm see also https://github.com/nodejs/node/issues/30786
 openssl-binding/test: SKIP
+report-api/test: SKIP
 
 [$system==ibmi]
 openssl-binding/test: SKIP
