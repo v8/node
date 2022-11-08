@@ -1110,6 +1110,7 @@ ExitCode SnapshotBuilder::Generate(SnapshotData* out,
           : SnapshotMetadata::Type::kDefault;
 
   {
+    Isolate::Scope isolate_scope(isolate);
     HandleScope scope(isolate);
     TryCatch bootstrapCatch(isolate);
 
