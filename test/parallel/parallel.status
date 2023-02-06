@@ -54,6 +54,11 @@ test-snapshot-typescript: SKIP
 test-repl-pretty-stack: SKIP
 test-repl-pretty-custom-stack: SKIP
 
+# Requires shareable builtins.
+test-process-versions: SKIP
+
+test-crypto-no-algorithm: SKIP
+
 [$system==win32]
 # https://github.com/nodejs/node/issues/50295
 test-cli-node-options: PASS, FLAKY
