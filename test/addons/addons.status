@@ -19,6 +19,8 @@ openssl-providers/test-legacy-provider-option: SKIP
 # For arm see also https://github.com/nodejs/node/issues/30786
 openssl-binding/test: SKIP
 report-api/test: SKIP
+new-isolate-addon/test: SKIP
+new-isolate-addon/test-nonodesnapshot: SKIP
 
 [$system==ibmi]
 openssl-binding/test: SKIP
