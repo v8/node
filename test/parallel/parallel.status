@@ -36,8 +36,6 @@ test-child-process-stdio-overlapped: SKIP
 test-repl-mode: SKIP
 # Temporarily disabled to land https://crrev.com/c/3799431
 test-repl: SKIP
-# Temporarily disabled to land https://crrev.com/c/4237675
-test-intl: SKIP
 
 # Temporarily skip for https://crrev.com/c/2974772
 test-util-inspect: SKIP
