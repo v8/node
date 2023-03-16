@@ -56,6 +56,8 @@ test-v8-serdes: SKIP
 
 test-v8-stats: SKIP
 
+test-strace-openat-openssl: SKIP
+
 # Node is built without embedded snapshot.
 test-snapshot-basic: SKIP
 test-snapshot-api: SKIP
