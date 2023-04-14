@@ -31,6 +31,9 @@ test-repl-mode: SKIP
 # Temporarily disabled to land https://crrev.com/c/3799431
 test-repl: SKIP
 
+# Skip test depending on always-true removed --harmony-atomics flag
+test-worker-no-atomics: SKIP
+
 # Temporarily skip for https://crrev.com/c/2974772
 test-util-inspect: SKIP
 
