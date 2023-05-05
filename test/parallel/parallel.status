@@ -37,6 +37,8 @@ test-child-process-stdio-overlapped: SKIP
 test-repl-mode: SKIP
 # Temporarily disabled to land https://crrev.com/c/3799431
 test-repl: SKIP
+# Temporarily disabled to land https://crrev.com/c/4507375
+test-fs-write: SKIP
 
 # https://github.com/nodejs/node/issues/51862
 test-fs-read-stream-concurrent-reads: PASS, FLAKY
