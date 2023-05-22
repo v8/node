@@ -169,6 +169,9 @@ test-inspector-network-websocket: SKIP
 test-tls-set-default-ca-certificates-append-fetch: SKIP
 test-tls-set-default-ca-certificates-reset-fetch: SKIP
 test-inspector-invalid-protocol: SKIP
+# https://github.com/nodejs/node/issues/43676
+test-repl-pretty-stack: SKIP
+test-repl-pretty-custom-stack: SKIP
 
 [$arch==loong64]
 # https://github.com/nodejs/node/issues/51662
