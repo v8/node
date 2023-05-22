@@ -165,10 +165,10 @@ def JS2C(source_files, target):
   registrations = []
 
   for filename in source_files['.js']:
-    AddModule(filename, definitions, initializers)
+    AddModule(filename, definitions, initializers, registrations)
   # TODO(victorgomes): mjs tools are removed from node.gyp
   # for filename in source_files['.mjs']:
-  #   AddModule(filename, definitions, initializers)
+  #   AddModule(filename, definitions, initializers, registrations)
 
   config_def = handle_config_gypi(source_files['config.gypi'])
   definitions.append(config_def)

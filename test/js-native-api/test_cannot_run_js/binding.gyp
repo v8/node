@@ -16,7 +16,7 @@
         "entry_point.c",
         "test_cannot_run_js.c"
       ],
-      "defines": [ "NAPI_EXPERIMENTAL" ],
+      "defines": [  ],
       "dependencies": [ "copy_entry_point" ],
     },
     {
