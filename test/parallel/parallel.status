@@ -183,7 +183,9 @@ test-inspector-network-content-type: SKIP
 test-fetch:  SKIP
 test-without-async-context-frame: SKIP
 test-process-cpuUsage: PASS, FLAKY
-
+# https://github.com/nodejs/node/issues/43676
+test-repl-pretty-stack: SKIP
+test-repl-pretty-custom-stack: SKIP
 
 [$asan==on]
 # https://github.com/nodejs/node/issues/39655
