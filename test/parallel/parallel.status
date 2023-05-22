@@ -37,6 +37,10 @@ test-v8-serdes: SKIP
 
 test-v8-stats: SKIP
 
+# https://github.com/nodejs/node/issues/43676
+test-repl-pretty-stack: SKIP
+test-repl-pretty-custom-stack: SKIP
+
 [$system==win32]
 # https://github.com/nodejs/node/issues/50295
 test-cli-node-options: PASS, FLAKY
