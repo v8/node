@@ -167,6 +167,8 @@ test-http-pipeline-flood: SKIP
 # https://github.com/nodejs/node/issues/43676
 parallel/test-repl-pretty-stack: SKIP
 parallel/test-repl-pretty-custom-stack: SKIP
+test-repl-pretty-stack: SKIP
+test-repl-pretty-custom-stack: SKIP
 
 [$asan==on]
 # https://github.com/nodejs/node/issues/39655
