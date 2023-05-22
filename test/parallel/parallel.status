@@ -126,6 +126,9 @@ test-tls-client-mindhsize: PASS, FLAKY
 test-tls-write-error: PASS, FLAKY
 # https://github.com/nodejs/node/issues/48047
 test-http-pipeline-flood: SKIP
+# https://github.com/nodejs/node/issues/43676
+parallel/test-repl-pretty-stack: SKIP
+parallel/test-repl-pretty-custom-stack: SKIP
 
 [$asan==on]
 # https://github.com/nodejs/node/issues/39655
