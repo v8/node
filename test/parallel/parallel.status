@@ -28,7 +28,8 @@ test-repl-mode: SKIP
 # Temporarily disabled to land https://crrev.com/c/3799431
 test-repl: SKIP
 
-# Skip failed tests related to iterator helpers
+# Skip failed tests related to iterator helpers 
+# https://bugs.chromium.org/p/v8/issues/detail?id=13558
 test-repl-tab-complete: SKIP
 test-shadow-realm-globals: SKIP
 
