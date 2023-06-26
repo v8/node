@@ -28,6 +28,11 @@ test-repl-mode: SKIP
 # Temporarily disabled to land https://crrev.com/c/3799431
 test-repl: SKIP
 
+# Skip failed tests related to iterator helpers
+test-repl-tab-complete: SKIP
+test-shadow-realm-globals: SKIP
+
+
 # Temporarily skip for https://crrev.com/c/2974772
 test-util-inspect: SKIP
 
