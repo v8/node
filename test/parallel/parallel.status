@@ -33,6 +33,11 @@ test-repl: SKIP
 # Temporarily disabled to land https://crrev.com/c/4507375
 test-fs-write: SKIP
 
+# Skip failed tests related to iterator helpers 
+# https://bugs.chromium.org/p/v8/issues/detail?id=13558
+test-repl-tab-complete: SKIP
+test-shadow-realm-globals: SKIP
+
 # Skip tests depending on removed feature flags for SAB and Atomics
 test-worker-no-atomics: SKIP
 test-worker-no-sab: SKIP
