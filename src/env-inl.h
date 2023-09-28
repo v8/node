@@ -764,22 +764,21 @@ inline void Environment::ForEachRealm(T&& iterator) const {
 }
 
 inline void Environment::ThrowError(const char* errmsg) {
-  ThrowError(v8::Exception::Error, errmsg);
+  v8::HandleScope handle_scope(isolate());
+  isolate()->ThrowException(
+      v8::Exception::Error(OneByteString(isolate(), errmsg)));
 }
 
 inline void Environment::ThrowTypeError(const char* errmsg) {
-  ThrowError(v8::Exception::TypeError, errmsg);
+  v8::HandleScope handle_scope(isolate());
+  isolate()->ThrowException(
+      v8::Exception::TypeError(OneByteString(isolate(), errmsg)));
 }
 
 inline void Environment::ThrowRangeError(const char* errmsg) {
-  ThrowError(v8::Exception::RangeError, errmsg);
-}
-
-inline void Environment::ThrowError(
-    v8::Local<v8::Value> (*fun)(v8::Local<v8::String>),
-    const char* errmsg) {
   v8::HandleScope handle_scope(isolate());
-  isolate()->ThrowException(fun(OneByteString(isolate(), errmsg)));
+  isolate()->ThrowException(
+      v8::Exception::RangeError(OneByteString(isolate(), errmsg)));
 }
 
 inline void Environment::ThrowErrnoException(int errorno,
