@@ -11,7 +11,6 @@ namespace node {
 namespace builtins {
 
 using v8::Context;
-using v8::DEFAULT;
 using v8::EscapableHandleScope;
 using v8::Function;
 using v8::FunctionCallbackInfo;
@@ -680,37 +679,34 @@ void BuiltinLoader::CreatePerIsolateProperties(IsolateData* isolate_data,
                                                Local<ObjectTemplate> target) {
   Isolate* isolate = isolate_data->isolate();
 
-  target->SetAccessor(isolate_data->config_string(),
-                      ConfigStringGetter,
-                      nullptr,
-                      Local<Value>(),
-                      DEFAULT,
-                      None,
-                      SideEffectType::kHasNoSideEffect);
+  target->SetNativeDataProperty(isolate_data->config_string(),
+                                ConfigStringGetter,
+                                nullptr,
+                                Local<Value>(),
+                                None,
+                                SideEffectType::kHasNoSideEffect);
 
-  target->SetAccessor(FIXED_ONE_BYTE_STRING(isolate, "builtinIds"),
-                      BuiltinIdsGetter,
-                      nullptr,
-                      Local<Value>(),
-                      DEFAULT,
-                      None,
-                      SideEffectType::kHasNoSideEffect);
+  target->SetNativeDataProperty(FIXED_ONE_BYTE_STRING(isolate, "builtinIds"),
+                                BuiltinIdsGetter,
+                                nullptr,
+                                Local<Value>(),
+                                None,
+                                SideEffectType::kHasNoSideEffect);
 
-  target->SetAccessor(FIXED_ONE_BYTE_STRING(isolate, "builtinCategories"),
-                      GetBuiltinCategories,
-                      nullptr,
-                      Local<Value>(),
-                      DEFAULT,
-                      None,
-                      SideEffectType::kHasNoSideEffect);
+  target->SetNativeDataProperty(
+      FIXED_ONE_BYTE_STRING(isolate, "builtinCategories"),
+      GetBuiltinCategories,
+      nullptr,
+      Local<Value>(),
+      None,
+      SideEffectType::kHasNoSideEffect);
 
-  target->SetAccessor(FIXED_ONE_BYTE_STRING(isolate, "natives"),
-                      GetNatives,
-                      nullptr,
-                      Local<Value>(),
-                      DEFAULT,
-                      None,
-                      SideEffectType::kHasNoSideEffect);
+  target->SetNativeDataProperty(FIXED_ONE_BYTE_STRING(isolate, "natives"),
+                                GetNatives,
+                                nullptr,
+                                Local<Value>(),
+                                None,
+                                SideEffectType::kHasNoSideEffect);
 
   SetMethod(isolate, target, "getCacheUsage", BuiltinLoader::GetCacheUsage);
   SetMethod(isolate, target, "compileFunction", BuiltinLoader::CompileFunction);
