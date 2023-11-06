@@ -609,15 +609,14 @@ void BuiltinLoader::Initialize(Local<Object> target,
                               SideEffectType::kHasNoSideEffect)
       .Check();
 
-  target
-      ->SetNativeDataProperty(context,
-                              FIXED_ONE_BYTE_STRING(isolate, "builtinCategories"),
-                              GetBuiltinCategories,
-                              nullptr,
-                              Local<Value>(),
-                              None,
-                              SideEffectType::kHasNoSideEffect)
-      .Check();
+  target->SetNativeDataProperty(
+      context,
+      FIXED_ONE_BYTE_STRING(isolate, "builtinCategories"),
+      GetBuiltinCategories,
+      nullptr,
+      Local<Value>(),
+      None,
+      SideEffectType::kHasNoSideEffect).Check();
 
   SetMethod(context, target, "getCacheUsage", BuiltinLoader::GetCacheUsage);
   SetMethod(context, target, "compileFunction", BuiltinLoader::CompileFunction);
