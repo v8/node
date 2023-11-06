@@ -9,7 +9,6 @@ namespace node {
 namespace builtins {
 
 using v8::Context;
-using v8::DEFAULT;
 using v8::EscapableHandleScope;
 using v8::Function;
 using v8::FunctionCallbackInfo;
