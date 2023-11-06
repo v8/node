@@ -591,35 +591,32 @@ void BuiltinLoader::Initialize(Local<Object> target,
   Isolate* isolate = env->isolate();
 
   target
-      ->SetAccessor(context,
-                    env->config_string(),
-                    ConfigStringGetter,
-                    nullptr,
-                    MaybeLocal<Value>(),
-                    DEFAULT,
-                    None,
-                    SideEffectType::kHasNoSideEffect)
+      ->SetNativeDataProperty(context,
+                              env->config_string(),
+                              ConfigStringGetter,
+                              nullptr,
+                              MaybeLocal<Value>(),
+                              None,
+                              SideEffectType::kHasNoSideEffect)
       .Check();
   target
-      ->SetAccessor(context,
-                    FIXED_ONE_BYTE_STRING(isolate, "builtinIds"),
-                    BuiltinIdsGetter,
-                    nullptr,
-                    MaybeLocal<Value>(),
-                    DEFAULT,
-                    None,
-                    SideEffectType::kHasNoSideEffect)
+      ->SetNativeDataProperty(context,
+                              FIXED_ONE_BYTE_STRING(isolate, "builtinIds"),
+                              BuiltinIdsGetter,
+                              nullptr,
+                              MaybeLocal<Value>(),
+                              None,
+                              SideEffectType::kHasNoSideEffect)
       .Check();
 
   target
-      ->SetAccessor(context,
-                    FIXED_ONE_BYTE_STRING(isolate, "builtinCategories"),
-                    GetBuiltinCategories,
-                    nullptr,
-                    Local<Value>(),
-                    DEFAULT,
-                    None,
-                    SideEffectType::kHasNoSideEffect)
+      ->SetNativeDataProperty(context,
+                              FIXED_ONE_BYTE_STRING(isolate, "builtinCategories"),
+                              GetBuiltinCategories,
+                              nullptr,
+                              Local<Value>(),
+                              None,
+                              SideEffectType::kHasNoSideEffect)
       .Check();
 
   SetMethod(context, target, "getCacheUsage", BuiltinLoader::GetCacheUsage);
