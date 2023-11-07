@@ -684,16 +684,16 @@ void BuiltinLoader::CreatePerIsolateProperties(IsolateData* isolate_data,
                                 ConfigStringGetter,
                                 nullptr,
                                 Local<Value>(),
-                                DEFAULT,
                                 None,
+                                DEFAULT,
                                 SideEffectType::kHasNoSideEffect);
 
   target->SetNativeDataProperty(FIXED_ONE_BYTE_STRING(isolate, "builtinIds"),
                                 BuiltinIdsGetter,
                                 nullptr,
                                 Local<Value>(),
-                                DEFAULT,
                                 None,
+                                DEFAULT,
                                 SideEffectType::kHasNoSideEffect);
 
   target->SetNativeDataProperty(
@@ -701,16 +701,16 @@ void BuiltinLoader::CreatePerIsolateProperties(IsolateData* isolate_data,
       GetBuiltinCategories,
       nullptr,
       Local<Value>(),
-      DEFAULT,
       None,
+      DEFAULT,
       SideEffectType::kHasNoSideEffect);
 
   target->SetNativeDataProperty(FIXED_ONE_BYTE_STRING(isolate, "natives"),
                                 GetNatives,
                                 nullptr,
                                 Local<Value>(),
-                                DEFAULT,
                                 None,
+                                DEFAULT,
                                 SideEffectType::kHasNoSideEffect);
 
   SetMethod(isolate, target, "getCacheUsage", BuiltinLoader::GetCacheUsage);
