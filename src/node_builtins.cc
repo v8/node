@@ -11,6 +11,7 @@ namespace node {
 namespace builtins {
 
 using v8::Context;
+using v8::DEFAULT;
 using v8::EscapableHandleScope;
 using v8::Function;
 using v8::FunctionCallbackInfo;
@@ -683,6 +684,7 @@ void BuiltinLoader::CreatePerIsolateProperties(IsolateData* isolate_data,
                                 ConfigStringGetter,
                                 nullptr,
                                 Local<Value>(),
+                                DEFAULT,
                                 None,
                                 SideEffectType::kHasNoSideEffect);
 
@@ -690,6 +692,7 @@ void BuiltinLoader::CreatePerIsolateProperties(IsolateData* isolate_data,
                                 BuiltinIdsGetter,
                                 nullptr,
                                 Local<Value>(),
+                                DEFAULT,
                                 None,
                                 SideEffectType::kHasNoSideEffect);
 
@@ -698,6 +701,7 @@ void BuiltinLoader::CreatePerIsolateProperties(IsolateData* isolate_data,
       GetBuiltinCategories,
       nullptr,
       Local<Value>(),
+      DEFAULT,
       None,
       SideEffectType::kHasNoSideEffect);
 
@@ -705,6 +709,7 @@ void BuiltinLoader::CreatePerIsolateProperties(IsolateData* isolate_data,
                                 GetNatives,
                                 nullptr,
                                 Local<Value>(),
+                                DEFAULT,
                                 None,
                                 SideEffectType::kHasNoSideEffect);
 
