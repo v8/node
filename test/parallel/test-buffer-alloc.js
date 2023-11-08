@@ -9,6 +9,7 @@ const {
   kMaxLength,
 } = require('buffer');
 
+<<<<<<< HEAD
 // Verify the maximum Uint8Array size. There is no concrete limit by spec. The
 // internal limits should be updated if this fails.
 assert.throws(
@@ -16,6 +17,8 @@ assert.throws(
   { message: `Invalid typed array length: ${kMaxLength + 1}` },
 );
 
+=======
+>>>>>>> b3e1523f34 (Adapt tests for increased TypedArray sizes (#161))
 const b = Buffer.allocUnsafe(1024);
 assert.strictEqual(b.length, 1024);
 
