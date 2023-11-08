@@ -6,12 +6,7 @@ require('../common');
 // Regression test for https://github.com/nodejs/node/issues/649.
 
 const assert = require('assert');
-const {
-  SlowBuffer,
-  constants: {
-    MAX_STRING_LENGTH,
-  },
-} = require('buffer');
+const SlowBuffer = require('buffer').SlowBuffer;
 
 // Find the maximum supported buffer length.
 let limit = 1 << 31; // 2GB
@@ -25,8 +20,8 @@ while (true) {
 }
 
 const message = {
-  code: 'ERR_STRING_TOO_LONG',
-  name: 'Error',
+  code: 'ERR_OUT_OF_RANGE',
+  name: 'RangeError',
 };
 assert.throws(() => Buffer(limit).toString('utf8'), message);
 assert.throws(() => SlowBuffer(limit).toString('utf8'), message);
