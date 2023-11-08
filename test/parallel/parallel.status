@@ -5,6 +5,17 @@ prefix parallel
 # sample-test                        : PASS,FLAKY
 
 [true] # This section applies to all platforms
+# https://github.com/nodejs/node/pull/50327
+# Currently there's no reliable way to test it.
+test-diagnostics-channel-memory-leak: SKIP
+# https://github.com/nodejs/node/issues/41123
+test-repl-sigint-nested-eval: PASS, FLAKY
+# https://github.com/nodejs/node/issues/43084
+test-worker-http2-stream-terminate: PASS, FLAKY
+# Skip tests until --no-concurrent-array-buffer-sweeping is supported
+# by the V8 version used in Node.
+test-memory-usage: SKIP
+test-zlib-unused-weak: SKIP
 
 [$system==win32]
 # https://github.com/nodejs/node/issues/41206
