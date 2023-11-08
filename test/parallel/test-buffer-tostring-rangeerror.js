@@ -18,26 +18,23 @@ const {
   },
 } = require('buffer');
 
-const len = MAX_STRING_LENGTH + 1;
+// Find the maximum supported buffer length.
+let limit = 1 << 31; // 2GB
+while (true) {
+  try {
+    Buffer(limit);
+    limit *= 2;
+  } catch (e) {
+    break;
+  }
+}
+
 const message = {
   code: 'ERR_STRING_TOO_LONG',
   name: 'Error',
 };
-
-function test(getBuffer) {
-  let buf;
-  try {
-    buf = getBuffer();
-  } catch (e) {
-    // If the buffer allocation fails, we skip the test.
-    if (e.code === 'ERR_MEMORY_ALLOCATION_FAILED' || /Array buffer allocation failed/.test(e.message)) {
-      return;
-    }
-  }
-  assert.throws(() => { buf.toString('utf8'); }, message);
-}
-
-test(() => Buffer(len));
-test(() => Buffer.alloc(len));
-test(() => Buffer.allocUnsafe(len));
-test(() => Buffer.allocUnsafeSlow(len));
+assert.throws(() => Buffer(limit).toString('utf8'), message);
+assert.throws(() => SlowBuffer(limit).toString('utf8'), message);
+assert.throws(() => Buffer.alloc(limit).toString('utf8'), message);
+assert.throws(() => Buffer.allocUnsafe(limit).toString('utf8'), message);
+assert.throws(() => Buffer.allocUnsafeSlow(limit).toString('utf8'), message);
