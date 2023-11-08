@@ -6,6 +6,9 @@ prefix node-api
 
 [true] # This section applies to all platforms
 
+# NODE_OPTIONS do not seem to work with GN.
+test_uv_threadpool_size/node-options: SKIP
+
 [$system==win32]
 
 [$system==solaris] # Also applies to SmartOS
