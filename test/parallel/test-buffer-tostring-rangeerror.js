@@ -18,7 +18,17 @@ const {
   },
 } = require('buffer');
 
-const len = MAX_STRING_LENGTH + 1;
+// Find the maximum supported buffer length.
+let limit = 1 << 31; // 2GB
+while (true) {
+  try {
+    Buffer(limit);
+    limit *= 2;
+  } catch (e) {
+    break;
+  }
+}
+
 const message = {
   code: 'ERR_STRING_TOO_LONG',
   name: 'Error',
