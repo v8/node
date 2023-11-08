@@ -928,8 +928,7 @@ napi_define_class(napi_env env,
       tpl->PrototypeTemplate()->SetAccessorProperty(property_name,
                                                     getter_tpl,
                                                     setter_tpl,
-                                                    attributes,
-                                                    v8::AccessControl::DEFAULT);
+                                                    attributes);
     } else if (p->method != nullptr) {
       v8::Local<v8::FunctionTemplate> t;
       STATUS_CALL(v8impl::FunctionCallbackWrapper::NewTemplate(
