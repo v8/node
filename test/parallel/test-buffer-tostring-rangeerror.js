@@ -11,12 +11,7 @@ if (!common.enoughTestMem) {
 }
 
 const assert = require('assert');
-const {
-  Buffer,
-  constants: {
-    MAX_STRING_LENGTH,
-  },
-} = require('buffer');
+const { Buffer } = require('buffer');
 
 // Find the maximum supported buffer length.
 let limit = 1 << 31; // 2GB
@@ -30,8 +25,8 @@ while (true) {
 }
 
 const message = {
-  code: 'ERR_STRING_TOO_LONG',
-  name: 'Error',
+  code: 'ERR_OUT_OF_RANGE',
+  name: 'RangeError',
 };
 
 function test(getBuffer) {
