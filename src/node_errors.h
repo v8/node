@@ -233,10 +233,9 @@ inline void THROW_ERR_SCRIPT_EXECUTION_TIMEOUT(Environment* env,
 
 inline v8::Local<v8::Value> ERR_BUFFER_TOO_LARGE(v8::Isolate* isolate) {
   char message[128];
-  snprintf(message,
-           sizeof(message),
-           "Cannot create a Buffer larger than 0x%zx bytes",
-           Buffer::kMaxLength);
+  snprintf(message, sizeof(message),
+      "Cannot create a Buffer larger than 0x%zx bytes",
+      v8::TypedArray::kMaxByteLength);
   return ERR_BUFFER_TOO_LARGE(isolate, message);
 }
 
