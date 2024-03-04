@@ -1150,7 +1150,7 @@ enum uv_process_flags {
 struct uv_process_s {
   UV_HANDLE_FIELDS
   uv_exit_cb exit_cb;
-  int pid;
+  uv_pid_t pid;
   UV_PROCESS_PRIVATE_FIELDS
 };
 
@@ -1160,6 +1160,7 @@ UV_EXTERN int uv_spawn(uv_loop_t* loop,
 UV_EXTERN int uv_process_kill(uv_process_t*, int signum);
 UV_EXTERN int uv_kill(int pid, int signum);
 UV_EXTERN uv_pid_t uv_process_get_pid(const uv_process_t*);
+UV_EXTERN uv_pid_t uv__waitpid(uv_pid_t pid, int *status, int options);
 
 
 /*
@@ -1287,7 +1288,9 @@ typedef struct {
    uint64_t ru_nivcsw;    /* involuntary context switches */
 } uv_rusage_t;
 
+#ifndef __Fuchsia__
 UV_EXTERN int uv_getrusage(uv_rusage_t* rusage);
+#endif
 
 UV_EXTERN int uv_os_homedir(char* buffer, size_t* size);
 UV_EXTERN int uv_os_tmpdir(char* buffer, size_t* size);
@@ -1316,8 +1319,10 @@ UV_EXTERN uv_pid_t uv_os_getppid(void);
 # define UV_PRIORITY_HIGHEST -20
 #endif
 
+#ifndef __Fuchsia__
 UV_EXTERN int uv_os_getpriority(uv_pid_t pid, int* priority);
 UV_EXTERN int uv_os_setpriority(uv_pid_t pid, int priority);
+#endif
 
 enum {
   UV_THREAD_PRIORITY_HIGHEST = 2,
