@@ -25,13 +25,16 @@
 
 
 TEST_IMPL(platform_output) {
+/* TODO(gengjiawen): Fix test on QEMU. */
+#if defined(__QEMU__)
+  RETURN_SKIP("Test does not currently work in QEMU");
+#endif
   char buffer[512];
   size_t rss;
   size_t size;
   double uptime;
   uv_pid_t pid;
   uv_pid_t ppid;
-  uv_rusage_t rusage;
   uv_cpu_info_t* cpus;
   uv_interface_address_t* interfaces;
   uv_passwd_t pwd;
@@ -69,6 +72,8 @@ TEST_IMPL(platform_output) {
   printf("uv_uptime: %f\n", uptime);
 #endif
 
+#ifndef __Fuchsia__
+  uv_rusage_t rusage;
   err = uv_getrusage(&rusage);
   ASSERT_OK(err);
   ASSERT_GE(rusage.ru_utime.tv_sec, 0);
@@ -85,6 +90,7 @@ TEST_IMPL(platform_output) {
   printf("  page faults: %llu\n", (unsigned long long) rusage.ru_majflt);
   printf("  maximum resident set size: %llu\n",
          (unsigned long long) rusage.ru_maxrss);
+#endif
 
   par = uv_available_parallelism();
   ASSERT_GE(par, 1);
