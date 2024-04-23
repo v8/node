@@ -5,14 +5,12 @@ prefix parallel
 # sample-test                        : PASS,FLAKY
 
 [true] # This section applies to all platforms
-<<<<<<< HEAD
 # https://github.com/nodejs/node/issues/52273
 test-net-write-fully-async-hex-string: PASS, FLAKY
 test-shadow-realm-gc: PASS, FLAKY
 test-shadow-realm-gc-module: PASS, FLAKY
 # https://github.com/nodejs/node/issues/52274
 test-worker-arraybuffer-zerofill: PASS, FLAKY
-=======
 # https://github.com/nodejs/node/pull/50327
 # Currently there's no reliable way to test it.
 test-diagnostics-channel-memory-leak: SKIP
@@ -24,7 +22,6 @@ test-worker-http2-stream-terminate: PASS, FLAKY
 # by the V8 version used in Node.
 test-memory-usage: SKIP
 test-zlib-unused-weak: SKIP
->>>>>>> a5ce245571 (skip tests until flag is supported)
 
 [$system==win32]
 
