@@ -14,7 +14,7 @@ template("simdjson_gn_build") {
                             "scope",
                             [ "simdjson.gyp" ])
 
-  source_set(target_name) {
+  component(target_name) {
     forward_variables_from(invoker, "*")
     public_configs = [ ":simdjson_config" ]
     sources = gypi_values.simdjson_sources
