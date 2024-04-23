@@ -165,7 +165,6 @@ void JSStream::Finish(const FunctionCallbackInfo<Value>& args) {
 
 
 void JSStream::ReadBuffer(const FunctionCallbackInfo<Value>& args) {
-  v8::TryCatch try_catch(args.GetIsolate());
   JSStream* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap, args.This());
 
