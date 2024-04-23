@@ -10,7 +10,7 @@
 #include <optional>
 #include <unordered_set>
 #include "inspector_agent.h"
-#include "simdjson.h"
+#include "../../deps/simdjson/simdjson.h"
 
 namespace node {
 // Forward declaration to break recursive dependency chain with src/env.h.
