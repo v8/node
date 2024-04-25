@@ -6,6 +6,12 @@ import("node.gni")
 import("$node_v8_path/gni/snapshot_toolchain.gni")
 import("$node_v8_path/gni/v8.gni")
 
+declare_args() {
+  # Enable warnings about usages of deprecated declarations and suppress
+  # known issues with c-ares.
+  node_enable_deprecated_declarations_warnings = false
+}
+
 # The actual configurations are put inside a template in unofficial.gni to
 # prevent accidental edits from contributors.
 template("node_gn_build") {
@@ -33,7 +39,7 @@ template("node_gn_build") {
       defines += [ "HAVE_INSPECTOR=0" ]
     }
     if (node_use_node_code_cache) {
-      defines += [ "NODE_USE_NODE_CODE_CACHE=1"]
+      defines += [ "NODE_USE_NODE_CODE_CACHE=1" ]
     }
     if (v8_enable_i18n_support) {
       defines += [ "NODE_HAVE_I18N_SUPPORT=1" ]
@@ -64,7 +70,6 @@ template("node_gn_build") {
     libs = []
     cflags = [ "-Wno-microsoft-include" ]
     cflags_cc = [
-      "-Wno-deprecated-declarations",
       "-Wno-extra-semi",
       "-Wno-implicit-fallthrough",
       "-Wno-macro-redefined",
@@ -81,6 +86,10 @@ template("node_gn_build") {
       "-Wno-unused-variable",
       "-Wno-unused-function",
     ]
+
+    if (!node_enable_deprecated_declarations_warnings) {
+      cflags_cc += [ "-Wno-deprecated-declarations" ]
+    }
 
     if (current_cpu == "x86") {
       node_arch = "ia32"
@@ -99,6 +108,10 @@ template("node_gn_build") {
       "NODE_PLATFORM=\"$node_platform\"",
       "NODE_REPORT"
     ]
+
+    if (node_enable_deprecated_declarations_warnings) {
+      defines += [ "CARES_NO_DEPRECATED=1" ]
+    }
 
     if (is_win) {
       defines += [
