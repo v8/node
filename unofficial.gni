@@ -110,7 +110,7 @@ template("node_gn_build") {
     ]
 
     if (node_enable_deprecated_declarations_warnings) {
-      // Refs: https://github.com/nodejs/node/issues/52464
+      # Refs: https://github.com/nodejs/node/issues/52464
       defines += [ "CARES_NO_DEPRECATED=1" ]
     }
 
