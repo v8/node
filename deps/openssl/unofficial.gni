@@ -16,6 +16,7 @@ template("openssl_gn_build") {
       "openssl/crypto/include",
       "openssl/include",
     ]
+    defines = [ "OPENSSL_API_COMPAT=0x10100001L" ]
   }
 
   config("openssl_internal_config") {
@@ -26,7 +27,6 @@ template("openssl_gn_build") {
 
     defines = [
       "MODULESDIR=\"deps/openssl/lib/openssl-modules\"",
-      "OPENSSL_API_COMPAT=0x10100001L",
       "STATIC_LEGACY",
     ] + gypi_values.openssl_default_defines_all
     if (is_win) {
