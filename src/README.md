@@ -844,9 +844,9 @@ class from C++.
 The JavaScript object can be accessed as a `v8::Local<v8::Object>` by using
 `self->object()`, given a `BaseObject` named `self`.
 
-Accessing a `BaseObject` from a `v8::Local<v8::Object>` (frequently that is
-`args.This()` in a [binding function][]) can be done using
-the `Unwrap<T>(obj)` function, where `T` is a subclass of `BaseObject`.
+Accessing a `BaseObject` from a `v8::Local<v8::Object>` (that is `args.This()`
+in a [binding function][]) can be done using the `Unwrap<T>(obj)` function,
+where `T` is a subclass of `BaseObject`.
 A helper for this is the `ASSIGN_OR_RETURN_UNWRAP` macro that returns from the
 current function if unwrapping fails (typically that means that the `BaseObject`
 has been deleted earlier).
