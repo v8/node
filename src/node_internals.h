@@ -67,7 +67,7 @@ template <typename T, int (*F)(const typename T::HandleType*, sockaddr*, int*)>
 void GetSockOrPeerName(const v8::FunctionCallbackInfo<v8::Value>& args) {
   T* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap,
-                          args.Holder(),
+                          args.This(),
                           args.GetReturnValue().Set(UV_EBADF));
   CHECK(args[0]->IsObject());
   sockaddr_storage storage;

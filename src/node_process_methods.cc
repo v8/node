@@ -592,11 +592,11 @@ void BindingData::BigIntImpl(BindingData* receiver) {
 }
 
 void BindingData::SlowBigInt(const FunctionCallbackInfo<Value>& args) {
-  BigIntImpl(FromJSObject<BindingData>(args.Holder()));
+  BigIntImpl(FromJSObject<BindingData>(args.This()));
 }
 
 void BindingData::SlowNumber(const v8::FunctionCallbackInfo<v8::Value>& args) {
-  NumberImpl(FromJSObject<BindingData>(args.Holder()));
+  NumberImpl(FromJSObject<BindingData>(args.This()));
 }
 
 bool BindingData::PrepareForSerialization(Local<Context> context,
