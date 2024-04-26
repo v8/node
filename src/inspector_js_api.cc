@@ -131,14 +131,14 @@ class JSBindingsConnection : public BaseObject {
 
   static void Disconnect(const FunctionCallbackInfo<Value>& info) {
     JSBindingsConnection* session;
-    ASSIGN_OR_RETURN_UNWRAP(&session, info.Holder());
+    ASSIGN_OR_RETURN_UNWRAP(&session, info.This());
     session->Disconnect();
   }
 
   static void Dispatch(const FunctionCallbackInfo<Value>& info) {
     Environment* env = Environment::GetCurrent(info);
     JSBindingsConnection* session;
-    ASSIGN_OR_RETURN_UNWRAP(&session, info.Holder());
+    ASSIGN_OR_RETURN_UNWRAP(&session, info.This());
     CHECK(info[0]->IsString());
 
     if (session->session_) {
@@ -206,7 +206,7 @@ void InspectorConsoleCall(const FunctionCallbackInfo<Value>& info) {
       env->set_is_in_inspector_console_call(true);
       MaybeLocal<Value> ret =
           inspector_method.As<Function>()->Call(context,
-                                                info.Holder(),
+                                                info.This(),
                                                 call_args.length(),
                                                 call_args.out());
       env->set_is_in_inspector_console_call(false);
@@ -218,7 +218,7 @@ void InspectorConsoleCall(const FunctionCallbackInfo<Value>& info) {
   Local<Value> node_method = info[1];
   CHECK(node_method->IsFunction());
   USE(node_method.As<Function>()->Call(context,
-                                   info.Holder(),
+                                   info.This(),
                                    call_args.length(),
                                    call_args.out()));
 }

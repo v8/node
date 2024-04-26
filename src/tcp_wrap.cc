@@ -185,7 +185,7 @@ TCPWrap::TCPWrap(Environment* env, Local<Object> object, ProviderType provider)
 void TCPWrap::SetNoDelay(const FunctionCallbackInfo<Value>& args) {
   TCPWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap,
-                          args.Holder(),
+                          args.This(),
                           args.GetReturnValue().Set(UV_EBADF));
   int enable = static_cast<int>(args[0]->IsTrue());
   int err = uv_tcp_nodelay(&wrap->handle_, enable);
@@ -196,7 +196,7 @@ void TCPWrap::SetNoDelay(const FunctionCallbackInfo<Value>& args) {
 void TCPWrap::SetKeepAlive(const FunctionCallbackInfo<Value>& args) {
   TCPWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap,
-                          args.Holder(),
+                          args.This(),
                           args.GetReturnValue().Set(UV_EBADF));
   Environment* env = wrap->env();
   int enable;
@@ -211,7 +211,7 @@ void TCPWrap::SetKeepAlive(const FunctionCallbackInfo<Value>& args) {
 void TCPWrap::SetSimultaneousAccepts(const FunctionCallbackInfo<Value>& args) {
   TCPWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap,
-                          args.Holder(),
+                          args.This(),
                           args.GetReturnValue().Set(UV_EBADF));
   bool enable = args[0]->IsTrue();
   int err = uv_tcp_simultaneous_accepts(&wrap->handle_, enable);
@@ -223,7 +223,7 @@ void TCPWrap::SetSimultaneousAccepts(const FunctionCallbackInfo<Value>& args) {
 void TCPWrap::Open(const FunctionCallbackInfo<Value>& args) {
   TCPWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap,
-                          args.Holder(),
+                          args.This(),
                           args.GetReturnValue().Set(UV_EBADF));
   int64_t val;
   if (!args[0]->IntegerValue(args.GetIsolate()->GetCurrentContext()).To(&val))
@@ -244,7 +244,7 @@ void TCPWrap::Bind(
     std::function<int(const char* ip_address, int port, T* addr)> uv_ip_addr) {
   TCPWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap,
-                          args.Holder(),
+                          args.This(),
                           args.GetReturnValue().Set(UV_EBADF));
   Environment* env = wrap->env();
   node::Utf8Value ip_address(env->isolate(), args[0]);
@@ -280,7 +280,7 @@ void TCPWrap::Bind6(const FunctionCallbackInfo<Value>& args) {
 void TCPWrap::Listen(const FunctionCallbackInfo<Value>& args) {
   TCPWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap,
-                          args.Holder(),
+                          args.This(),
                           args.GetReturnValue().Set(UV_EBADF));
   Environment* env = wrap->env();
   int backlog;
@@ -321,7 +321,7 @@ void TCPWrap::Connect(const FunctionCallbackInfo<Value>& args,
 
   TCPWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap,
-                          args.Holder(),
+                          args.This(),
                           args.GetReturnValue().Set(UV_EBADF));
 
   CHECK(args[0]->IsObject());
@@ -361,7 +361,7 @@ void TCPWrap::Connect(const FunctionCallbackInfo<Value>& args,
 void TCPWrap::Reset(const FunctionCallbackInfo<Value>& args) {
   TCPWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(
-      &wrap, args.Holder(), args.GetReturnValue().Set(UV_EBADF));
+      &wrap, args.This(), args.GetReturnValue().Set(UV_EBADF));
 
   int err = wrap->Reset(args[0]);
 
