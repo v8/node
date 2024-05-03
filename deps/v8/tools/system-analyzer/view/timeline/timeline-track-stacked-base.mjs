@@ -89,7 +89,7 @@ export class TimelineTrackStackedBase extends TimelineTrackBase {
   async _drawContent() {
     if (this._originalContentWidth > 0) return;
     this._originalContentWidth = parseInt(this.timelineMarkersNode.style.width);
-    this._scalableContentNode.innerHTML = '';
+    this._scalableContentNode.innerText = '';
     let buffer = '';
     const add = async () => {
       const svg = SVG.svg();
