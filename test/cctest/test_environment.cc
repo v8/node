@@ -626,7 +626,6 @@ TEST_F(NodeZeroIsolateTestFixture, CtrlCWithOnlySafeTerminationTest) {
   // Allocate and initialize Isolate.
   v8::Isolate::CreateParams create_params;
   create_params.array_buffer_allocator = allocator.get();
-  create_params.only_terminate_in_safe_scope = true;
   v8::Isolate* isolate = v8::Isolate::Allocate();
   CHECK_NOT_NULL(isolate);
   platform->RegisterIsolate(isolate, &current_loop);
