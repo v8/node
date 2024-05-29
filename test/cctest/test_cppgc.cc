@@ -25,10 +25,8 @@ class CppGCed : public cppgc::GarbageCollected<CppGCed> {
     v8::Local<v8::Object> js_object = args.This();
     CppGCed* gc_object = cppgc::MakeGarbageCollected<CppGCed>(
         isolate->GetCppHeap()->GetAllocationHandle());
-    js_object->SetAlignedPointerInInternalField(kWrappableTypeIndex,
-                                                &kEmbedderID);
-    js_object->SetAlignedPointerInInternalField(kWrappableInstanceIndex,
-                                                gc_object);
+    v8::Object::Wrap<v8::CppHeapPointerTag::kDefaultTag>(
+        isolate, js_object, gc_object);
     kConstructCount++;
     args.GetReturnValue().Set(js_object);
   }
@@ -37,7 +35,6 @@ class CppGCed : public cppgc::GarbageCollected<CppGCed> {
       v8::Local<v8::Context> context) {
     auto ft = v8::FunctionTemplate::New(context->GetIsolate(), New);
     auto ot = ft->InstanceTemplate();
-    ot->SetInternalFieldCount(2);
     return ft->GetFunction(context).ToLocalChecked();
   }
 
@@ -60,10 +57,7 @@ TEST_F(NodeZeroIsolateTestFixture, ExistingCppHeapTest) {
   // it recognizes the existing heap.
   std::unique_ptr<v8::CppHeap> cpp_heap = v8::CppHeap::Create(
       platform.get(),
-      v8::CppHeapCreateParams(
-          {},
-          v8::WrapperDescriptor(
-              kWrappableTypeIndex, kWrappableInstanceIndex, kEmbedderID)));
+      v8::CppHeapCreateParams({}));
   isolate->AttachCppHeap(cpp_heap.get());
 
   // Try creating Context + IsolateData + Environment.

@@ -25,11 +25,6 @@ class CppGCed : public cppgc::GarbageCollected<CppGCed> {
       v8::Local<v8::Context> context) {
     auto ft = v8::FunctionTemplate::New(context->GetIsolate(), New);
     auto ot = ft->InstanceTemplate();
-    v8::WrapperDescriptor descriptor =
-        context->GetIsolate()->GetCppHeap()->wrapper_descriptor();
-    uint16_t required_size = std::max(descriptor.wrappable_instance_index,
-                                      descriptor.wrappable_type_index);
-    ot->SetInternalFieldCount(required_size + 1);
     return ft->GetFunction(context).ToLocalChecked();
   }
 
