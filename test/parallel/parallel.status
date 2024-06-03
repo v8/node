@@ -38,6 +38,8 @@ test-child-process-stdio-overlapped: SKIP
 test-fs-read-stream-concurrent-reads: PASS, FLAKY
 # Temporarily skip for https://crrev.com/c/2960211
 test-fs-read: SKIP
+# Temporarily skip until https://crbug.com/v8/12491 is resolved
+test-npm-install: SKIP
 
 # Temporarily skip for https://crrev.com/c/2974772
 test-util-inspect: SKIP
