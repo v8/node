@@ -40,6 +40,7 @@ test-repl: SKIP
 # Temporarily disabled to land https://crrev.com/c/4507375
 test-fs-write: SKIP
 
+<<<<<<< HEAD
 # https://github.com/nodejs/node/issues/51862
 test-fs-read-stream-concurrent-reads: PASS, FLAKY
 # Temporarily skip for https://crrev.com/c/2960211
@@ -50,6 +51,13 @@ test-npm-install: SKIP
 test-trace-events-all: SKIP
 test-trace-events-v8: SKIP
 # Skip test depending on always-true removed --harmony-atomics flag
+=======
+# Skip failed tests related to iterator helpers 
+# https://bugs.chromium.org/p/v8/issues/detail?id=13558
+test-repl-tab-complete: SKIP
+test-shadow-realm-globals: SKIP
+
+>>>>>>> ff1bdd5b82 (Skip the failing tests (#159))
 # Skip tests depending on removed feature flags for SAB and Atomics
 test-worker-no-atomics: SKIP
 test-worker-no-sab: SKIP
