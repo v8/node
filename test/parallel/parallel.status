@@ -40,6 +40,9 @@ test-fs-read-stream-concurrent-reads: PASS, FLAKY
 test-fs-read: SKIP
 # Temporarily skip until https://crbug.com/v8/12491 is resolved
 test-npm-install: SKIP
+# Temporarily skip for https://crrev.com/c/3487548
+test-trace-events-all: SKIP
+test-trace-events-v8: SKIP
 
 # Temporarily skip for https://crrev.com/c/2974772
 test-util-inspect: SKIP
