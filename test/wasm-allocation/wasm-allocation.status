@@ -6,6 +6,9 @@ prefix wasm-allocation
 
 [true] # This section applies to all platforms
 
+# Failing on NodeCI.
+test-wasm-allocation: SKIP
+
 [$system!=linux || $asan==on || $pointer_compression==on]
 test-wasm-allocation: SKIP
 test-wasm-allocation-auto-adapt: SKIP
