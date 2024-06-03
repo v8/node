@@ -248,6 +248,7 @@
 #include <cfloat>
 #include <cassert>
 #include <climits>
+#include <type_traits>
 #ifndef _WIN32
 // strcasecmp, strncasecmp
 #include <strings.h>
