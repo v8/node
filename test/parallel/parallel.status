@@ -36,6 +36,10 @@ test-child-process-stdio-overlapped: SKIP
 
 # https://github.com/nodejs/node/issues/51862
 test-fs-read-stream-concurrent-reads: PASS, FLAKY
+# Temporarily skip for https://crrev.com/c/2960211
+test-fs-read: SKIP
+
+[$system==win32]
 
 # Until V8 provides a better way to check for flag mismatch without
 # making the code cache/snapshot unreproducible, disable the test
