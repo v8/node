@@ -386,7 +386,6 @@ static Intercepted EnvSetter(Local<Name> property,
   }
 
   env->env_vars()->Set(env->isolate(), key, value_string);
-
   return Intercepted::kYes;
 }
 
