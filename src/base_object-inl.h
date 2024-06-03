@@ -140,8 +140,8 @@ void BaseObject::InternalFieldGet(
 template <int Field, bool (v8::Value::*typecheck)() const>
 void BaseObject::InternalFieldSet(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
-  v8::Local<v8::Value> value = args[0];
   // This could be e.g. value->IsFunction().
+  v8::Local<v8::Value> value = args[0];
   CHECK(((*value)->*typecheck)());
   args.This()->SetInternalField(Field, value);
 }
