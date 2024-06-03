@@ -787,42 +787,40 @@ const errorTests = [
       /^Uncaught SyntaxError: /,
     ]
   },
-  // Temporarily disabled to to turn on async stack tagging API, which adds
-  // a new method to the console object (https://crrev.com/c/3799431).  
-  // {
-  //     send: 'console',
-  //     expect: [
-  //       'Object [console] {',
-  //       '  log: [Function: log],',
-  //       '  warn: [Function: warn],',
-  //       '  error: [Function: error],',
-  //       '  dir: [Function: dir],',
-  //       '  time: [Function: time],',
-  //       '  timeEnd: [Function: timeEnd],',
-  //       '  timeLog: [Function: timeLog],',
-  //       '  trace: [Function: trace],',
-  //       '  assert: [Function: assert],',
-  //       '  clear: [Function: clear],',
-  //       '  count: [Function: count],',
-  //       '  countReset: [Function: countReset],',
-  //       '  group: [Function: group],',
-  //       '  groupEnd: [Function: groupEnd],',
-  //       '  table: [Function: table],',
-  //       / {2}debug: \[Function: (debug|log)],/,
-  //       / {2}info: \[Function: (info|log)],/,
-  //       / {2}dirxml: \[Function: (dirxml|log)],/,
-  //       / {2}groupCollapsed: \[Function: (groupCollapsed|group)],/,
-  //       / {2}Console: \[Function: Console],?/,
-  //       ...process.features.inspector ? [
-  //         '  profile: [Function: profile],',
-  //         '  profileEnd: [Function: profileEnd],',
-  //         '  timeStamp: [Function: timeStamp],',
-  //         '  context: [Function: context],',
-  //         '  createTask: [Function: createTask]',
-  //       ] : [],
-  //       '}',
-  //     ]
-  //   },
+  {
+      send: 'console',
+      expect: [
+        'Object [console] {',
+        '  log: [Function: log],',
+        '  warn: [Function: warn],',
+        '  error: [Function: error],',
+        '  dir: [Function: dir],',
+        '  time: [Function: time],',
+        '  timeEnd: [Function: timeEnd],',
+        '  timeLog: [Function: timeLog],',
+        '  trace: [Function: trace],',
+        '  assert: [Function: assert],',
+        '  clear: [Function: clear],',
+        '  count: [Function: count],',
+        '  countReset: [Function: countReset],',
+        '  group: [Function: group],',
+        '  groupEnd: [Function: groupEnd],',
+        '  table: [Function: table],',
+        / {2}debug: \[Function: (debug|log)],/,
+        / {2}info: \[Function: (info|log)],/,
+        / {2}dirxml: \[Function: (dirxml|log)],/,
+        / {2}groupCollapsed: \[Function: (groupCollapsed|group)],/,
+        / {2}Console: \[Function: Console],?/,
+        ...process.features.inspector ? [
+          '  profile: [Function: profile],',
+          '  profileEnd: [Function: profileEnd],',
+          '  timeStamp: [Function: timeStamp],',
+          '  context: [Function: context],',
+          '  createTask: [Function: createTask]',
+        ] : [],
+        '}',
+      ]
+    },
 ];
 
 const tcpTests = [
