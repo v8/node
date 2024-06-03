@@ -47,6 +47,8 @@ test-npm-install: SKIP
 # Temporarily skip for https://crrev.com/c/3487548
 test-trace-events-all: SKIP
 test-trace-events-v8: SKIP
+# Skip test depending on always-true removed --harmony-atomics flag
+test-worker-no-atomics: SKIP
 
 # Temporarily skip for https://crrev.com/c/2974772
 test-util-inspect: SKIP
