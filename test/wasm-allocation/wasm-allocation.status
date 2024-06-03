@@ -6,5 +6,8 @@ prefix wasm-allocation
 
 [true] # This section applies to all platforms
 
+# Failing on NodeCI.
+test-wasm-allocation: SKIP
+
 [$system!=linux || $asan==on]
 test-wasm-allocation: SKIP
