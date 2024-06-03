@@ -71,7 +71,6 @@ using v8::TryCatch;
 using v8::Uint32;
 using v8::Undefined;
 using v8::Value;
-using v8::WrapperDescriptor;
 using worker::Worker;
 
 int const ContextEmbedderTag::kNodeContextTag = 0x6e6f64;
@@ -571,30 +570,11 @@ IsolateData::IsolateData(Isolate* isolate,
 
   uint16_t cppgc_id = kDefaultCppGCEmbedderID;
   if (cpp_heap != nullptr) {
-    // The general convention of the wrappable layout for cppgc in the
-    // ecosystem is:
-    // [  0  ] -> embedder id
-    // [  1  ] -> wrappable instance
-    // If the Isolate includes a CppHeap attached by another embedder,
-    // And if they also use the field 0 for the ID, we DCHECK that
-    // the layout matches our layout, and record the embedder ID for cppgc
-    // to avoid accidentally enabling cppgc on non-cppgc-managed wrappers .
-    v8::WrapperDescriptor descriptor = cpp_heap->wrapper_descriptor();
-    if (descriptor.wrappable_type_index == BaseObject::kEmbedderType) {
-      cppgc_id = descriptor.embedder_id_for_garbage_collected;
-      DCHECK_EQ(descriptor.wrappable_instance_index, BaseObject::kSlot);
-    }
-    // If the CppHeap uses the slot we use to put non-cppgc-traced BaseObject
-    // for embedder ID, V8 could accidentally enable cppgc on them. So
-    // safe guard against this.
-    DCHECK_NE(descriptor.wrappable_type_index, BaseObject::kSlot);
+    // All CppHeap's support only one way of wrapping objects.
   } else {
     cpp_heap_ = CppHeap::Create(
         platform,
-        CppHeapCreateParams{
-            {},
-            WrapperDescriptor(
-                BaseObject::kEmbedderType, BaseObject::kSlot, cppgc_id)});
+        CppHeapCreateParams{{}});
     isolate->AttachCppHeap(cpp_heap_.get());
   }
   // We do not care about overflow since we just want this to be different
