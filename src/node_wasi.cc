@@ -282,12 +282,12 @@ R WASI::WasiFunction<FT, F, R, Args...>::FastCallback(
     THROW_ERR_WASI_NOT_STARTED(isolate);
     return EinvalError<R>();
   }
-  Local<ArrayBuffer> ab = wasi->memory_.Get(isolate)->Buffer();
-  size_t mem_size = ab->ByteLength();
-  char* mem_data = static_cast<char*>(ab->Data());
-  CHECK_NOT_NULL(mem_data);
+  uint8_t* memory = nullptr;
+  CHECK(LIKELY(options.wasm_memory->getStorageIfAligned(&memory)));
 
-  return F(*wasi, {mem_data, mem_size}, args...);
+  return F(*wasi,
+           {reinterpret_cast<char*>(memory), options.wasm_memory->length()},
+           args...);
 }
 
 namespace {
