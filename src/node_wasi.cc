@@ -209,6 +209,7 @@ void WASI::New(const FunctionCallbackInfo<Value>& args) {
 template <typename FT, FT F, typename R, typename... Args>
 void WASI::WasiFunction<FT, F, R, Args...>::SetFunction(
     Environment* env, const char* name, Local<FunctionTemplate> tmpl) {
+  auto c_function = CFunction::Make(FastCallback);
   Local<FunctionTemplate> t =
       FunctionTemplate::New(env->isolate(),
                             SlowCallback,
@@ -216,7 +217,8 @@ void WASI::WasiFunction<FT, F, R, Args...>::SetFunction(
                             Local<Signature>(),
                             sizeof...(Args),
                             v8::ConstructorBehavior::kThrow,
-                            v8::SideEffectType::kHasSideEffect);
+                            v8::SideEffectType::kHasSideEffect,
+                            &c_function);
   const v8::NewStringType type = v8::NewStringType::kInternalized;
   Local<String> name_string =
       String::NewFromUtf8(env->isolate(), name, type).ToLocalChecked();
@@ -249,7 +251,7 @@ R WASI::WasiFunction<FT, F, R, Args...>::FastCallback(
   v8::Isolate* isolate = receiver->GetIsolate();
   if (wasi->memory_.IsEmpty()) {
     THROW_ERR_WASI_NOT_STARTED(isolate);
-    return EinvalError<R>();
+    return;
   }
   Local<ArrayBuffer> ab = wasi->memory_.Get(isolate)->Buffer();
   size_t mem_size = ab->ByteLength();
