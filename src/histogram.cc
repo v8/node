@@ -193,8 +193,7 @@ void HistogramBase::FastRecord(Local<Value> receiver,
                                const int64_t value,
                                FastApiCallbackOptions& options) {
   if (value < 1) {
-    Environment* env = Environment::GetCurrent(options.isolate);
-    THROW_ERR_OUT_OF_RANGE(env, "value is out of range");
+    options.fallback = true;
     return;
   }
   HistogramBase* histogram;
