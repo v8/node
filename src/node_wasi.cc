@@ -251,7 +251,7 @@ R WASI::WasiFunction<FT, F, R, Args...>::FastCallback(
   v8::Isolate* isolate = receiver->GetIsolate();
   if (wasi->memory_.IsEmpty()) {
     THROW_ERR_WASI_NOT_STARTED(isolate);
-    return;
+    return EinvalError<R>();
   }
   Local<ArrayBuffer> ab = wasi->memory_.Get(isolate)->Buffer();
   size_t mem_size = ab->ByteLength();
