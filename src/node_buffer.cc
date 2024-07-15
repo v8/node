@@ -1094,7 +1094,7 @@ int32_t IndexOfNumber(const uint8_t* buffer_data,
   return ptr != nullptr ? static_cast<int32_t>(ptr_uint8 - buffer_data) : -1;
 }
 
-void SlowIndexOfNumber(const FunctionCallbackInfo<Value>& args) {
+void IndexOfNumber(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[1]->IsUint32());
   CHECK(args[2]->IsNumber());
   CHECK(args[3]->IsBoolean());
@@ -1109,20 +1109,6 @@ void SlowIndexOfNumber(const FunctionCallbackInfo<Value>& args) {
   args.GetReturnValue().Set(IndexOfNumber(
       buffer.data(), buffer.length(), needle, offset_i64, is_forward));
 }
-
-int32_t FastIndexOfNumber(v8::Local<v8::Value>,
-                          const FastApiTypedArray<uint8_t>& buffer,
-                          uint32_t needle,
-                          int64_t offset_i64,
-                          bool is_forward) {
-  uint8_t* buffer_data;
-  CHECK(buffer.getStorageIfAligned(&buffer_data));
-  return IndexOfNumber(
-      buffer_data, buffer.length(), needle, offset_i64, is_forward);
-}
-
-static v8::CFunction fast_index_of_number(
-    v8::CFunction::Make(FastIndexOfNumber));
 
 void Swap16(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
@@ -1434,11 +1420,7 @@ void Initialize(Local<Object> target,
   SetMethodNoSideEffect(context, target, "compareOffset", CompareOffset);
   SetMethod(context, target, "fill", Fill);
   SetMethodNoSideEffect(context, target, "indexOfBuffer", IndexOfBuffer);
-  SetFastMethodNoSideEffect(context,
-                            target,
-                            "indexOfNumber",
-                            SlowIndexOfNumber,
-                            &fast_index_of_number);
+  SetMethodNoSideEffect(context, target, "indexOfNumber", IndexOfNumber);
   SetMethodNoSideEffect(context, target, "indexOfString", IndexOfString);
 
   SetMethod(context, target, "detachArrayBuffer", DetachArrayBuffer);
@@ -1497,9 +1479,7 @@ void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(CompareOffset);
   registry->Register(Fill);
   registry->Register(IndexOfBuffer);
-  registry->Register(SlowIndexOfNumber);
-  registry->Register(FastIndexOfNumber);
-  registry->Register(fast_index_of_number.GetTypeInfo());
+  registry->Register(IndexOfNumber);
   registry->Register(IndexOfString);
 
   registry->Register(Swap16);
