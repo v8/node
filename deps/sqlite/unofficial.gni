@@ -25,6 +25,13 @@ template("sqlite_gn_build") {
         "-Wno-unused-function",
         "-Wno-unused-variable",
       ]
+    } else {
+      cflags_c = [
+        "-Wno-implicit-fallthrough",
+        "-Wno-unreachable-code",
+        "-Wno-unreachable-code-break",
+        "-Wno-unreachable-code-return",
+      ]
     }
   }
 }
