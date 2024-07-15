@@ -552,8 +552,8 @@ static Intercepted StorageSetter(Local<Name> property,
   Storage* storage;
   ASSIGN_OR_RETURN_UNWRAP(&storage, info.This(), Intercepted::kNo);
 
-  if (storage->Store(property, value)) {
-    info.GetReturnValue().Set(value);
+  if (!storage->Store(property, value)) {
+    info.GetReturnValue().Set(false);
   }
 
   return Intercepted::kYes;
