@@ -1060,11 +1060,8 @@ static int32_t FastInternalModuleStat(
   Environment* env = Environment::GetCurrent(recv->GetCreationContextChecked());
 
   auto path = std::filesystem::path(input.data, input.data + input.length);
-  if (UNLIKELY(!env->permission()->is_granted(
-          env, permission::PermissionScope::kFileSystemRead, path.string()))) {
-    options.fallback = true;
-    return -1;
-  }
+  THROW_IF_INSUFFICIENT_PERMISSIONS(
+      env, permission::PermissionScope::kFileSystemRead, path.string());
 
   switch (std::filesystem::status(path).type()) {
     case std::filesystem::file_type::directory:
