@@ -1296,7 +1296,7 @@ int64_t IndexOfNumberImpl(Local<Value> buffer_obj,
   return ptr != nullptr ? static_cast<int64_t>(ptr_uint8 - buffer_data) : -1;
 }
 
-void SlowIndexOfNumber(const FunctionCallbackInfo<Value>& args) {
+void IndexOfNumber(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[1]->IsUint32());
   CHECK(args[2]->IsNumber());
   CHECK(args[3]->IsBoolean());
@@ -2056,11 +2056,7 @@ void Initialize(Local<Object> target,
   SetMethodNoSideEffect(context, target, "compareOffset", CompareOffset);
   SetMethod(context, target, "fill", Fill);
   SetMethodNoSideEffect(context, target, "indexOfBuffer", IndexOfBuffer);
-  SetFastMethodNoSideEffect(context,
-                            target,
-                            "indexOfNumber",
-                            SlowIndexOfNumber,
-                            &fast_index_of_number);
+  SetMethodNoSideEffect(context, target, "indexOfNumber", IndexOfNumber);
   SetMethodNoSideEffect(context, target, "indexOfString", IndexOfString);
 
   SetFastMethod(context,
@@ -2147,8 +2143,7 @@ void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(CompareOffset);
   registry->Register(Fill);
   registry->Register(IndexOfBuffer);
-  registry->Register(SlowIndexOfNumber);
-  registry->Register(fast_index_of_number);
+  registry->Register(IndexOfNumber);
   registry->Register(IndexOfString);
 
   registry->Register(Swap16);
