@@ -857,24 +857,6 @@ void Compare(const FunctionCallbackInfo<Value> &args) {
   args.GetReturnValue().Set(val);
 }
 
-int32_t FastCompare(v8::Local<v8::Value>,
-                    const FastApiTypedArray<uint8_t>& a,
-                    const FastApiTypedArray<uint8_t>& b) {
-  uint8_t* data_a;
-  uint8_t* data_b;
-  CHECK(a.getStorageIfAligned(&data_a));
-  CHECK(b.getStorageIfAligned(&data_b));
-
-  size_t cmp_length = std::min(a.length(), b.length());
-
-  return normalizeCompareVal(
-      cmp_length > 0 ? memcmp(data_a, data_b, cmp_length) : 0,
-      a.length(),
-      b.length());
-}
-
-static v8::CFunction fast_compare(v8::CFunction::Make(FastCompare));
-
 // Computes the offset for starting an indexOf or lastIndexOf search.
 // Returns either a valid offset in [0...<length - 1>], ie inside the Buffer,
 // or -1 to signal that there is no possible match.
@@ -1543,8 +1525,8 @@ void Initialize(Local<Object> target,
                             "byteLengthUtf8",
                             SlowByteLengthUtf8,
                             &fast_byte_length_utf8);
-  SetFastMethod(context, target, "copy", SlowCopy, &fast_copy);
-  SetFastMethodNoSideEffect(context, target, "compare", Compare, &fast_compare);
+  SetMethod(context, target, "copy", Copy);
+  SetMethod(context, target, "compare", Compare);
   SetMethodNoSideEffect(context, target, "compareOffset", CompareOffset);
   SetMethod(context, target, "fill", Fill);
   SetMethodNoSideEffect(context, target, "indexOfBuffer", IndexOfBuffer);
@@ -1622,8 +1604,6 @@ void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(fast_copy.GetTypeInfo());
   registry->Register(FastCopy);
   registry->Register(Compare);
-  registry->Register(FastCompare);
-  registry->Register(fast_compare.GetTypeInfo());
   registry->Register(CompareOffset);
   registry->Register(Fill);
   registry->Register(IndexOfBuffer);
