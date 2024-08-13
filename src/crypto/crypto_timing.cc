@@ -71,15 +71,10 @@ bool FastTimingSafeEqual(Local<Value> receiver,
 static CFunction fast_timing_safe_equal(CFunction::Make(FastTimingSafeEqual));
 
 void Initialize(Environment* env, Local<Object> target) {
-  SetFastMethodNoSideEffect(env->context(),
-                            target,
-                            "timingSafeEqual",
-                            TimingSafeEqual,
-                            &fast_timing_safe_equal);
+  SetMethod(env->context(), target, "timingSafeEqual", TimingSafeEqual);
 }
 void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(TimingSafeEqual);
-  registry->Register(fast_timing_safe_equal);
 }
 }  // namespace Timing
 
