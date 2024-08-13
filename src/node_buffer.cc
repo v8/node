@@ -862,6 +862,7 @@ void CompareOffset(const FunctionCallbackInfo<Value> &args) {
   args.GetReturnValue().Set(val);
 }
 
+<<<<<<< HEAD
 int32_t CompareImpl(Local<Value> a_obj, Local<Value> b_obj) {
   ArrayBufferViewContents<char> a(a_obj);
   ArrayBufferViewContents<char> b(b_obj);
@@ -895,6 +896,22 @@ int32_t FastCompare(Local<Value>,
 }
 
 static CFunction fast_compare(CFunction::Make(FastCompare));
+
+void Compare(const FunctionCallbackInfo<Value> &args) {
+  Environment* env = Environment::GetCurrent(args);
+
+  THROW_AND_RETURN_UNLESS_BUFFER(env, args[0]);
+  THROW_AND_RETURN_UNLESS_BUFFER(env, args[1]);
+  ArrayBufferViewContents<char> a(args[0]);
+  ArrayBufferViewContents<char> b(args[1]);
+
+  size_t cmp_length = std::min(a.length(), b.length());
+
+  int val = normalizeCompareVal(cmp_length > 0 ?
+                                memcmp(a.data(), b.data(), cmp_length) : 0,
+                                a.length(), b.length());
+  args.GetReturnValue().Set(val);
+}
 
 // Computes the offset for starting an indexOf or lastIndexOf search.
 // Returns either a valid offset in [0...<length - 1>], ie inside the Buffer,
@@ -1562,8 +1579,8 @@ void Initialize(Local<Object> target,
                             "byteLengthUtf8",
                             SlowByteLengthUtf8,
                             &fast_byte_length_utf8);
-  SetFastMethod(context, target, "copy", SlowCopy, &fast_copy);
-  SetFastMethodNoSideEffect(context, target, "compare", Compare, &fast_compare);
+  SetMethod(context, target, "copy", Copy);
+  SetMethod(context, target, "compare", Compare);
   SetMethodNoSideEffect(context, target, "compareOffset", CompareOffset);
   SetMethod(context, target, "fill", Fill);
   SetMethodNoSideEffect(context, target, "indexOfBuffer", IndexOfBuffer);
@@ -1640,8 +1657,6 @@ void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(fast_copy.GetTypeInfo());
   registry->Register(FastCopy);
   registry->Register(Compare);
-  registry->Register(FastCompare);
-  registry->Register(fast_compare.GetTypeInfo());
   registry->Register(CompareOffset);
   registry->Register(Fill);
   registry->Register(IndexOfBuffer);
