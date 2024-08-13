@@ -34,6 +34,7 @@ template("nghttp2_gn_build") {
     if (is_clang || !is_win) {
       cflags_c = [
         "-Wno-implicit-fallthrough",
+        "-Wno-extra-semi",
       ]
     }
   }
