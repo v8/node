@@ -50,35 +50,11 @@ void TimingSafeEqual(const FunctionCallbackInfo<Value>& args) {
       CRYPTO_memcmp(buf1.data(), buf2.data(), buf1.size()) == 0);
 }
 
-bool FastTimingSafeEqual(Local<Value> receiver,
-                         const FastApiTypedArray<uint8_t>& a,
-                         const FastApiTypedArray<uint8_t>& b,
-                         // NOLINTNEXTLINE(runtime/references)
-                         FastApiCallbackOptions& options) {
-  uint8_t* data_a;
-  uint8_t* data_b;
-  if (a.length() != b.length() || !a.getStorageIfAligned(&data_a) ||
-      !b.getStorageIfAligned(&data_b)) {
-    TRACK_V8_FAST_API_CALL("crypto.timingSafeEqual.error");
-    HandleScope scope(options.isolate);
-    THROW_ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH(options.isolate);
-    return false;
-  }
-
-  TRACK_V8_FAST_API_CALL("crypto.timingSafeEqual.ok");
-  return CRYPTO_memcmp(data_a, data_b, a.length()) == 0;
-}
-
-static v8::CFunction fast_equal(v8::CFunction::Make(FastTimingSafeEqual));
-
 void Initialize(Environment* env, Local<Object> target) {
-  SetFastMethodNoSideEffect(
-      env->context(), target, "timingSafeEqual", TimingSafeEqual, &fast_equal);
+  SetMethod(env->context(), target, "timingSafeEqual", TimingSafeEqual);
 }
 void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(TimingSafeEqual);
-  registry->Register(FastTimingSafeEqual);
-  registry->Register(fast_equal.GetTypeInfo());
 }
 }  // namespace Timing
 
