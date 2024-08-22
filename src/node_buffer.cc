@@ -1510,7 +1510,7 @@ void Initialize(Local<Object> target,
                             "byteLengthUtf8",
                             SlowByteLengthUtf8,
                             &fast_byte_length_utf8);
-  SetMethod(context, target, "copy", Copy);
+  SetMethod(context, target, "copy", SlowCopy);
   SetMethod(context, target, "compare", Compare);
   SetMethodNoSideEffect(context, target, "compareOffset", CompareOffset);
   SetMethod(context, target, "fill", Fill);
