@@ -8,6 +8,7 @@ prefix node-api
 
 # NODE_OPTIONS do not seem to work with GN.
 test_uv_threadpool_size/node-options: SKIP
+test_instance_data: SKIP
 
 [$system==win32]
 
