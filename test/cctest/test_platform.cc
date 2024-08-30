@@ -25,8 +25,7 @@ class RepostingTask : public v8::Task {
       --repost_count_;
       std::shared_ptr<v8::TaskRunner> task_runner =
           platform_->GetForegroundTaskRunner(
-            isolate_,
-            v8::TaskPriority::kUserBlocking);
+              isolate_, v8::TaskPriority::kUserBlocking);
       task_runner->PostTask(std::make_unique<RepostingTask>(
           repost_count_, run_count_, isolate_, platform_));
     }
@@ -48,7 +47,8 @@ TEST_F(PlatformTest, SkipNewTasksInFlushForegroundTasks) {
   Env env {handle_scope, argv};
   int run_count = 0;
   std::shared_ptr<v8::TaskRunner> task_runner =
-      platform->GetForegroundTaskRunner(isolate_, v8::TaskPriority::kUserBlocking);
+      platform->GetForegroundTaskRunner(
+          isolate_, v8::TaskPriority::kUserBlocking);
   task_runner->PostTask(
       std::make_unique<RepostingTask>(2, &run_count, isolate_, platform.get()));
   EXPECT_TRUE(platform->FlushForegroundTasks(isolate_));
