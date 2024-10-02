@@ -25,6 +25,7 @@ report-api/test: SKIP
 new-isolate-addon/test: SKIP
 new-isolate-addon/test-nonodesnapshot: SKIP
 cppgc-object/test: SKIP
+request-interrupt/test: SKIP
 
 [$system==ibmi]
 openssl-binding/test: SKIP
