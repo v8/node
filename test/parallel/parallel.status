@@ -90,6 +90,9 @@ test-process-versions: SKIP
 
 test-crypto-no-algorithm: SKIP
 
+# Skip tests requiring the node executable at a specific path
+test-async-context-frame: SKIP
+
 [$system==win32]
 
 # Until V8 provides a better way to check for flag mismatch without
