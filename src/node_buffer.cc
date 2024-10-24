@@ -42,7 +42,15 @@
 #include "nbytes.h"
 
 #define THROW_AND_RETURN_UNLESS_BUFFER(env, obj)                            \
-  THROW_AND_RETURN_IF_NOT_BUFFER(env, obj, "argument")                      \
+  THROW_AND_RETURN_IF_NOT_BUFFER(env, obj, "argument")
+
+#define THROW_AND_RETURN_VAL_UNLESS_BUFFER(isolate, val, prefix, retval)       \
+  do {                                                                         \
+    if (!Buffer::HasInstance(val)) {                                           \
+      node::THROW_ERR_INVALID_ARG_TYPE(isolate, prefix " must be a buffer");   \
+      return retval;                                                           \
+    }                                                                          \
+  } while (0)
 
 #define THROW_AND_RETURN_IF_OOB(r)                                          \
   do {                                                                      \
