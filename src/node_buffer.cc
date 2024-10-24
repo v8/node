@@ -594,6 +594,7 @@ uint32_t FastCopy(Local<Value> receiver,
                   uint32_t target_start,
                   uint32_t source_start,
                   uint32_t to_copy,
+                  // NOLINTNEXTLINE(runtime/references) This is V8 api.
                   v8::FastApiCallbackOptions& options) {
   ArrayBufferViewContents<char> source(source_obj);
   SPREAD_BUFFER_ARG(target_obj, target);
@@ -1477,6 +1478,7 @@ uint32_t FastWriteString(Local<Value> receiver,
                          const v8::FastOneByteString& src,
                          uint32_t offset,
                          uint32_t max_length,
+                         // NOLINTNEXTLINE(runtime/references) This is V8 api.
                          v8::FastApiCallbackOptions& options) {
   THROW_AND_RETURN_VAL_UNLESS_BUFFER(options.isolate, dst, "dst", 0);
   SPREAD_BUFFER_ARG(dst, dst_buffer);
