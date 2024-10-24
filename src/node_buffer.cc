@@ -42,7 +42,15 @@
 #include "nbytes.h"
 
 #define THROW_AND_RETURN_UNLESS_BUFFER(env, obj)                            \
-  THROW_AND_RETURN_IF_NOT_BUFFER(env, obj, "argument")                      \
+  THROW_AND_RETURN_IF_NOT_BUFFER(env, obj, "argument")
+
+#define THROW_AND_RETURN_VAL_UNLESS_BUFFER(isolate, val, prefix, retval)       \
+  do {                                                                         \
+    if (!Buffer::HasInstance(val)) {                                           \
+      node::THROW_ERR_INVALID_ARG_TYPE(isolate, prefix " must be a buffer");   \
+      return retval;                                                           \
+    }                                                                          \
+  } while (0)
 
 #define THROW_AND_RETURN_IF_OOB(r)                                          \
   do {                                                                      \
@@ -60,7 +68,6 @@ using v8::ArrayBufferView;
 using v8::BackingStore;
 using v8::Context;
 using v8::EscapableHandleScope;
-using v8::FastApiTypedArray;
 using v8::FunctionCallbackInfo;
 using v8::Global;
 using v8::HandleScope;
@@ -582,19 +589,17 @@ void SlowCopy(const FunctionCallbackInfo<Value>& args) {
 
 // Assume caller has properly validated args.
 uint32_t FastCopy(Local<Value> receiver,
-                  const v8::FastApiTypedArray<uint8_t>& source,
-                  const v8::FastApiTypedArray<uint8_t>& target,
+                  Local<Value> source_obj,
+                  Local<Value> target_obj,
                   uint32_t target_start,
                   uint32_t source_start,
-                  uint32_t to_copy) {
-  uint8_t* source_data;
-  CHECK(source.getStorageIfAligned(&source_data));
+                  uint32_t to_copy,
+                  // NOLINTNEXTLINE(runtime/references) This is V8 api.
+                  v8::FastApiCallbackOptions& options) {
+  ArrayBufferViewContents<char> source(source_obj);
+  SPREAD_BUFFER_ARG(target_obj, target);
 
-  uint8_t* target_data;
-  CHECK(target.getStorageIfAligned(&target_data));
-
-  memmove(target_data + target_start, source_data + source_start, to_copy);
-
+  memmove(target_data + target_start, source.data() + source_start, to_copy);
   return to_copy;
 }
 
@@ -1470,21 +1475,25 @@ void SlowWriteString(const FunctionCallbackInfo<Value>& args) {
 
 template <encoding encoding>
 uint32_t FastWriteString(Local<Value> receiver,
-                         const v8::FastApiTypedArray<uint8_t>& dst,
+                         Local<Value> dst,
                          const v8::FastOneByteString& src,
                          uint32_t offset,
-                         uint32_t max_length) {
-  uint8_t* dst_data;
-  CHECK(dst.getStorageIfAligned(&dst_data));
-  CHECK(offset <= dst.length());
-  CHECK(dst.length() - offset <= std::numeric_limits<uint32_t>::max());
+                         uint32_t max_length,
+                         // NOLINTNEXTLINE(runtime/references) This is V8 api.
+                         v8::FastApiCallbackOptions& options) {
+  THROW_AND_RETURN_VAL_UNLESS_BUFFER(options.isolate, dst, "dst", 0);
+  SPREAD_BUFFER_ARG(dst, dst_buffer);
+  CHECK(dst_buffer_length <=
+        static_cast<size_t>(std::numeric_limits<uint32_t>::max()));
+  uint32_t dst_size = static_cast<uint32_t>(dst_buffer_length);
+  CHECK(offset <= dst_size);
   TRACK_V8_FAST_API_CALL("buffer.writeString");
 
   return WriteOneByteString<encoding>(
       src.data,
       src.length,
-      reinterpret_cast<char*>(dst_data + offset),
-      std::min<uint32_t>(dst.length() - offset, max_length));
+      reinterpret_cast<char*>(dst_buffer_data + offset),
+      std::min<uint32_t>(dst_size - offset, max_length));
 }
 
 static v8::CFunction fast_write_string_ascii(

@@ -53,18 +53,20 @@ using CFunctionWithBool = void (*)(v8::Local<v8::Value>,
 
 using CFunctionWriteString =
     uint32_t (*)(v8::Local<v8::Value> receiver,
-                 const v8::FastApiTypedArray<uint8_t>& dst,
+                 v8::Local<v8::Value> dst,
                  const v8::FastOneByteString& src,
                  uint32_t offset,
-                 uint32_t max_length);
+                 uint32_t max_length,
+                 v8::FastApiCallbackOptions&);
 
 using CFunctionBufferCopy =
     uint32_t (*)(v8::Local<v8::Value> receiver,
-                 const v8::FastApiTypedArray<uint8_t>& source,
-                 const v8::FastApiTypedArray<uint8_t>& target,
+                 v8::Local<v8::Value> source,
+                 v8::Local<v8::Value> target,
                  uint32_t target_start,
                  uint32_t source_start,
-                 uint32_t to_copy);
+                 uint32_t to_copy,
+                 v8::FastApiCallbackOptions&);
 
 // This class manages the external references from the V8 heap
 // to the C++ addresses in Node.js.
