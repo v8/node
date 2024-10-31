@@ -11,7 +11,6 @@
 namespace node {
 
 using v8::FastApiCallbackOptions;
-using v8::FastApiTypedArray;
 using v8::FunctionCallbackInfo;
 using v8::HandleScope;
 using v8::Local;
