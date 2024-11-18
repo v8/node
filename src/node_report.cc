@@ -15,7 +15,9 @@
 #include <Windows.h>
 #else  // !_WIN32
 #include <cxxabi.h>
+#ifndef __Fuchsia__
 #include <sys/resource.h>
+#endif
 #include <dlfcn.h>
 #endif
 
@@ -653,6 +655,7 @@ static void PrintResourceUsage(JSONWriter* writer) {
       (uv_hrtime() - per_process::node_start_time) / (NANOS_PER_SEC);
   if (uptime == 0) uptime = 1;  // avoid division by zero.
 
+#ifndef __Fuchsia__
   // Process and current thread usage statistics
   uv_rusage_t rusage;
   writer->json_objectstart("resourceUsage");
@@ -725,6 +728,7 @@ static void PrintResourceUsage(JSONWriter* writer) {
     writer->json_objectend();
     writer->json_objectend();
   }
+#endif
 }
 
 static void PrintEnvironmentVariables(JSONWriter* writer) {
@@ -797,7 +801,7 @@ static void PrintSystemInformation(JSONWriter* writer) {
     }
   }
   writer->json_objectend();
-#endif  // _WIN32
+#endif  // _WIN32 && __Fuchsia__
 
   PrintLoadedLibraries(writer);
 }
