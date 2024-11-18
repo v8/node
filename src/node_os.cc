@@ -81,7 +81,15 @@ static void GetHostname(const FunctionCallbackInfo<Value>& args) {
 static void GetOSInformation(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   uv_utsname_t info;
-  int err = uv_os_uname(&info);
+  int err = 0;
+#ifdef __Fuchsia__
+  // TODO(victor): Update uv_os_uname to get these informations for Fuchsia
+  info.sysname[0] = 0;
+  info.version[0] = 0;
+  info.release[0] = 0;
+#else
+  err = uv_os_uname(&info);
+#endif
 
   if (err != 0) {
     CHECK_GE(args.Length(), 1);
@@ -358,6 +366,7 @@ static void GetUserInfo(const FunctionCallbackInfo<Value>& args) {
       env->isolate(), Null(env->isolate()), &names[0], &values[0], kRetLength));
 }
 
+#ifndef __Fuchsia__
 
 static void SetPriority(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
@@ -405,6 +414,8 @@ static void GetAvailableParallelism(const FunctionCallbackInfo<Value>& args) {
   unsigned int parallelism = uv_available_parallelism();
   args.GetReturnValue().Set(parallelism);
 }
+
+#endif  // !__Fuchsia__
 
 void Initialize(Local<Object> target,
                 Local<Value> unused,
