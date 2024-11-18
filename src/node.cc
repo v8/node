@@ -118,7 +118,9 @@
 #define STDIN_FILENO 0
 #else
 #include <pthread.h>
+#ifndef __Fuchsia__
 #include <sys/resource.h>  // getrlimit, setrlimit
+#endif
 #include <termios.h>       // tcgetattr, tcsetattr
 #include <unistd.h>        // STDIN_FILENO, STDERR_FILENO
 #endif
@@ -458,7 +460,7 @@ void TrapWebAssemblyOrContinue(int signo, siginfo_t* info, void* ucontext) {
 #endif  // defined(_WIN32)
 #endif  // NODE_USE_V8_WASM_TRAP_HANDLER
 
-#ifdef __POSIX__
+#if defined(__POSIX__) && !defined(__Fuchsia__)
 void RegisterSignalHandler(int signal,
                            sigaction_cb handler,
                            bool reset_handler) {
@@ -658,6 +660,7 @@ static void PlatformInit(ProcessInitializationFlags::Flags flags) {
       } while (min + 1 < max);
     }
   }
+#endif  // __Fuchsia__
 #endif  // __POSIX__
 #ifdef _WIN32
   if (!(flags & ProcessInitializationFlags::kNoStdioInitialization)) {
@@ -695,6 +698,11 @@ void ResetStdio(bool force_terminal_restore) {
 
   for (auto& s : stdio) {
     const int fd = &s - stdio;
+
+#ifdef __Fuchsia__
+    // In fuchsia stdin is not readily available.
+    if (fd == 0) continue;
+#endif
 
     struct stat tmp;
     if (-1 == fstat(fd, &tmp)) {
