@@ -22,6 +22,13 @@ template("sqlite_gn_build") {
         ":sqlite_config",
         ":sqlite_defines",
       ]
+    } else {
+      cflags_c = [
+        "-Wno-implicit-fallthrough",
+        "-Wno-unreachable-code",
+        "-Wno-unreachable-code-break",
+        "-Wno-unreachable-code-return",
+      ]
     }
   } else {
     config("sqlite_config") {
