@@ -70,6 +70,9 @@ test-v8-serdes: SKIP
 
 test-v8-stats: SKIP
 
+# Temporarily skip for https://crrev.com/c/5907815
+test-fs-promises: SKIP
+
 test-strace-openat-openssl: SKIP
 test-policy-dependency-conditions: SKIP
 
