@@ -33,10 +33,6 @@ vm_display_syntax_error.js: SKIP
 vm_dont_display_runtime_error.js: SKIP
 vm_dont_display_syntax_error.js: SKIP
 
-# Temporarily skip for https://crrev.com/c/5907815
-assert_throws_stack.js: SKIP
-internal_assert_fail.js: SKIP
-
 [$system==win32]
 
 [$system==linux]
