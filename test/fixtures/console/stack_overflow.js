@@ -27,7 +27,10 @@ Error.stackTraceLimit = 0;
 console.error('before');
 
 // Trigger stack overflow by stringifying a deeply nested array.
-let array = [];
+// Create a holey array with elements on the prototype to force the slow-path
+// in JSON.stringify. The fast-path is iterative and won't throw.
+Array.prototype[2] = 'foo'
+let array = [,];
 for (let i = 0; i < 100000; i++) {
   array = [ array ];
 }
