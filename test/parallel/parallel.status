@@ -68,6 +68,10 @@ test-util-inspect: SKIP
 # Skip a test which prevents updating the ValueSerialiser format
 test-v8-serdes: SKIP
 
+# Skip failed test to ship explicit resource management
+# https://crrev.com/c/6072348
+test-vm-global-property-enumerator: SKIP
+
 test-v8-stats: SKIP
 
 test-strace-openat-openssl: SKIP
