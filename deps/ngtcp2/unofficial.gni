@@ -70,6 +70,7 @@ template("ngtcp2_gn_build") {
         "-Wno-implicit-fallthrough",
         # Remove after https://github.com/ngtcp2/ngtcp2/issues/1050 is fixed.
         "-Wno-sometimes-uninitialized",
+        "-Wno-unused-function",
       ]
     }
   }
