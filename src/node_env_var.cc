@@ -418,7 +418,6 @@ static Intercepted EnvSetter(Local<Name> property,
             key_utf8.out());
     PrintTraceEnvStack(env);
   }
-
   return Intercepted::kYes;
 }
 
