@@ -39,7 +39,9 @@
 #include <arpa/inet.h>
 #include <limits.h> /* INT_MAX, PATH_MAX, IOV_MAX */
 #include <sys/uio.h> /* writev */
+#ifndef __Fuchsia__
 #include <sys/resource.h> /* getrusage */
+#endif
 #include <pwd.h>
 #include <grp.h>
 #include <sys/utsname.h>
@@ -1001,7 +1003,7 @@ int uv__fd_exists(uv_loop_t* loop, int fd) {
 }
 
 
-static int uv__getrusage(int who, uv_rusage_t* rusage) {
+int uv_getrusage(uv_rusage_t* rusage) {
   struct rusage usage;
 
   if (getrusage(who, &usage))
@@ -1041,7 +1043,6 @@ static int uv__getrusage(int who, uv_rusage_t* rusage) {
 
   return 0;
 }
-
 
 int uv_getrusage(uv_rusage_t* rusage) {
   return uv__getrusage(RUSAGE_SELF, rusage);
@@ -1585,6 +1586,7 @@ int uv_cpumask_size(void) {
 #endif
 }
 
+#ifndef __Fuchsia__
 int uv_os_getpriority(uv_pid_t pid, int* priority) {
   int r;
 
@@ -1741,6 +1743,7 @@ int uv_thread_setpriority(uv_thread_t tid, int priority) {
   return 0;
 #endif  /* !defined(__GNU__) */
 }
+#endif // !__Fuchsia__
 
 int uv_os_uname(uv_utsname_t* buffer) {
   struct utsname buf;
