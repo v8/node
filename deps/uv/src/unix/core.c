@@ -1026,7 +1026,7 @@ int uv__fd_exists(uv_loop_t* loop, int fd) {
 }
 
 
-int uv_getrusage(uv_rusage_t* rusage) {
+int uv__getrusage(int who, uv_rusage_t* rusage) {
   struct rusage usage;
 
   if (getrusage(who, &usage))
