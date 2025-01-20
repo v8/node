@@ -35,6 +35,11 @@
 #include <fcntl.h>
 #include <poll.h>
 
+#ifdef __Fuchsia__
+# include <lib/fdio/spawn.h>
+# include <zircon/syscalls.h>
+#endif
+
 #if defined(__APPLE__)
 # include <spawn.h>
 # include <paths.h>
@@ -70,6 +75,31 @@ extern char **environ;
 #define UV_USE_SIGCHLD
 #endif
 
+uv_pid_t uv__waitpid(uv_pid_t pid, int *status, int options) {
+#ifdef __Fuchsia__
+  // TODO(victor): ignoring options for now
+  assert(options == 0);
+
+  zx_status_t result = zx_object_wait_one(pid, ZX_TASK_TERMINATED, ZX_TIME_INFINITE, NULL);
+  if (result != ZX_OK)
+    goto error;
+
+  zx_info_process_t proc_info;
+  result = zx_object_get_info(pid, ZX_INFO_PROCESS, &proc_info, sizeof(proc_info), NULL, NULL);
+  if (result != ZX_OK)
+    goto error;
+
+  *status = proc_info.return_code;
+  return 0;
+
+error:
+  errno = ECHILD;
+  return -1;
+#else
+  return waitpid(pid, status, options);
+#endif
+}
+
 
 #ifdef UV_USE_SIGCHLD
 static void uv__chld(uv_signal_t* handle, int signum) {
@@ -104,7 +134,7 @@ void uv__wait_children(uv_loop_t* loop) {
   int term_signal;
   int status;
   int options;
-  pid_t pid;
+  uv_pid_t pid;
   struct uv__queue pending;
   struct uv__queue* q;
   struct uv__queue* h;
@@ -128,7 +158,7 @@ void uv__wait_children(uv_loop_t* loop) {
 #endif
 
     do
-      pid = waitpid(process->pid, &status, options);
+      pid = uv__waitpid(process->pid, &status, options);
     while (pid == -1 && errno == EINTR);
 
 #ifdef UV_USE_SIGCHLD
@@ -253,6 +283,7 @@ static void uv__process_close_stream(uv_stdio_container_t* container) {
 }
 
 
+#ifndef __Fuchsia__
 static void uv__write_int(int fd, int val) {
   ssize_t n;
 
@@ -264,6 +295,7 @@ static void uv__write_int(int fd, int val) {
    * but we have nothing left but to _exit ourself now too. */
   _exit(127);
 }
+#endif
 
 
 static void uv__write_errno(int error_fd) {
@@ -271,6 +303,7 @@ static void uv__write_errno(int error_fd) {
 }
 
 
+#if !defined(__Fuchsia__)
 static void uv__process_child_init(const uv_process_options_t* options,
                                    int stdio_count,
                                    int (*pipes)[2],
@@ -402,7 +435,7 @@ static void uv__process_child_init(const uv_process_options_t* options,
 
   uv__write_errno(error_fd);
 }
-
+#endif
 
 #if defined(__APPLE__)
 typedef struct uv__posix_spawn_fncs_tag {
@@ -808,6 +841,28 @@ static int uv__spawn_and_init_child_fork(const uv_process_options_t* options,
                                          int (*pipes)[2],
                                          int error_fd,
                                          pid_t* pid) {
+#ifdef __Fuchsia__
+  const char *executable_path;
+  if (*options->file == 0) {
+    // TODO(victor): This is not necessarilly the name of the process!!
+    executable_path = "/pkg/uv_tests";
+  } else {
+    executable_path = options->file;
+  }
+
+  // TODO(victor): missing uv_process_child_init logic before spawning.
+  char err_msg_out[FDIO_SPAWN_ERR_MSG_MAX_LENGTH];
+  zx_status_t zx_status = fdio_spawn_etc(ZX_HANDLE_INVALID, FDIO_SPAWN_CLONE_ALL, executable_path,
+    (const char* const *)options->args,
+    (const char* const *)options->env, 0, NULL,
+    pid, err_msg_out);
+  if (zx_status != ZX_OK) {
+    uv_rwlock_wrunlock(&loop->cloexec_lock);
+    uv__close(signal_pipe[0]);
+    uv__close(signal_pipe[1]);
+    return UV__ERR(ENOENT);
+  }
+#else
   sigset_t signewset;
   sigset_t sigoldset;
 
@@ -835,6 +890,7 @@ static int uv__spawn_and_init_child_fork(const uv_process_options_t* options,
 
   if (pthread_sigmask(SIG_SETMASK, &sigoldset, NULL) != 0)
     abort();
+#endif
 
   if (*pid == -1)
     /* Failed to fork */
@@ -960,7 +1016,8 @@ int uv_spawn(uv_loop_t* loop,
   int pipes_storage[8][2];
   int (*pipes)[2];
   int stdio_count;
-  pid_t pid;
+  ssize_t r;
+  uv_pid_t pid;
   int err;
   int exec_errorno;
   int i;
@@ -1006,9 +1063,6 @@ int uv_spawn(uv_loop_t* loop,
   uv_signal_start(&loop->child_watcher, uv__chld, SIGCHLD);
 #endif
 
-  /* Spawn the child */
-  exec_errorno = uv__spawn_and_init_child(loop, options, stdio_count, pipes, &pid);
-
 #if 0
   /* This runs into a nodejs issue (it expects initialized streams, even if the
    * exec failed).
@@ -1016,6 +1070,9 @@ int uv_spawn(uv_loop_t* loop,
   if (exec_errorno != 0)
       goto error;
 #endif
+
+  /* Spawn the child */
+  exec_errorno = uv__spawn_and_init_child(loop, options, stdio_count, pipes, &pid);
 
   /* Activate this handle if exec() happened successfully, even if we later
    * fail to open a stdio handle. This ensures we can eventually reap the child
