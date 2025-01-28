@@ -235,8 +235,8 @@ class WorkerThreadData {
       // new Isolate at the same address can successfully be registered with
       // the platform.
       // (Refs: https://github.com/nodejs/node/issues/30846)
-      w_->platform_->UnregisterIsolate(isolate);
       isolate->Dispose();
+      w_->platform_->UnregisterIsolate(isolate);
 
       // Wait until the platform has cleaned up all relevant resources.
       while (!platform_finished) {
