@@ -103,8 +103,8 @@ TEST_F(NodeZeroIsolateTestFixture, IsolatePlatformDelegateTest) {
 
   // Graceful shutdown
   delegate->Shutdown();
-  platform->UnregisterIsolate(isolate);
   isolate->Dispose();
+  platform->UnregisterIsolate(isolate);
 }
 
 TEST_F(PlatformTest, TracingControllerNullptr) {
