@@ -44,6 +44,8 @@ NodeMainInstance::NodeMainInstance(const SnapshotData* snapshot_data,
       isolate_params_(std::make_unique<Isolate::CreateParams>()),
       snapshot_data_(snapshot_data) {
   isolate_params_->array_buffer_allocator = array_buffer_allocator_.get();
+  isolate_params_->cpp_heap =
+      v8::CppHeap::Create(platform_, v8::CppHeapCreateParams{{}}).release();
 
   isolate_ =
       NewIsolate(isolate_params_.get(), event_loop, platform, snapshot_data);
