@@ -162,6 +162,9 @@ class WorkerThreadData {
     SetIsolateCreateParamsForNode(&params);
     w->UpdateResourceConstraints(&params.constraints);
     params.array_buffer_allocator_shared = allocator;
+    params.cpp_heap =
+        v8::CppHeap::Create(w->platform_, v8::CppHeapCreateParams{{}})
+            .release();
     Isolate* isolate =
         NewIsolate(&params, &loop_, w->platform_, w->snapshot_data());
     if (isolate == nullptr) {
