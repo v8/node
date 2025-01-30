@@ -1216,16 +1216,16 @@ InitializeOncePerProcessInternal(const std::vector<std::string>& args,
     result->platform_ = per_process::v8_platform.Platform();
   }
 
-  if (!(flags & ProcessInitializationFlags::kNoInitializeV8)) {
-    V8::Initialize();
-  }
-
   if (!(flags & ProcessInitializationFlags::kNoInitializeCppgc)) {
     v8::PageAllocator* allocator = nullptr;
     if (result->platform_ != nullptr) {
       allocator = result->platform_->GetPageAllocator();
     }
     cppgc::InitializeProcess(allocator);
+  }
+
+  if (!(flags & ProcessInitializationFlags::kNoInitializeV8)) {
+    V8::Initialize();
   }
 
 #if NODE_USE_V8_WASM_TRAP_HANDLER
