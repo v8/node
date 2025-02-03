@@ -304,6 +304,10 @@ Isolate* NewIsolate(Isolate::CreateParams* params,
                     MultiIsolatePlatform* platform,
                     const SnapshotData* snapshot_data,
                     const IsolateSettings& settings) {
+  if (params->cpp_heap == nullptr) {
+    params->cpp_heap =
+        v8::CppHeap::Create(platform, v8::CppHeapCreateParams{{}}).release();
+  }
   Isolate* isolate = Isolate::Allocate();
   if (isolate == nullptr) return nullptr;
 
