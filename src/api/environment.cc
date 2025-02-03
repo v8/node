@@ -325,6 +325,10 @@ Isolate* NewIsolate(Isolate::CreateParams* params,
                     const SnapshotData* snapshot_data,
                     const IsolateSettings& settings) {
   IsolateGroup group = GetOrCreateIsolateGroup();
+  if (params->cpp_heap == nullptr) {
+    params->cpp_heap =
+        v8::CppHeap::Create(platform, v8::CppHeapCreateParams{{}}).release();
+  }
   Isolate* isolate = Isolate::Allocate(group);
   if (isolate == nullptr) return nullptr;
 
