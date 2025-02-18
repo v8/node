@@ -351,9 +351,13 @@ Isolate* NewIsolate(ArrayBufferAllocator* allocator,
                     uv_loop_t* event_loop,
                     MultiIsolatePlatform* platform,
                     const EmbedderSnapshotData* snapshot_data,
-                    const IsolateSettings& settings) {
+                    const IsolateSettings& settings,
+                    std::unique_ptr<v8::CppHeap> cpp_heap) {
   Isolate::CreateParams params;
   if (allocator != nullptr) params.array_buffer_allocator = allocator;
+  if (cpp_heap) {
+    params.cpp_heap = cpp_heap.release();
+  }
   return NewIsolate(&params,
                     event_loop,
                     platform,
