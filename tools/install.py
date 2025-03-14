@@ -212,6 +212,7 @@ def headers(options, action):
       'include/cppgc/internal/caged-heap-local-data.h',
       'include/cppgc/internal/caged-heap.h',
       'include/cppgc/internal/compiler-specific.h',
+      'include/cppgc/internal/conditional-stack-allocated.h',
       'include/cppgc/internal/finalizer-trait.h',
       'include/cppgc/internal/gc-info.h',
       'include/cppgc/internal/logging.h',
