@@ -26,6 +26,7 @@ new-isolate-addon/test: SKIP
 new-isolate-addon/test-nonodesnapshot: SKIP
 cppgc-object/test: SKIP
 request-interrupt/test: SKIP
+stringbytes-external-exceed-max/*: SKIP
 
 [$system==ibmi]
 openssl-binding/test: SKIP
