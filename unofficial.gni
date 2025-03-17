@@ -80,6 +80,7 @@ template("node_gn_build") {
       "-Wno-macro-redefined",
       "-Wno-missing-braces",
       "-Wno-range-loop-bind-reference",
+      "-Wno-return-stack-address",
       "-Wno-return-type",
       "-Wno-shadow",
       "-Wno-sometimes-uninitialized",
