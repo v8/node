@@ -105,6 +105,7 @@ std::optional<bool> JSONParser::GetTopLevelBoolField(std::string_view field) {
 std::optional<JSONParser::StringDict> JSONParser::GetTopLevelStringDict(
     std::string_view field) {
   Isolate* isolate = isolate_.get();
+  v8::Isolate::Scope isolate_scope(isolate);
   v8::HandleScope handle_scope(isolate);
   Local<Context> context = context_.Get(isolate);
   Local<Object> content_object = content_.Get(isolate);
