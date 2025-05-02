@@ -4,9 +4,6 @@
 #define SIMDUTF_H
 #include <cstring>
 
-// Rename namespace to avoid conflict with simdutf from V8.
- #define simdutf node_simdutf
-
 /* begin file include/simdutf/compiler_check.h */
 #ifndef SIMDUTF_COMPILER_CHECK_H
 #define SIMDUTF_COMPILER_CHECK_H
