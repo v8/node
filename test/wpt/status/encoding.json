@@ -70,7 +70,8 @@
     "requires": ["full-icu"]
   },
   "encodeInto.any.js": {
-    "requires": ["small-icu"]
+    "requires": ["small-icu"],
+    "skip": "Skipped for flipping float16array flag to on by default"
   },
   "textdecoder-copy.any.js": {
     "requires": ["small-icu"]
