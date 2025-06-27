@@ -352,7 +352,7 @@ template("node_gn_build") {
       "src/builtin_info.cc",
       "src/builtin_info.h",
     ]
-    include_dirs = [ "src" ]
+    include_dirs = [ "src", "$node_simdutf_path" ]
   }
 
   action("run_node_js2c") {
