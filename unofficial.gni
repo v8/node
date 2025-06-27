@@ -188,7 +188,6 @@ template("node_gn_build") {
       "deps/merve",
       "deps/nbytes",
       "deps/nghttp2",
-      "deps/ngtcp2",
       "deps/postject",
       "deps/uvwasi",
       "deps/zstd",
