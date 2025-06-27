@@ -76,7 +76,7 @@ template("inspector_gn_build") {
   }
 
   config("crdtp_config") {
-    include_dirs = [ protocol_tool_path ]
+    include_dirs = [ protocol_tool_path, "$node_simdutf_path" ]
   }
 
   static_library("crdtp") {
