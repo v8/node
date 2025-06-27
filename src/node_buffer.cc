@@ -630,7 +630,6 @@ uint32_t FastCopy(Local<Value> receiver,
 
   CopyImpl(source_obj, target_obj, target_start, source_start, to_copy);
 
-  memmove(target_data + target_start, source.data() + source_start, to_copy);
   return to_copy;
 }
 
@@ -893,7 +892,6 @@ void CompareOffset(const FunctionCallbackInfo<Value> &args) {
   args.GetReturnValue().Set(val);
 }
 
-<<<<<<< HEAD
 int32_t CompareImpl(Local<Value> a_obj, Local<Value> b_obj) {
   ArrayBufferViewContents<char> a(a_obj);
   ArrayBufferViewContents<char> b(b_obj);
@@ -927,22 +925,6 @@ int32_t FastCompare(Local<Value>,
 }
 
 static CFunction fast_compare(CFunction::Make(FastCompare));
-
-void Compare(const FunctionCallbackInfo<Value> &args) {
-  Environment* env = Environment::GetCurrent(args);
-
-  THROW_AND_RETURN_UNLESS_BUFFER(env, args[0]);
-  THROW_AND_RETURN_UNLESS_BUFFER(env, args[1]);
-  ArrayBufferViewContents<char> a(args[0]);
-  ArrayBufferViewContents<char> b(args[1]);
-
-  size_t cmp_length = std::min(a.length(), b.length());
-
-  int val = normalizeCompareVal(cmp_length > 0 ?
-                                memcmp(a.data(), b.data(), cmp_length) : 0,
-                                a.length(), b.length());
-  args.GetReturnValue().Set(val);
-}
 
 // Computes the offset for starting an indexOf or lastIndexOf search.
 // Returns either a valid offset in [0...<length - 1>], ie inside the Buffer,
