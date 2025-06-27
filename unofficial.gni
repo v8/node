@@ -339,7 +339,7 @@ template("node_gn_build") {
       "src/embedded_data.cc",
       "src/embedded_data.h",
     ]
-    include_dirs = [ "src" ]
+    include_dirs = [ "src", "$node_simdutf_path" ]
   }
 
   action("run_node_js2c") {
