@@ -142,6 +142,7 @@ class NODE_EXTERN_PRIVATE IsolateData : public MemoryRetainer {
       ArrayBufferAllocator* node_allocator = nullptr,
       const EmbedderSnapshotData* embedder_snapshot_data = nullptr,
       std::shared_ptr<PerIsolateOptions> options = nullptr);
+  ~IsolateData();
 
   SET_MEMORY_INFO_NAME(IsolateData)
   SET_SELF_SIZE(IsolateData)
