@@ -104,7 +104,8 @@ const tests = [
   },
   { name: 'test-runner/output/abort_suite.js', flags: ['--test-reporter=tap'] },
   { name: 'test-runner/output/abort_hooks.js', flags: ['--test-reporter=tap'] },
-  { name: 'test-runner/output/describe_it.js', flags: ['--test-reporter=tap'] },
+  // DISABLED FOR https://chromium-review.googlesource.com/c/v8/v8/+/6826001
+  // { name: 'test-runner/output/describe_it.js', flags: ['--test-reporter=tap'] },
   {
     name: 'test-runner/output/describe_nested.js',
     flags: ['--test-reporter=tap'],
