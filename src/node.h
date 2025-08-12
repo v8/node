@@ -1540,9 +1540,10 @@ void RegisterSignalHandler(int signal,
 // work with only Node.js versions with v8::Object::Wrap() should use that
 // instead.
 NODE_DEPRECATED("Use v8::Object::Wrap()",
-                NODE_EXTERN void SetCppgcReference(v8::Isolate* isolate,
-                                                   v8::Local<v8::Object> object,
-                                                   void* wrappable));
+                NODE_EXTERN void SetCppgcReference(
+                  v8::Isolate* isolate,
+                  v8::Local<v8::Object> object,
+                  v8::Object::Wrappable* wrappable));
 
 }  // namespace node
 
