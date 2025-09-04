@@ -178,7 +178,7 @@ ModuleWrap* ModuleWrap::GetLinkedRequest(uint32_t index) {
       object()->GetInternalField(kLinkedRequestsSlot);
   DCHECK(linked_requests_data->IsValue() &&
          linked_requests_data.As<Value>()->IsArray());
-  Local<Array> requests = linked_requests_data.As<Array>();
+  Local<Array> requests = linked_requests_data.As<Value>().As<Array>();
 
   CHECK_LT(index, requests->Length());
 
