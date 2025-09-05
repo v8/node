@@ -42,15 +42,15 @@ void Initialize(v8::Local<v8::Object> exports,
                 v8::Local<v8::Value> module,
                 v8::Local<v8::Context> context) {
   AsyncData* data = new AsyncData();
-  data->isolate = context->GetIsolate();
+  data->isolate = v8::Isolate::GetCurrent();
   auto handle = node::AddEnvironmentCleanupHook(
-      context->GetIsolate(),
+      v8::Isolate::GetCurrent(),
       AsyncCleanupHook,
       data);
   data->handle = std::move(handle);
 
   auto must_not_call_handle = node::AddEnvironmentCleanupHook(
-      context->GetIsolate(),
+      v8::Isolate::GetCurrent(),
       MustNotCall,
       nullptr);
   node::RemoveEnvironmentCleanupHook(std::move(must_not_call_handle));

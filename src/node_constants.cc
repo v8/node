@@ -1281,7 +1281,7 @@ void CreatePerContextProperties(Local<Object> target,
                                 Local<Value> unused,
                                 Local<Context> context,
                                 void* priv) {
-  Isolate* isolate = context->GetIsolate();
+  Isolate* isolate = Isolate::GetCurrent();
   Environment* env = Environment::GetCurrent(context);
 
   CHECK(

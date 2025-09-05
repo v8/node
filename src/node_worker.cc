@@ -1164,7 +1164,7 @@ void GetEnvMessagePort(const FunctionCallbackInfo<Value>& args) {
   Local<Object> port = env->message_port();
   CHECK_IMPLIES(!env->is_main_thread(), !port.IsEmpty());
   if (!port.IsEmpty()) {
-    CHECK_EQ(port->GetCreationContextChecked()->GetIsolate(),
+    CHECK_EQ(Isolate::GetCurrent(),
              args.GetIsolate());
     args.GetReturnValue().Set(port);
   }
