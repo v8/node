@@ -8,10 +8,12 @@ import("$node_v8_path/gni/v8.gni")
 # The actual configurations are put inside a template in unofficial.gni to
 # prevent accidental edits from contributors.
 template("ncrypto_gn_build") {
-  config("ncrypto_config") {
+  config("ncrypto_external_config") {
     include_dirs = [ "." ]
+  }
+  config("ncrypto_internal_config") {
     cflags = [
-      "-Wno-deprecated-declarations",
+      # "-Wno-deprecated-declarations",
       "-Wno-pessimizing-move",
       "-Wno-shadow",
       "-Wno-unused-variable",
@@ -27,7 +29,8 @@ template("ncrypto_gn_build") {
 
   source_set(target_name) {
     forward_variables_from(invoker, "*")
-    public_configs = [ ":ncrypto_config" ]
+    configs += [ ":ncrypto_internal_config" ]
+    public_configs = [ ":ncrypto_external_config" ]
     sources = gypi_values.ncrypto_sources
     deps = [ "$node_openssl_path" ]
   }
