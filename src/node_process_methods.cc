@@ -679,7 +679,7 @@ void BindingData::RegisterExternalReferences(
 BindingData* BindingData::FromV8Value(Local<Value> value) {
   Local<Object> v8_object = value.As<Object>();
   return static_cast<BindingData*>(
-      v8_object->GetAlignedPointerFromInternalField(BaseObject::kSlot));
+      v8_object->GetAlignedPointerFromInternalField(BaseObject::kSlot, 0));
 }
 
 void BindingData::MemoryInfo(MemoryTracker* tracker) const {
