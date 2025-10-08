@@ -136,7 +136,7 @@ HistogramBase::HistogramBase(
   MakeWeak();
   wrap->SetAlignedPointerInInternalField(
       HistogramImpl::InternalFields::kImplField,
-      static_cast<HistogramImpl*>(this));
+      static_cast<HistogramImpl*>(this), 0);
 }
 
 HistogramBase::HistogramBase(
@@ -148,7 +148,7 @@ HistogramBase::HistogramBase(
   MakeWeak();
   wrap->SetAlignedPointerInInternalField(
       HistogramImpl::InternalFields::kImplField,
-      static_cast<HistogramImpl*>(this));
+      static_cast<HistogramImpl*>(this), 0);
 }
 
 void HistogramBase::MemoryInfo(MemoryTracker* tracker) const {
@@ -362,7 +362,7 @@ IntervalHistogram::IntervalHistogram(
   MakeWeak();
   wrap->SetAlignedPointerInInternalField(
       HistogramImpl::InternalFields::kImplField,
-      static_cast<HistogramImpl*>(this));
+      static_cast<HistogramImpl*>(this), 0);
   uv_timer_init(env->event_loop(), &timer_);
 }
 
@@ -601,7 +601,7 @@ HistogramImpl* HistogramImpl::FromJSObject(Local<Value> value) {
   auto obj = value.As<Object>();
   DCHECK_GE(obj->InternalFieldCount(), HistogramImpl::kInternalFieldCount);
   return static_cast<HistogramImpl*>(
-      obj->GetAlignedPointerFromInternalField(HistogramImpl::kImplField));
+      obj->GetAlignedPointerFromInternalField(HistogramImpl::kImplField, 0));
 }
 
 std::unique_ptr<worker::TransferData>

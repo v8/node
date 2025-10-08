@@ -198,7 +198,7 @@ inline Environment* Environment::GetCurrent(v8::Local<v8::Context> context) {
   }
   return static_cast<Environment*>(
       context->GetAlignedPointerFromEmbedderData(
-          ContextEmbedderIndex::kEnvironment));
+          ContextEmbedderIndex::kEnvironment, 0));
 }
 
 inline Environment* Environment::GetCurrent(

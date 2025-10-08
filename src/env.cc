@@ -674,12 +674,12 @@ void Environment::AssignToContext(Local<v8::Context> context,
                                   Realm* realm,
                                   const ContextInfo& info) {
   context->SetAlignedPointerInEmbedderData(ContextEmbedderIndex::kEnvironment,
-                                           this);
-  context->SetAlignedPointerInEmbedderData(ContextEmbedderIndex::kRealm, realm);
+                                           this, 0);
+  context->SetAlignedPointerInEmbedderData(ContextEmbedderIndex::kRealm, realm, 0);
 
   // ContextifyContexts will update this to a pointer to the native object.
   context->SetAlignedPointerInEmbedderData(
-      ContextEmbedderIndex::kContextifyContext, nullptr);
+      ContextEmbedderIndex::kContextifyContext, nullptr, 0);
 
   // This must not be done before other context fields are initialized.
   ContextEmbedderTag::TagNodeContext(context);
@@ -695,11 +695,11 @@ void Environment::AssignToContext(Local<v8::Context> context,
 void Environment::UnassignFromContext(Local<v8::Context> context) {
   if (!context.IsEmpty()) {
     context->SetAlignedPointerInEmbedderData(ContextEmbedderIndex::kEnvironment,
-                                             nullptr);
+                                             nullptr, 0);
     context->SetAlignedPointerInEmbedderData(ContextEmbedderIndex::kRealm,
-                                             nullptr);
+                                             nullptr, 0);
     context->SetAlignedPointerInEmbedderData(
-        ContextEmbedderIndex::kContextifyContext, nullptr);
+        ContextEmbedderIndex::kContextifyContext, nullptr, 0);
   }
   UntrackContext(context);
 }
