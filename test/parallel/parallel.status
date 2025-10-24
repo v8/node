@@ -5,6 +5,9 @@ prefix parallel
 # sample-test                        : PASS,FLAKY
 
 [true] # This section applies to all platforms
+# Skip test relying on weak fields being strongified in minor GCs, and
+# failing with --handle-weak-ref-weakly-in-minor-gc (crbug.com/340777103).
+test-process-finalization: SKIP
 # https://github.com/nodejs/node/issues/52273
 test-net-write-fully-async-hex-string: PASS, FLAKY
 # https://github.com/nodejs/node/issues/52273
