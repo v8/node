@@ -1,6 +1,8 @@
 #include "builtin_info.h"
 #include <cstdlib>
 
+#include <stdlib.h>
+
 namespace node {
 namespace builtins {
 
