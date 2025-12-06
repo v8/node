@@ -463,7 +463,7 @@ ContextifyContext* ContextifyContext::Get(const PropertyCallbackInfo<T>& args) {
   // args.GetIsolate()->GetCurrentContext() and take the pointer at
   // ContextEmbedderIndex::kContextifyContext, as V8 is supposed to
   // push the creation context before invoking these callbacks.
-  return Get(args.This());
+  return Get(args.HolderV2());
 }
 
 ContextifyContext* ContextifyContext::Get(Local<Object> object) {
@@ -597,10 +597,21 @@ Intercepted ContextifyContext::PropertySetterCallback(
     return Intercepted::kNo;
   }
 
+  // V8 comment: As long as the context is not detached the contextual accesses
+  // are the same as regular accesses to `context->Global()`s data property.
+  // The only difference is that after detaching `args.Holder()` will
+  // become a new identity and will no longer be equal to `context->Global()`.
+  // TODO(Node.js): revise the code below as the "contextual"-ness of the
+  // store is not actually relevant here. Also, new variable declaration is
+  // reported by V8 via PropertyDefinerCallback.
+  bool is_declared = is_declared_on_global_proxy || is_declared_on_sandbox;
+
+/*
   // true for x = 5
   // false for this.x = 5
   // false for Object.defineProperty(this, 'foo', ...)
   // false for vmResult.x = 5 where vmResult = vm.runInContext();
+
   bool is_contextual_store = ctx->global_proxy() != args.This();
 
   // Indicator to not return before setting (undeclared) function declarations
@@ -617,7 +628,7 @@ Intercepted ContextifyContext::PropertySetterCallback(
       !is_function) {
     return Intercepted::kNo;
   }
-
+*/
   if (!is_declared && property->IsSymbol()) {
     return Intercepted::kNo;
   }
