@@ -601,7 +601,6 @@ Intercepted ContextifyContext::PropertySetterCallback(
   }
 
   bool is_declared = is_declared_on_global_proxy || is_declared_on_sandbox;
-
   if (!is_declared && property->IsSymbol()) {
     return Intercepted::kNo;
   }
