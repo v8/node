@@ -705,10 +705,12 @@ TEST_F(EnvironmentTest, NestedMicrotaskQueue) {
       context,
       [](const v8::FunctionCallbackInfo<v8::Value>& info) {
         IntVec* callback_calls = static_cast<IntVec*>(
-            info.Data().As<v8::External>()->Value());
+            info.Data().As<v8::External>()->Value(
+              v8::kExternalPointerTypeTagDefault));
         callback_calls->push_back(info[0].As<v8::Int32>()->Value());
       },
-      v8::External::New(isolate_, static_cast<void*>(&callback_calls)))
+      v8::External::New(isolate_, static_cast<void*>(&callback_calls),
+        v8::kExternalPointerTypeTagDefault))
           .ToLocalChecked();
   context->Global()->Set(
       context,

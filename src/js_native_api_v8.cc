@@ -356,7 +356,8 @@ inline napi_status Unwrap(napi_env env,
                  .ToLocalChecked();
   RETURN_STATUS_IF_FALSE(env, val->IsExternal(), napi_invalid_arg);
   Reference* reference =
-      static_cast<v8impl::Reference*>(val.As<v8::External>()->Value());
+      static_cast<v8impl::Reference*>(val.As<v8::External>()->Value(
+            v8::kExternalPointerTypeTagDefault));
 
   if (result) {
     *result = reference->Data();
@@ -395,14 +396,16 @@ class CallbackBundle {
     bundle->cb_data = data;
     bundle->env = env;
 
-    v8::Local<v8::Value> cbdata = v8::External::New(env->isolate, bundle);
+    v8::Local<v8::Value> cbdata = v8::External::New(env->isolate, bundle,
+        v8::kExternalPointerTypeTagDefault);
     ReferenceWithFinalizer::New(
         env, cbdata, 0, ReferenceOwnership::kRuntime, Delete, bundle, nullptr);
     return cbdata;
   }
 
   static CallbackBundle* FromCallbackData(v8::Local<v8::Value> data) {
-    return reinterpret_cast<CallbackBundle*>(data.As<v8::External>()->Value());
+    return reinterpret_cast<CallbackBundle*>(data.As<v8::External>()->Value(
+          v8::kExternalPointerTypeTagDefault));
   }
 
  public:
@@ -575,7 +578,8 @@ inline napi_status Wrap(napi_env env,
 
   CHECK(obj->SetPrivate(context,
                         NAPI_PRIVATE_KEY(context, wrapper),
-                        v8::External::New(env->isolate, reference))
+                        v8::External::New(env->isolate, reference,
+                          v8::kExternalPointerTypeTagDefault))
             .FromJust());
 
   return GET_RETURN_STATUS(env);
@@ -842,7 +846,8 @@ class ExternalWrapper {
  public:
   static v8::Local<v8::External> New(napi_env env, void* data) {
     ExternalWrapper* wrapper = new ExternalWrapper(data);
-    v8::Local<v8::External> external = v8::External::New(env->isolate, wrapper);
+    v8::Local<v8::External> external = v8::External::New(env->isolate, wrapper,
+        v8::kExternalPointerTypeTagDefault);
     wrapper->persistent_.Reset(env->isolate, external);
     wrapper->persistent_.SetWeak(
         wrapper, WeakCallback, v8::WeakCallbackType::kParameter);
@@ -851,7 +856,8 @@ class ExternalWrapper {
   }
 
   static ExternalWrapper* From(v8::Local<v8::External> external) {
-    return static_cast<ExternalWrapper*>(external->Value());
+    return static_cast<ExternalWrapper*>(external->Value(
+          v8::kExternalPointerTypeTagDefault));
   }
 
   void* Data() { return data_; }
