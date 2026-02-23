@@ -1362,6 +1362,7 @@ struct url_base {
 #include <string>
 #include <string_view>
 #include <optional>
+#include <utility>
 
 #if ADA_DEVELOPMENT_CHECKS
 #include <iostream>
@@ -4129,6 +4130,8 @@ void swap(expected<T, E> &lhs,
 
 #include <string>
 #include <string_view>
+#include <concepts>
+#include <vector>
 
 #ifdef ADA_USE_UNSAFE_STD_REGEX_PROVIDER
 #include <regex>
