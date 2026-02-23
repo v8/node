@@ -72,6 +72,7 @@
 #endif
 
 #include "v8.h"  // NOLINT(build/include_order)
+#include "v8-cppgc.h"
 
 #include "v8-platform.h"  // NOLINT(build/include_order)
 #include "node_version.h"  // NODE_MODULE_VERSION

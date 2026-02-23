@@ -8144,6 +8144,7 @@ public:
 #define SIMDJSON_DOM_OBJECT_H
 
 #include <vector>
+#include <algorithm>
 
 /* skipped duplicate #include "simdjson/dom/base.h" */
 /* skipped duplicate #include "simdjson/dom/element.h" */
