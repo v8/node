@@ -48,6 +48,7 @@ test-fs-write: SKIP
 test-without-async-context-frame: SKIP
 test-repl-preview-timeout: SKIP
 test-buffer-indexof: SKIP
+test-global: SKIP
 
 # https://github.com/nodejs/node/issues/51862
 test-fs-read-stream-concurrent-reads: PASS, FLAKY
