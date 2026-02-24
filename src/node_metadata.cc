@@ -52,6 +52,10 @@
 #include "LIEF/version.h"
 #endif
 
+#ifdef simdutf
+#undef simdutf
+#endif
+
 namespace node {
 
 namespace per_process {
