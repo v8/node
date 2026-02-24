@@ -14,10 +14,10 @@ template("brotli_gn_build") {
                             "scope",
                             [ "brotli.gyp" ])
 
-  source_set(target_name) {
-    forward_variables_from(invoker, "*")
+  source_set("${target_name}_common") {
+    visibility = [ ":*" ]
+    sources = filter_include(gypi_values.brotli_sources, [ "c/common/*" ])
     public_configs = [ ":brotli_config" ]
-    sources = gypi_values.brotli_sources
     if (is_linux) {
       defines = [ "OS_LINUX" ]
     } else if (is_mac) {
@@ -25,8 +25,25 @@ template("brotli_gn_build") {
     } else if (target_os == "freebsd") {
       defines = [ "OS_FREEBSD" ]
     }
+    if (is_clang || !is_win) {
+      cflags_c = [
+        "-Wno-implicit-fallthrough",
+        "-Wno-unreachable-code",
+        "-Wno-unreachable-code-return",
+      ]
+    }
+  }
+
+  source_set("${target_name}_dec") {
+    visibility = [ ":*" ]
+    sources = filter_include(gypi_values.brotli_sources, [ "c/dec/*" ])
+    public_configs = [ ":brotli_config" ]
     if (is_linux) {
-      libs = [ "m" ]
+      defines = [ "OS_LINUX" ]
+    } else if (is_mac) {
+      defines = [ "OS_MACOSX" ]
+    } else if (target_os == "freebsd") {
+      defines = [ "OS_FREEBSD" ]
     }
     if (is_clang || !is_win) {
       cflags_c = [
@@ -34,6 +51,39 @@ template("brotli_gn_build") {
         "-Wno-unreachable-code",
         "-Wno-unreachable-code-return",
       ]
+    }
+  }
+
+  source_set("${target_name}_enc") {
+    visibility = [ ":*" ]
+    sources = filter_include(gypi_values.brotli_sources, [ "c/enc/*" ])
+    public_configs = [ ":brotli_config" ]
+    if (is_linux) {
+      defines = [ "OS_LINUX" ]
+    } else if (is_mac) {
+      defines = [ "OS_MACOSX" ]
+    } else if (target_os == "freebsd") {
+      defines = [ "OS_FREEBSD" ]
+    }
+    if (is_clang || !is_win) {
+      cflags_c = [
+        "-Wno-implicit-fallthrough",
+        "-Wno-unreachable-code",
+        "-Wno-unreachable-code-return",
+      ]
+    }
+  }
+
+  source_set(target_name) {
+    forward_variables_from(invoker, "*")
+    public_configs = [ ":brotli_config" ]
+    public_deps = [
+      ":${target_name}_common",
+      ":${target_name}_dec",
+      ":${target_name}_enc",
+    ]
+    if (is_linux) {
+      libs = [ "m" ]
     }
   }
 }
