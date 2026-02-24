@@ -415,11 +415,6 @@ if (process.env.NODE_TEST_KNOWN_GLOBALS !== '0') {
       if (val === 'crypto' && !hasCrypto) {
         continue;
       }
-      // globalThis.localStorage is a getter that throws if Node.js was
-      // executed without a --localstorage-file path.
-      if (val === 'localStorage' && !hasLocalStorage) {
-        continue;
-      }
       if (!knownGlobals.has(globalThis[val])) {
         leaked.push(val);
       }
@@ -978,7 +973,6 @@ const common = {
   hasQuic,
   hasInspector,
   hasSQLite,
-  hasLocalStorage,
   invalidArgTypeHelper,
   isAlive,
   isASan,
