@@ -10,6 +10,7 @@
 #include <internal/thread_arch.h>
 
 #if defined(OPENSSL_THREADS_POSIX)
+
 #define _GNU_SOURCE
 #include <errno.h>
 #include <sys/types.h>
