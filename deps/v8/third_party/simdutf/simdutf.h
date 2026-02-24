@@ -2,6 +2,10 @@
 /* begin file include/simdutf.h */
 #ifndef SIMDUTF_H
 #define SIMDUTF_H
+
+// Rename namespace to avoid conflict with simdutf from V8.
+#define simdutf node_simdutf
+
 #include <cstring>
 
 /* begin file include/simdutf/compiler_check.h */
