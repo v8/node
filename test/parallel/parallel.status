@@ -110,6 +110,41 @@ test-async-context-frame: SKIP
 test-fs-stat-bigint: SKIP
 test-sqlite-session: SKIP
 
+# These tests create node snapshots even when node snapshots are disabled.
+# Node snapshots don't work at the moment because FunctionTemplateInfo
+# objects with fast API callbacks are put into the snapshot. However, the way
+# FunctionTemplateInfo objects reference fast API callbacks at the moment causes
+# security issues, and the fix references fast API callbacks via a dynamically
+# allocated C++ object, which cannot be put into the snapshot.
+test-snapshot-stack-trace-limit-mutation: SKIP
+test-inspect-address-in-use: SKIP
+test-snapshot-api: SKIP
+test-snapshot-argv1: SKIP
+test-snapshot-basic: SKIP
+test-snapshot-child-process-sync: SKIP
+test-snapshot-cjs-main: SKIP
+test-snapshot-config: SKIP
+test-snapshot-console: SKIP
+test-snapshot-coverage: SKIP
+test-snapshot-cwd: SKIP
+test-snapshot-error: SKIP
+test-snapshot-eval: SKIP
+test-snapshot-gzip: SKIP
+test-snapshot-incompatible: SKIP
+test-snapshot-net: SKIP
+test-snapshot-reproducible: SKIP
+test-snapshot-stack-trace-limit: SKIP
+test-snapshot-typescript: SKIP
+test-snapshot-umd: SKIP
+test-snapshot-warning: SKIP
+test-snapshot-weak-reference: SKIP
+test-snapshot-worker: SKIP
+test-snapshot-namespaced-builtin: SKIP
+test-snapshot-dns-resolve-localhost: SKIP
+test-snapshot-dns-lookup-localhost: SKIP
+test-snapshot-dns-lookup-localhost-promise: SKIP
+test-snapshot-dns-resolve-localhost-promise: SKIP
+
 [$system==win32]
 
 # Until V8 provides a better way to check for flag mismatch without
