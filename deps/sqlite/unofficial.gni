@@ -56,10 +56,10 @@ template("sqlite_gn_build") {
         "-Wno-unreachable-code-return",
         "-Wno-unreachable-code-break",
         "-Wno-unreachable-code",
+        "-Wno-sign-compare",
       ]
       if (is_win) {
         cflags_c += [
-          "-Wno-sign-compare",
           "-Wno-unused-but-set-variable",
           "-Wno-unused-function",
           "-Wno-unused-variable",
