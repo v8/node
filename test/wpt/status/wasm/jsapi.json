@@ -8,6 +8,20 @@
   "esm-integration/v128-tdz.tentative.any.js": {
     "skip": "v128 undefined Wasm bindings not yet supported in V8"
   },
+  "global/value-get-set.any.js": {
+    "fail": {
+      "expected": [
+        "Calling setter without argument"
+      ]
+    }
+  },
+  "module/moduleSource.tentative.any.js": {
+    "fail": {
+      "expected": [
+        "AbstractModuleSourceProto toStringTag brand check"
+      ]
+    }
+  },
   "exception/getArg.tentative.any.js": {
     "skip": "track - still tentative / unsupported"
   },
@@ -42,6 +56,9 @@
     "skip": "track - still tentative / unsupported"
   },
   "tag/type.tentative.any.js": {
+    "skip": "track - still tentative / unsupported"
+  },
+  "exception/constructor.tentative.any.js": {
     "skip": "track - still tentative / unsupported"
   }
 }
