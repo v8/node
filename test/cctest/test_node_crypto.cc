@@ -28,23 +28,23 @@ TEST(NodeCrypto, NewRootCertStore) {
  */
 TEST(NodeCrypto, MemoryTrackingConstants) {
   // Verify that our memory tracking constants are defined and reasonable
-  EXPECT_GT(node::crypto::kSizeOf_SSL_CTX, 0)
+  EXPECT_GT(node::crypto::kSizeOf_SSL_CTX, 0ul)
       << "SSL_CTX size constant should be positive";
-  EXPECT_GT(node::crypto::kSizeOf_X509, 0)
+  EXPECT_GT(node::crypto::kSizeOf_X509, 0ul)
       << "X509 size constant should be positive";
-  EXPECT_GT(node::crypto::kSizeOf_EVP_MD_CTX, 0)
+  EXPECT_GT(node::crypto::kSizeOf_EVP_MD_CTX, 0ul)
       << "EVP_MD_CTX size constant should be positive";
 
   // Verify reasonable size ranges (basic sanity check)
-  EXPECT_LT(node::crypto::kSizeOf_SSL_CTX, 10000)
+  EXPECT_LT(node::crypto::kSizeOf_SSL_CTX, 10000ul)
       << "SSL_CTX size should be reasonable";
-  EXPECT_LT(node::crypto::kSizeOf_X509, 10000)
+  EXPECT_LT(node::crypto::kSizeOf_X509, 10000ul)
       << "X509 size should be reasonable";
-  EXPECT_LT(node::crypto::kSizeOf_EVP_MD_CTX, 1000)
+  EXPECT_LT(node::crypto::kSizeOf_EVP_MD_CTX, 1000ul)
       << "EVP_MD_CTX size should be reasonable";
 
   // Specific values we expect based on our implementation
-  EXPECT_EQ(node::crypto::kSizeOf_SSL_CTX, 240);
-  EXPECT_EQ(node::crypto::kSizeOf_X509, 128);
-  EXPECT_EQ(node::crypto::kSizeOf_EVP_MD_CTX, 48);
+  EXPECT_EQ(node::crypto::kSizeOf_SSL_CTX, 240ul);
+  EXPECT_EQ(node::crypto::kSizeOf_X509, 128ul);
+  EXPECT_EQ(node::crypto::kSizeOf_EVP_MD_CTX, 48ul);
 }
