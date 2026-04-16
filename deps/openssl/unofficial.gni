@@ -67,6 +67,7 @@ template("openssl_gn_build") {
         "-Wno-unreachable-code-break",
         "-Wno-unreachable-code-return",
         "-Wno-unused-function",
+        "-Wno-unused-but-set-global",
       ]
     }
     if (is_win) {
