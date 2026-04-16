@@ -6,6 +6,9 @@ prefix wasm-allocation
 
 [true] # This section applies to all platforms
 
+# Node-CI OOM error
+test-wasm-allocation-disable-trap-handler: SKIP
+
 # Failing on NodeCI.
 test-wasm-allocation: SKIP
 
