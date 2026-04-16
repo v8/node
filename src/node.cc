@@ -874,6 +874,8 @@ static ExitCode InitializeNodeWithArgsInternal(
   // default value.
   V8::SetFlagsFromString("--rehash-snapshot");
 
+  V8::SetFlagsFromString("--wasm-unsafe-fast-api-wrapper");
+
   HandleEnvOptions(per_process::cli_options->per_isolate->per_env);
 
   std::string node_options;
