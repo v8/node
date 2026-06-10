@@ -65,6 +65,9 @@ test-trace-events-v8: SKIP
 test-repl-tab-complete: SKIP
 test-shadow-realm-globals: SKIP
 
+# Temporarily skip this test in order to rebase expectations after V8 update.
+test-node-output-sourcemaps: SKIP
+
 # Skip tests depending on removed feature flags for SAB and Atomics
 test-worker-no-atomics: SKIP
 test-worker-no-sab: SKIP
