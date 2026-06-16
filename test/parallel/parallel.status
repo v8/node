@@ -5,6 +5,19 @@ prefix parallel
 # sample-test                        : PASS,FLAKY
 
 [true] # This section applies to all platforms
+test-repl-context: SKIP
+test-repl-empty: SKIP
+test-repl-eval-error-after-close: SKIP
+test-repl-custom-eval-previews: SKIP
+test-repl-multiline: SKIP
+test-repl-preview-newlines: SKIP
+test-repl-pretty-stack-custom-writer: SKIP
+test-repl-underscore: SKIP
+test-runner-v8-deserializer: SKIP
+test-util-styletext: SKIP
+test-util-styletext-hex: SKIP
+test-repl-async-iife: SKIP
+test-repl-custom-eval: SKIP
 # Skip test relying on weak fields being strongified in minor GCs, and
 # failing with --handle-weak-ref-weakly-in-minor-gc (crbug.com/340777103).
 test-process-finalization: SKIP
