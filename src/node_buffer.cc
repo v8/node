@@ -622,24 +622,24 @@ size_t CopyImpl(Local<Value> source_obj,
   const size_t source_offset = source->ByteOffset() + source_start;
   const size_t target_offset = target->ByteOffset() + target_start;
 
-  // Defer byte-range clamping and detached/immutable handling to V8. When both
-  // sides are backed by a SharedArrayBuffer the relaxed atomic overload is
-  // used, which honors the SharedArrayBuffer memory model. Any other
-  // combination (both regular, or one of each) goes through the ArrayBuffer
-  // overload: it operates on the underlying backing store regardless of
-  // shared-ness, so a plain memmove is performed (matching the historical
-  // behavior for SharedArrayBuffer-backed buffers). The V8 API has no overload
-  // that mixes ArrayBuffer and SharedArrayBuffer, so the two must never be
-  // cross-cast.
-  if (source_ab->IsSharedArrayBuffer() && target_ab->IsSharedArrayBuffer()) {
-    return source_ab.As<SharedArrayBuffer>()->CopyArrayBufferBytes(
-        source_offset,
-        to_copy,
-        target_ab.As<SharedArrayBuffer>(),
-        target_offset);
+  bool target_unwritable = false;
+  if (target_ab->IsArrayBuffer()) {
+    target_unwritable = target_ab->WasDetached() || target_ab->IsImmutable();
   }
-  return source_ab->CopyArrayBufferBytes(
-      source_offset, to_copy, target_ab, target_offset);
+  bool source_detached = false;
+  if (source_ab->IsArrayBuffer()) {
+    source_detached = source_ab->WasDetached();
+  }
+  if (target_unwritable || source_detached || to_copy == 0) {
+    return 0;
+  }
+
+  char* source_data = static_cast<char*>(source_ab->GetBackingStore()->Data());
+  char* target_data = static_cast<char*>(target_ab->GetBackingStore()->Data());
+  if (source_data != nullptr && target_data != nullptr) {
+    memmove(target_data + target_offset, source_data + source_offset, to_copy);
+  }
+  return to_copy;
 }
 
 // Assume caller has properly validated args.
