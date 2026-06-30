@@ -89,6 +89,7 @@
     'v8_enable_v8_checks%': 0,
     'v8_use_perfetto%': 0,
     'tsan%': 0,
+    'v8_cppgc_microtask_queue%': 0,
 
     ##### end V8 defaults #####
 
@@ -545,6 +546,9 @@
       }],
       ['tsan == 1', {
         'defines': ['V8_IS_TSAN',],
+      }],
+      ['v8_cppgc_microtask_queue == 1', {
+        'defines': ['V8_CPPGC_MICROTASK_QUEUE',],
       }],
       ['OS == "win"', {
         'defines': [
