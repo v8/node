@@ -6,6 +6,7 @@ declare_args() {
   # Do not build optimized assembly for OpenSSL
   # FIXME(zcbenz): asm code does not compile with clang.
   openssl_no_asm = true
+  node_shared_zstd = false
 }
 
 # The actual configurations are put inside a template in unofficial.gni to
@@ -147,6 +148,10 @@ template("openssl_gn_build") {
 
     include_dirs = rebase_path(gypi_values.include_dirs, ".", config_path)
     defines = gypi_values["openssl_defines_" + config_name]
+    if (!node_shared_zstd) {
+      deps = [ "../zstd" ]
+    }
+
     sources = filter_exclude(gypi_values.openssl_sources +
                              gypi_values["openssl_sources_" + config_name],
                              [ "*.ld" ])
