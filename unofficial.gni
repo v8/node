@@ -247,6 +247,12 @@ template("node_gn_build") {
       sources += node_inspector.node_inspector_sources +
                  node_inspector.node_inspector_generated_sources
     }
+    if (v8_use_perfetto) {
+      deps += [ "deps/perfetto" ]
+      sources += gypi_values.node_tracing_perfetto_sources
+    } else {
+      sources += gypi_values.node_tracing_legacy_sources
+    }
   }
 
   executable(target_name) {
