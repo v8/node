@@ -246,6 +246,9 @@ template("node_gn_build") {
           [ "src/inspector/node_inspector.gypi" ])
       sources += node_inspector.node_inspector_sources +
                  node_inspector.node_inspector_generated_sources
+      if (!v8_use_perfetto) {
+        sources += node_inspector.node_inspector_without_perfetto_sources
+      }
     }
     if (v8_use_perfetto) {
       deps += [ "deps/perfetto" ]
