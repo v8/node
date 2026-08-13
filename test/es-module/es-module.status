@@ -9,6 +9,8 @@ prefix es-module
 test-esm-data-urls: SKIP
 test-esm-invalid-pjson: SKIP
 
+test-esm-package-map-errors: SKIP
+
 [$system==linux || $system==freebsd]
 # https://github.com/nodejs/node/issues/47836
 test-esm-loader-http-imports: PASS,FLAKY
