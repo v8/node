@@ -547,9 +547,6 @@
       ['tsan == 1', {
         'defines': ['V8_IS_TSAN',],
       }],
-      ['v8_cppgc_microtask_queue == 1', {
-        'defines': ['V8_CPPGC_MICROTASK_QUEUE',],
-      }],
       ['OS == "win"', {
         'defines': [
           'WIN32',
