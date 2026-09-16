@@ -129,7 +129,7 @@ static void OnLockCallbackFulfilled(const FunctionCallbackInfo<Value>& info) {
   Environment* env = Environment::GetCurrent(info);
 
   BaseObjectPtr<LockHolder> lock_holder{
-      BaseObject::FromJSObject<LockHolder>(info.Data())};
+      BaseObject::FromJSObject<LockHolder>(info.DataV2().As<Value>())};
   std::shared_ptr<Lock> lock = lock_holder->lock();
 
   // Release the lock and continue processing the queue.
@@ -143,7 +143,7 @@ static void OnLockCallbackRejected(const FunctionCallbackInfo<Value>& info) {
   Environment* env = Environment::GetCurrent(info);
 
   BaseObjectPtr<LockHolder> lock_holder{
-      BaseObject::FromJSObject<LockHolder>(info.Data())};
+      BaseObject::FromJSObject<LockHolder>(info.DataV2().As<Value>())};
   std::shared_ptr<Lock> lock = lock_holder->lock();
 
   LockManager::GetCurrent()->ReleaseLockAndProcessQueue(
@@ -153,13 +153,13 @@ static void OnLockCallbackRejected(const FunctionCallbackInfo<Value>& info) {
 // Called when the promise returned from the user's callback resolves
 static void OnIfAvailableFulfill(const FunctionCallbackInfo<Value>& info) {
   HandleScope handle_scope(info.GetIsolate());
-  USE(info.Data().As<Promise::Resolver>()->Resolve(
+  USE(info.DataV2().As<Value>().As<Promise::Resolver>()->Resolve(
       info.GetIsolate()->GetCurrentContext(), info[0]));
 }
 
 // Called when the promise returned from the user's callback rejects
 static void OnIfAvailableReject(const FunctionCallbackInfo<Value>& info) {
-  USE(info.Data().As<Promise::Resolver>()->Reject(
+  USE(info.DataV2().As<Value>().As<Promise::Resolver>()->Reject(
       info.GetIsolate()->GetCurrentContext(), info[0]));
 }
 
