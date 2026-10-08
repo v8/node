@@ -402,7 +402,7 @@ class CallbackBundle {
     return cbdata;
   }
 
-  static CallbackBundle* FromCallbackData(v8::Local<v8::Value> data) {
+  static CallbackBundle* FromCallbackData(v8::Local<v8::Data> data) {
     return reinterpret_cast<CallbackBundle*>(
         data.As<v8::External>()->Value(v8::kExternalPointerTypeTagDefault));
   }
@@ -491,7 +491,7 @@ class FunctionCallbackWrapper {
   explicit FunctionCallbackWrapper(
       const v8::FunctionCallbackInfo<v8::Value>& cbinfo)
       : cbinfo_(cbinfo),
-        bundle_(CallbackBundle::FromCallbackData(cbinfo.Data())) {}
+        bundle_(CallbackBundle::FromCallbackData(cbinfo.DataV2())) {}
 
   void InvokeCallback() {
     napi_callback_info cbinfo_wrapper =

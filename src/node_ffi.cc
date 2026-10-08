@@ -593,7 +593,8 @@ void DynamicLibrary::Close(const FunctionCallbackInfo<Value>& args) {
 
 void DynamicLibrary::InvokeFunction(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
-  FFIFunctionInfo* info = Unwrap<FFIFunctionInfo>(args.Data());
+  FFIFunctionInfo* info =
+      Unwrap<FFIFunctionInfo>(args.DataV2().As<Value>());
   CHECK_NOT_NULL(info);
   FFIFunction* fn = info->fn.get();
 
@@ -665,7 +666,8 @@ void DynamicLibrary::InvokeFunction(const FunctionCallbackInfo<Value>& args) {
 
 void DynamicLibrary::InvokeFunctionSB(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
-  FFIFunctionInfo* info = Unwrap<FFIFunctionInfo>(args.Data());
+  FFIFunctionInfo* info =
+      Unwrap<FFIFunctionInfo>(args.DataV2().As<Value>());
   CHECK_NOT_NULL(info);
   FFIFunction* fn = info->fn.get();
 
