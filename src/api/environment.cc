@@ -858,7 +858,7 @@ Maybe<void> InitializeContextRuntime(Local<Context> context) {
   bool is_code_generation_from_strings_allowed =
       context->IsCodeGenerationFromStringsAllowed();
   context->AllowCodeGenerationFromStrings(false);
-  context->SetEmbedderData(
+  context->SetEmbedderDataV3(
       ContextEmbedderIndex::kAllowCodeGenerationFromStrings,
       Boolean::New(isolate, is_code_generation_from_strings_allowed));
 
@@ -954,9 +954,9 @@ Maybe<void> InitializeMainContextForSnapshot(Local<Context> context) {
   HandleScope handle_scope(isolate);
 
   // Initialize the default values.
-  context->SetEmbedderData(ContextEmbedderIndex::kAllowWasmCodeGeneration,
-                           True(isolate));
-  context->SetEmbedderData(
+  context->SetEmbedderDataV3(ContextEmbedderIndex::kAllowWasmCodeGeneration,
+                             True(isolate));
+  context->SetEmbedderDataV3(
       ContextEmbedderIndex::kAllowCodeGenerationFromStrings, True(isolate));
 
   if (InitializeBaseContextForSnapshot(context).IsNothing()) {
