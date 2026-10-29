@@ -7,6 +7,10 @@
 template("googletest_gn_build") {
   config("googletest_config") {
     include_dirs = [ "include" ]
+    defines = [
+      "GTEST_HAS_POSIX_RE=0",
+      "GTEST_LANG_CXX11=1",
+    ]
   }
 
   gypi_values = exec_script("../../tools/gypi_to_gn.py",
@@ -17,14 +21,8 @@ template("googletest_gn_build") {
   source_set(target_name) {
     forward_variables_from(invoker, "*")
     testonly = true
-    include_dirs = [
-      "include",
-      ".",
-    ]
-    defines = [
-      "GTEST_HAS_POSIX_RE=0",
-      "GTEST_LANG_CXX11=1",
-    ]
+    include_dirs = [ "." ]
+    public_configs = [ ":googletest_config" ]
     sources = gypi_values.googletest_sources
   }
 

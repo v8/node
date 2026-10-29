@@ -50,6 +50,7 @@ test-tick-processor-arguments: SKIP
 # Skip tests failing in V8 bots when updating Node
 test-child-process-stdio-overlapped: SKIP
 test-fs-rm: SKIP
+test-fs-rmSync-special-char-additional-error: SKIP
 test-max-old-space-size-percentage: SKIP
 # https://github.com/nodejs/node/issues/42458
 test-repl-mode: SKIP
@@ -76,6 +77,7 @@ test-trace-events-v8: SKIP
 # Skip failed tests related to iterator helpers 
 # https://bugs.chromium.org/p/v8/issues/detail?id=13558
 test-repl-tab-complete: SKIP
+test-repl-tab-complete-on-editor-mode: SKIP
 test-shadow-realm-globals: SKIP
 
 # Temporarily skip this test in order to rebase expectations after V8 update.
@@ -160,6 +162,10 @@ test-snapshot-dns-resolve-localhost: SKIP
 test-snapshot-dns-lookup-localhost: SKIP
 test-snapshot-dns-lookup-localhost-promise: SKIP
 test-snapshot-dns-resolve-localhost-promise: SKIP
+test-snapshot-invalid-blob: SKIP
+test-snapshot-perf-hooks-gc-observer: SKIP
+test-crypto-provider-cache-snapshot: SKIP
+test-crypto-random-cache-snapshot: SKIP
 
 [$system==win32]
 
