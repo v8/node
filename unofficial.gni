@@ -157,6 +157,7 @@ template("node_gn_build") {
     }
     if (node_use_openssl) {
       defines += [
+        "NODE_OPENSSL_CONF_NAME=nodejs_conf",
         "NODE_OPENSSL_SYSTEM_CERT_PATH=\"$node_openssl_system_ca_path\"",
       ]
     }

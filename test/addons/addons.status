@@ -15,6 +15,7 @@ make-callback-recurse: SKIP
 
 # Legacy openssl provider seems to not be available per default without setting
 # up the environment (OPENSSL_MODULES).
+openssl-providers/test-default-properties-config: SKIP
 openssl-providers/test-legacy-provider-config: SKIP
 openssl-providers/test-legacy-provider-option: SKIP
 
