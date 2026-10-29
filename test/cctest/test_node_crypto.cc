@@ -769,7 +769,7 @@ TEST(NodeCrypto, NamedRawKey) {
   EXPECT_TRUE(key.getAlgorithm()->isOneShot());
   EXPECT_TRUE(key.supportsRawPublic());
   EXPECT_TRUE(key.supportsRawPrivate());
-  EXPECT_EQ(key.getAlgorithm()->seedSize(), 0);
+  EXPECT_EQ(key.getAlgorithm()->seedSize(), 0U);
 #if NCRYPTO_USE_OPENSSL_PROVIDER
   // Provider aliases are recognized without comparing the primary type name.
   EXPECT_TRUE(key.isA("1.3.101.112"));
