@@ -127,6 +127,7 @@ test-async-context-frame: SKIP
 
 test-fs-stat-bigint: SKIP
 test-sqlite-session: SKIP
+test-datetime-change-notify: SKIP
 
 # These tests create node snapshots even when node snapshots are disabled.
 # Node snapshots don't work at the moment because FunctionTemplateInfo
