@@ -425,6 +425,8 @@ template("node_gn_build") {
                              "cc" ],
                            "list lines")
 
+    include_dirs = [ "test/cctest" ]
+
     if (node_use_openssl) {
       deps += [ "deps/ncrypto" ]
     } else {
@@ -432,7 +434,7 @@ template("node_gn_build") {
     }
     if (node_enable_inspector) {
       deps += [ "src/inspector:crdtp" ]
-      include_dirs = [
+      include_dirs += [
         "$target_gen_dir/src",
         "$target_gen_dir/src/inspector",
       ]
