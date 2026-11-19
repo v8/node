@@ -110,11 +110,11 @@ bool URLPatternRegexProvider::regex_match(std::string_view input,
   }
   Local<Value> result_object;
   if (!pattern.Get(isolate)
-           ->ExecV2(env->context(), local_input)
+           ->Exec(env->context(), local_input)
            .ToLocal(&result_object)) {
     return false;
   }
-  // RegExp::ExecV2 returns null if there is no match.
+  // RegExp::Exec returns null if there is no match.
   return !result_object->IsNull();
 }
 
@@ -131,7 +131,7 @@ URLPatternRegexProvider::regex_search(std::string_view input,
   }
   Local<Value> exec_result_object;
   auto pattern = global_pattern.Get(isolate);
-  if (!pattern->ExecV2(env->context(), local_input)
+  if (!pattern->Exec(env->context(), local_input)
            .ToLocal(&exec_result_object) ||
       exec_result_object->IsNull()) {
     return std::nullopt;
