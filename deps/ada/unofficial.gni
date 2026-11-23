@@ -21,5 +21,8 @@ template("ada_gn_build") {
     forward_variables_from(invoker, "*")
     public_configs = [ ":ada_config" ]
     sources = gypi_values.ada_sources
+    if (is_clang || !is_win) {
+      cflags_cc = [ "-Wno-unused-function" ]
+    }
   }
 }
