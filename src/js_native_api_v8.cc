@@ -492,7 +492,7 @@ class FunctionCallbackWrapper {
       const v8::FunctionCallbackInfo<v8::Value>& cbinfo)
       : cbinfo_(cbinfo),
         bundle_(
-            CallbackBundle::FromCallbackData(cbinfo.DataV2().As<v8::Value>())) {
+            CallbackBundle::FromCallbackData(cbinfo.Data().As<v8::Value>())) {
   }
 
   void InvokeCallback() {
